@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "gsus67.ai-team",
+  "name": "AI Team",
+  "version": "0.19.0",
+  "author": "gsus67",
+  "license": "MIT",
+  "description": "Panel nativo de agentes, Superpowers, memoria ECC, catálogo local, auditoría opcional y recuperación.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Team",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
