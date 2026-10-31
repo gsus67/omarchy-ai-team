@@ -36,13 +36,21 @@ def expected(config, snapshot, agent):
                 if config.get('team', {}).get('enabled') else '')
 
 
+def pi_check_model(config):
+    free = ['nous/' + model['id'] for model in config.get('piNousCatalog', {}).get('models', [])
+            if model['id'].endswith(':free') and model.get('cost')
+            and all(type(cost) in (int, float) and cost == 0 for cost in model['cost'].values())]
+    # A connection check must not fail because of the model: measured 3/3 with beam and 0/3 with solar on 2026-10-31.
+    return next((model for model in free if model.startswith('nous/reflection/beam')), free[0] if free else None)
+
+
 def prompt_for(wanted, marker):
     return ('Comprobación de conexiones en un proyecto temporal. No delegues ni hagas commits. '
             'No leas otros proyectos ni conversaciones. Enumera las skills ai-team-* visibles. '
             'Si tools es true, ejecuta exactamente rg --version y copia su primera línea en rgVersion. '
             'Si memory es true, usa memory_save del MCP ai-team-memory para guardar el marcador '
             'en este proyecto y memory_search para buscarlo; devuelve en memoryMarker solo el marcador '
-            'encontrado. Si team es true, lee ai-team-roles y devuelve en codeModel solo el identificador del modelo de Programar. '
+            'encontrado. Si team es true, lee ai-team-roles y la línea de Programar tiene la forma agente · modelo · esfuerzo: devuelve en codeModel solo el campo modelo. '
             'No inventes resultados: usa cadenas vacías para lo que no pudiste comprobar. '
             'Responde una sola línea JSON con skills (lista de nombres), rgVersion, memoryMarker y codeModel.\n'
             + json.dumps(dict(tools=wanted['tools'], memory=wanted['memory'],
@@ -140,13 +148,10 @@ def run(config, snapshot):
         row = dict(agent=key, name=agent['name'], ok=False, failures=[], warnings=[])
         results.append(row)
         if key == 'pi':
-            free = ['nous/' + model['id'] for model in config.get('piNousCatalog', {}).get('models', [])
-                    if model['id'].endswith(':free') and model.get('cost')
-                    and all(type(cost) in (int, float) and cost == 0 for cost in model['cost'].values())]
-            if not free:
+            model = pi_check_model(config)
+            if not model:
                 row.update(skipped=True, warnings=[tr('Pi omitido: no hay un modelo gratuito comprobado.')])
                 continue
-            model = free[0]
             row['warnings'].append(tr('Pi no tiene sandbox ni aprobación por herramienta.'))
         else:
             model = 'haiku' if key == 'claude' else team.newest_codex(config.get('teamModels', {}), 'luna')
