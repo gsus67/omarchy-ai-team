@@ -69,6 +69,11 @@ class NativeTeamTests(unittest.TestCase):
         self.assertLess(text.index('CODEX_HOME=' + str(self.root / '.codex-2')),
                         text.index('CODEX_HOME=' + str(self.root / '.codex') + ' '))
 
+    def test_a_task_that_does_not_answer_is_not_retried_forever(self):
+        text = self.content()
+        for wanted in ('intenta lanzarlo una sola vez', 'timeout 60', 'sandbox', 'di qué papel quedó pendiente'):
+            self.assertIn(wanted, text)
+
     def test_a_delegated_task_does_not_delegate_again(self):
         self.assertIn('no encargues nada a otros modelos', self.content())
 

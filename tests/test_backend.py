@@ -330,7 +330,7 @@ class BackendTests(unittest.TestCase):
             return real_which(name)
         with patch.object(harness.shutil, "which", side_effect=which):
             result = harness.status()
-        self.assertEqual(result["deferred"], ["Grok", "Nous"])
+        self.assertEqual(result["deferred"], ["Grok"])
         self.assertFalse({"grok", "nous"}.intersection(probed))
 
 
