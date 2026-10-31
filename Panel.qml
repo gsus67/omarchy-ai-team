@@ -1,5 +1,6 @@
 import QtQuick
 import "I18n.js" as I18n
+import Quickshell
 import Quickshell.Io
 import qs.Ui as Ui
 import qs.Commons
@@ -25,6 +26,8 @@ Ui.Panel {
   implicitHeight: icon.implicitHeight
 
   onOpenedChanged: if (opened) run(["status"])
+  // `omarchy plugin update` has no hook: notice a new version as soon as the plugin loads.
+  Component.onCompleted: run(["status"])
 
   Ui.BarIconButton {
     id: icon
@@ -83,6 +86,11 @@ Ui.Panel {
     stderr: StdioCollector { }
     onExited: (exitCode, exitStatus) => {
       if (exitCode !== 0 && root.errorText === "") root.errorText = root.tr("La operación no pudo completarse.")
+      // The new version is saved before this runs, so the restarted shell does not come back here.
+      if (root.operation.shellRestart) {
+        Quickshell.execDetached(["omarchy", "restart", "shell"])
+        return
+      }
       if (root.reconnectPending) {
         root.reconnectPending = false
         root.reconnectAttempted = true

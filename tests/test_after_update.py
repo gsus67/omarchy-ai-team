@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -150,6 +151,47 @@ class AfterUpdateTests(unittest.TestCase):
         self.apply_component.assert_not_called()
         self.assertEqual(harness.load_config()['pluginVersion'], self.version)
         self.assertFalse(reply['data']['needsReconnect'])
+
+    def test_one_bar_per_monitor_restarts_the_shell_only_once(self):
+        config_file = harness.config_path()
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({'schemaVersion': 1, 'agents': {}, 'pluginVersion': 'previous'}))
+        script = str(ROOT / 'backend/harness.py')
+        # Separate files: a full pipe nobody is reading yet would block the process holding the lock.
+        outputs = [self.root / f'reply-{index}.json' for index in range(6)]
+        processes = []
+        for output in outputs:
+            with output.open('w') as stream:
+                processes.append(subprocess.Popen([sys.executable, '-B', script, 'after-update'], stdout=stream,
+                                                  stderr=subprocess.DEVNULL, env={**os.environ, 'PATH': os.defpath}))
+        for process in processes:
+            process.wait(timeout=60)
+        replies = [json.loads(output.read_text()) for output in outputs]
+        self.assertEqual(sum(1 for reply in replies if reply.get('operation', {}).get('shellRestart')), 1)
+        self.assertEqual(json.loads(config_file.read_text())['pluginVersion'], self.version)
+
+    def test_update_from_a_previous_version_asks_for_a_shell_restart(self):
+        self.configured('previous')
+        code, reply = self.command()
+        self.assertEqual(code, 0)
+        self.assertIs(reply['operation']['shellRestart'], True)
+
+    def test_second_run_after_an_update_does_not_restart_again(self):
+        self.configured('previous')
+        self.command()
+        _, reply = self.command()
+        self.assertNotIn('shellRestart', reply.get('operation', {}))
+
+    def test_first_install_does_not_restart_the_shell(self):
+        self.configured(None)
+        _, reply = self.command()
+        self.assertNotIn('shellRestart', reply.get('operation', {}))
+
+    def test_reconnect_without_a_new_version_does_not_restart_the_shell(self):
+        self.configured(self.version)
+        with patch.object(harness, 'team_agent_changed', return_value=True):
+            _, reply = self.command()
+        self.assertNotIn('shellRestart', reply.get('operation', {}))
 
     def test_after_update_renews_nous_extension_only_when_enabled(self):
         source = harness.nous_quota.paths(harness.config_path())[0]

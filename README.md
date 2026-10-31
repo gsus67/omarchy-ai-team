@@ -81,7 +81,8 @@ Implementado:
   funcionar si Nous lo cambia. `/login nous` guarda una API key en texto plano en
   `auth.json` de Pi: evítalo y usa en su lugar una clave `!secret-tool lookup …`.
 
-Los cambios nativos se cargan en sesiones nuevas. Detectar, actualizar el panel
+Los cambios nativos se cargan en sesiones nuevas. Al detectar una versión nueva del
+plugin, este reinicia el shell de Omarchy una sola vez para no quedarse con código viejo. Detectar, actualizar el panel
 o activar una preferencia no inicia inferencia. Desactivar retira únicamente
 la integración gestionada, conservando instalación y datos; no bloquea usos
 externos a los controles nativos.

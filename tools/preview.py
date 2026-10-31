@@ -846,7 +846,7 @@ def main():
             binaries.mkdir()
             settings_file = directory / "config/omarchy-ai-team/settings.json"
             settings_file.parent.mkdir(parents=True)
-            settings_file.write_text('{"schemaVersion":1,"language":"es","agents":{},"catalogInstalls":{"rg":{"deps":[]}}}\n')
+            settings_file.write_text('{"schemaVersion":1,"pluginVersion":"previous","language":"es","agents":{},"catalogInstalls":{"rg":{"deps":[]}}}\n')
             for agent in ("claude", "codex", "pi"):
                 binary = binaries / agent
                 binary.write_text("#!/bin/sh\nexit 99\n")
@@ -936,6 +936,8 @@ else:sys.exit(99)
             fake_omarchy.write_text("#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\n"
                 "if sys.argv[1:3] == ['launch','terminal']:\n"
                 " Path(os.environ['AI_HARNESS_TERMINAL_RECORD']).write_text(json.dumps(sys.argv[1:]))\n"
+                "elif sys.argv[1:] == ['restart','shell']:\n"
+                " Path(os.environ['AI_HARNESS_TERMINAL_RECORD']+'.restart').write_text('restart')\n"
                 "elif sys.argv[1:] == ['version']:\n os.execv(" + repr(real_omarchy) + ",[" + repr(real_omarchy) + ",'version'])\n"
                 "else: sys.exit(99)\n")
             fake_omarchy.chmod(0o755)
@@ -1020,6 +1022,9 @@ else:sys.exit(99)
                 return 1
             if not all((mise_root/version/'bin/claude').is_file() for version in ('2.1.310','2.1.311')):
                 print("HARNESS_SMOKE_FAIL: CLI install/update did not preserve both versions",file=sys.stderr)
+                return 1
+            if not launch_record.with_name(launch_record.name+'.restart').is_file():
+                print("HARNESS_SMOKE_FAIL: updating from a previous version did not restart the shell",file=sys.stderr)
                 return 1
             if not launch_record.is_file():
                 print("HARNESS_SMOKE_FAIL: no terminal request", file=sys.stderr)
