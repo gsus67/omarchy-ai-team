@@ -21,7 +21,10 @@ original de las dependencias y de los proyectos del usuario.
   permisos, autenticación y contexto propios de cada sesión.
 - Superpowers: única metodología de planificación, TDD, depuración y revisión.
 - ECC Memory Vault: único motor central de memoria persistente, OSS y local,
-  compartido entre agentes con separación lógica por proyecto.
+  compartido entre agentes con separación lógica por proyecto. Decisión del
+  usuario (2026-10-31): `backend/memory_projects.mjs` es una capa fina que elige
+  el almacén en cada llamada, para trabajar en varios proyectos desde una sesión.
+  No guarda ni valida por su cuenta; todo lo hace el servicio oficial de ECC.
 - Pi: agente adicional con Grok/xAI y Nous mediante proveedores nativos.
 - Catálogo local: herramientas deterministas, sin hooks,
   inferencia ni otra memoria al auditar.
