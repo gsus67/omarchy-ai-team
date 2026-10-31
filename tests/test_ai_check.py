@@ -198,6 +198,10 @@ class AiCheckTests(unittest.TestCase):
         self.assertEqual(ai_check.pi_check_model({'piNousCatalog': {'models': models[:1]}}), 'nous/upstage/solar-mini4:free')
         self.assertIsNone(ai_check.pi_check_model({'piNousCatalog': {'models': [{'id': 'pago', 'cost': {'input': 1}}]}}))
 
+    def test_prompt_keeps_the_marker_out_of_real_projects(self):
+        prompt = ai_check.prompt_for({'tools': True, 'memory': True, 'codeModel': 'opus'}, 'x')
+        self.assertIn('sin indicar project', prompt)
+
     def test_prompt_says_which_field_is_the_model(self):
         prompt = ai_check.prompt_for({'tools': True, 'memory': True, 'codeModel': 'opus'}, 'x')
         self.assertIn('agente · modelo · esfuerzo', prompt)

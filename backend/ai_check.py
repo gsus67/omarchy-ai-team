@@ -49,7 +49,7 @@ def prompt_for(wanted, marker):
             'No leas otros proyectos ni conversaciones. Enumera las skills ai-team-* visibles. '
             'Si tools es true, ejecuta exactamente rg --version y copia su primera línea en rgVersion. '
             'Si memory es true, usa memory_save del MCP ai-team-memory para guardar el marcador '
-            'en este proyecto y memory_search para buscarlo; devuelve en memoryMarker solo el marcador '
+            'y memory_search para buscarlo, ambos sin indicar project: esta comprobación solo usa su proyecto temporal; devuelve en memoryMarker solo el marcador '
             'encontrado. Si team es true, lee ai-team-roles y la línea de Programar tiene la forma agente · modelo · esfuerzo: devuelve en codeModel solo el campo modelo. '
             'No inventes resultados: usa cadenas vacías para lo que no pudiste comprobar. '
             'Responde una sola línea JSON con skills (lista de nombres), rgVersion, memoryMarker y codeModel.\n'
