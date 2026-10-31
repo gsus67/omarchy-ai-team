@@ -219,7 +219,8 @@ class MemoryInstructionTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / 'backend'))
         import shared_memory
         text = shared_memory.instructions('', True)
-        for wanted in ('Al empezar', 'el de esta sesión si está dentro de un repo', 'compartido', 'memory_doctor', 'pregunta'):
+        for wanted in ('Al empezar', 'dentro de un repo', 'compartido', 'memory_doctor', 'pregunta',
+                       'no la sustituye', 'antes de decir que no recuerdas'):
             self.assertIn(wanted, text)
 
 
