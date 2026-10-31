@@ -172,7 +172,10 @@ const NOUS_KEYRING = '''+json.dumps(keyring_attributes(settings_file))+''';
     let delay=raw ? Number(raw)*1000 : 0;
     if (raw && !Number.isFinite(delay)) delay=Math.max(0,Date.parse(raw)-Date.now());
     retryAfterKnown=event.status === 429 && !!raw && Number.isFinite(delay) && delay >= 0;
-    try { await call("response",["--status",String(event.status),"--retry-ms",String(Number.isFinite(delay) ? Math.max(0,delay) : 0)]); }
+    const recording=call("response",["--status",String(event.status),"--retry-ms",String(Number.isFinite(delay) ? Math.max(0,delay) : 0)]);
+    // Holding a successful response races Pi closing its stream; only a failure must land before the next request.
+    if (event.status >= 200 && event.status < 300) { recording.catch(() => {}); return; }
+    try { await recording; }
     catch (error) { ctx.abort(); throw error; }
   });
   pi.on("message_end", async (event,ctx) => {

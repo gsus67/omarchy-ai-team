@@ -12,6 +12,12 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 import native_pi
 import nous_quota as quota
 
+def node_runs_typescript():
+    if not shutil.which('node'):return False
+    version=subprocess.run(['node','--version'],capture_output=True,text=True).stdout.lstrip('v').split('.')
+    return (int(version[0]),int(version[1]))>=(22,6)
+
+
 HARNESS=r'''
 import { pathToFileURL } from "node:url";
 const [extension,scenario]=process.argv.slice(2);
@@ -49,7 +55,7 @@ DEVICE={'status':200,'body':{'device_code':'synthetic-device','user_code':'ABCD'
                              'verification_uri_complete':'https://portal.nousresearch.com/activate?user_code=ABCD'}}
 
 
-@unittest.skipUnless(shutil.which('node'),'Node ejecuta la extensión generada')
+@unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
 class NousOAuthExtensionTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
@@ -143,6 +149,44 @@ class NousOAuthExtensionTests(unittest.TestCase):
 
     def test_api_key_is_read_from_the_keyring(self):
         self.assertEqual(self.run_extension('key',credentials=self.stored(access='synthetic-access'))['result'],'synthetic-access')
+
+
+RESPONSE_HARNESS=r'''
+import { pathToFileURL } from "node:url";
+const [extension,status]=process.argv.slice(2);
+const handlers={};const calls=[];
+const module=await import(pathToFileURL(extension));
+module.default({registerProvider(){},getSettings(){return {}},on(name,handler){handlers[name]=handler},
+  exec(_command,args){calls.push(args);return args.includes("admit") ? Promise.resolve({code:0,stdout:'{"allowed":true,"managed":true}'}) : new Promise(()=>{})}});
+const ctx={model:{provider:"nous",id:"m",baseUrl:"https://inference-api.nousresearch.com/v1"},abort(){}};
+await handlers.before_provider_request({},ctx);
+const finished=await Promise.race([handlers.after_provider_response({status:Number(status),headers:{}},ctx).then(()=>true),
+  new Promise(resolve=>setTimeout(()=>resolve(false),200))]);
+process.stdout.write(JSON.stringify({finished,recorded:calls.some(args=>args.includes("response"))}));
+process.exit(0);
+'''
+
+
+@unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
+class NousResponseRecordingTests(unittest.TestCase):
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        env=patch.dict(os.environ,{'HOME':str(self.root),'PI_CODING_AGENT_DIR':str(self.root/'agent'),'XDG_DATA_HOME':str(self.root/'data')})
+        env.start();self.addCleanup(env.stop)
+        self.extension=self.root/'extension.ts';self.extension.write_text(quota.extension(self.root/'settings.json'))
+        self.harness=self.root/'harness.mjs';self.harness.write_text(RESPONSE_HARNESS)
+
+    def respond(self,status):
+        result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),str(status)],
+                              capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
+
+    def test_success_is_recorded_without_holding_the_stream(self):
+        self.assertEqual(self.respond(200),{'finished':True,'recorded':True})
+
+    def test_rate_limit_keeps_the_response_handler_waiting_for_the_record(self):
+        self.assertEqual(self.respond(429),{'finished':False,'recorded':True})
 
 
 class NousOAuthCheckTests(unittest.TestCase):
