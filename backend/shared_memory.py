@@ -122,8 +122,10 @@ def probe(runtime, agent, store=None):
 
 def instructions(original, enabled=False):
     message = ("Memoria compartida: si el MCP ai-team-memory está disponible en esta sesión, "
-               "cada memoria pertenece a un proyecto. Al empezar una tarea, llama a memory_search con project: el de esta sesión si está "
-               "dentro de un repo o el que diga el usuario, por su nombre exacto (memory_doctor lista los proyectos). Busca también en "
+               "esa es la memoria del equipo, y la memoria propia de tu CLI no la sustituye: mirar solo la tuya no cuenta como haber consultado. "
+               "Cada memoria pertenece a un proyecto. Al empezar una tarea, cuando te pregunten qué recuerdas y antes de decir que no recuerdas algo, "
+               "llama a memory_search con project: el de esta sesión si está dentro de un repo o el que diga el usuario, "
+               "por su nombre exacto (memory_doctor lista los proyectos). Busca también en "
                "project compartido, que guarda las normas comunes, y amplía con memory_read solo lo necesario. Si trabaja en varios, "
                "usa el proyecto de cada dato. Si no está claro a cuál corresponde, pregunta. "
                "Al terminar algo, guarda con memory_save (ámbito project, destinos all y project) los hechos, decisiones y "
