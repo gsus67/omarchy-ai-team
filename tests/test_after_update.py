@@ -151,6 +151,43 @@ class AfterUpdateTests(unittest.TestCase):
         self.assertEqual(harness.load_config()['pluginVersion'], self.version)
         self.assertFalse(reply['data']['needsReconnect'])
 
+    def test_after_update_renews_nous_extension_only_when_enabled(self):
+        source = harness.nous_quota.paths(harness.config_path())[0]
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                config = self.configured('previous')
+                config['piProviders'] = {'nous': enabled}
+                harness.save_config(config)
+                code, _ = self.command()
+                self.assertEqual(code, 0)
+                self.assertEqual(source.is_file(), enabled)
+        self.assertIn('registerProvider("nous"', source.read_text())
+
+    def test_after_update_replaces_the_previous_managed_nous_extension(self):
+        config = self.configured('previous')
+        config['piProviders'] = {'nous': True}
+        harness.save_config(config)
+        with patch.object(harness.nous_quota, 'extension', return_value='// previous version\n'):
+            harness.nous_quota.configure(harness.config_path(), True)
+        source = harness.nous_quota.paths(harness.config_path())[0]
+        self.assertEqual(source.read_text(), '// previous version\n')
+        code, _ = self.command()
+        self.assertEqual(code, 0)
+        self.assertIn('registerProvider("nous"', source.read_text())
+
+    def test_after_update_preserves_an_edited_nous_extension_and_reports_it(self):
+        config = self.configured('previous')
+        config['piProviders'] = {'nous': True}
+        harness.save_config(config)
+        harness.nous_quota.configure(harness.config_path(), True)
+        source = harness.nous_quota.paths(harness.config_path())[0]
+        source.write_text('// user edit\n')
+        code, reply = self.command()
+        self.assertEqual(code, 0)
+        self.assertEqual(source.read_text(), '// user edit\n')
+        with harness.i18n.using('en'):
+            self.assertIn(harness.tr('La extensión de cuota está modificada o es ajena; se conserva.'), reply['message'])
+
     def test_after_update_refreshes_team_catalog_when_enabled(self):
         for enabled, selected, calls in ((True, 'codex-2', 1), (False, 'codex-2', 0), (True, 'claude', 0)):
             with self.subTest(enabled=enabled, selected=selected):

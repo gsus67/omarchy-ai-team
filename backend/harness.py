@@ -802,6 +802,11 @@ def _main(argv=None):
             version = plugin_version()
             if config.get('pluginVersion') != version or team_agent_changed(config, status(config)['agents']):
                 errors = refresh_connections(config)
+                if native_pi.provider_settings(config)['nous']:
+                    try:
+                        nous_quota.configure(config_path(), True)
+                    except (native_plugins.PluginError, OSError, ValueError) as error:
+                        errors.append(str(error))
                 config['pluginVersion'] = version
                 save_config(config)
                 message = '; '.join(errors) if errors else tr('Reconectado tras actualizar a {version}', version=version)
@@ -860,7 +865,7 @@ def _main(argv=None):
                 if not native_pi.provider_settings(config)[args.provider]:raise HarnessError(tr('Activa primero ese proveedor.'))
                 inventory,_=mise_inventory();tool=agent_tool('pi',inventory)
                 if tool['installation']!='installed':raise HarnessError(tr('Pi no está instalado.'))
-                record=native_pi.check_provider(tool['binary'],args.provider)
+                record=native_pi.check_provider(tool['binary'],args.provider,config_path())
                 config.setdefault('piProviderChecks',{})[args.provider]={**record,'binary':tool['binary'],'version':tool['version']}
                 save_config(config);message=record['detail']
         elif args.command == 'tool-group':

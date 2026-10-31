@@ -73,7 +73,13 @@ Implementado:
   predeterminado se aplica a sesiones nuevas. xAI requiere consentimiento de
   pago explícito. Nous filtra modelos `:free` de precio cero con herramientas;
   el RPM declarado y margen inicial del 25 % se comparten entre sesiones
-  gestionadas, sin proxy ni fallback de pago.
+  gestionadas, sin proxy ni fallback de pago. En Pi, `/login` → cuenta →
+  **Nous Portal** inicia sesión con OAuth y guarda los tokens en el llavero cifrado
+  con `secret-tool`; sin llavero no se inicia sesión ni se usa texto plano. Desactivar Nous en el
+  panel borra esa sesión; `/logout` en Pi no la borra del llavero. Nous no
+  publica un cliente para terceros: el OAuth usa el de Hermes y puede dejar de
+  funcionar si Nous lo cambia. `/login nous` guarda una API key en texto plano en
+  `auth.json` de Pi: evítalo y usa en su lugar una clave `!secret-tool lookup …`.
 
 Los cambios nativos se cargan en sesiones nuevas. Detectar, actualizar el panel
 o activar una preferencia no inicia inferencia. Desactivar retira únicamente
