@@ -203,11 +203,28 @@ class NousErrorPauseTests(unittest.TestCase):
     def test_an_unavailable_free_model_does_not_pause_every_session(self):
         self.assertFalse(self.pauses('503: {"status":503,"message":"The requested model is currently unavailable."}'))
 
+    def test_an_unavailable_model_reported_as_a_rate_limit_only_fails_that_request(self):
+        self.assertFalse(self.pauses('429: {"status":429,"message":"The requested model is currently unavailable."}'))
+
     def test_an_account_rate_limit_still_pauses(self):
         self.assertTrue(self.pauses('429: {"status":429,"message":"Rate limit exceeded"}'))
 
-    def test_an_unknown_error_still_pauses(self):
-        self.assertTrue(self.pauses('undefined is not a function'))
+    def test_account_errors_pause_every_session(self):
+        for status in (401,402,403):
+            with self.subTest(status=status):
+                self.assertTrue(self.pauses(f'{status}: {{"status":{status},"message":"synthetic"}}'))
+
+    def test_a_dropped_connection_only_fails_that_request(self):
+        self.assertFalse(self.pauses('The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'))
+
+    def test_a_server_error_only_fails_that_request(self):
+        self.assertFalse(self.pauses('500: {"status":500,"message":"synthetic"}'))
+
+    def test_an_unknown_error_only_fails_that_request(self):
+        self.assertFalse(self.pauses('undefined is not a function'))
+
+    def test_a_missing_login_only_fails_that_request(self):
+        self.assertFalse(self.pauses('Nous: no session in the encrypted keyring; unlock it or log in again.'))
 
 
 @unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
