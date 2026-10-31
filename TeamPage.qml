@@ -137,6 +137,17 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
   }
+  Text {
+    objectName: "usage-guard-pending"
+    Layout.fillWidth: true
+    visible: (root.info.usageGuardPending || []).length > 0
+    text: root.tr("Falta aprobar el aviso de consumo en {perfiles}: abre Codex con ese perfil, escribe /hooks y pulsa t.", {perfiles: (root.info.usageGuardPending || []).join(", ")})
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
   RowLayout {
     Layout.fillWidth: true
     spacing: root.metrics.xxs

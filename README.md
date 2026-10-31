@@ -33,7 +33,7 @@ Remove it with `omarchy plugin remove gsus67.ai-team`. Disable each objective in
 
 Common rules live in a project called `compartido`. Only repositories directly under `~/Work` can be named from another folder.
 
-**Save and stop:** at 90 % of Claude's 5-hour or weekly usage, sessions are told to stop and leave a detailed handoff in the project memory. Change the limit or turn it off in **Settings → Team**.
+**Save and stop:** at 90 % of the 5-hour or weekly usage of Claude or Codex, sessions are told to stop and leave a detailed handoff in the project memory. Change the limit or turn it off in **Settings → Team**. Codex asks you to approve this once with `/hooks`.
 
 Pi with Nous only offers free models. Grok through xAI is paid and needs your explicit consent. Only account errors pause Nous for every session. Nous does not publish an OAuth client for third parties, so that login uses the Hermes client and may stop working; API keys entered with `/login nous` are stored by Pi in plain text.
 

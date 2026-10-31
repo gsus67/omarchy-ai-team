@@ -69,6 +69,9 @@ class NativeTeamTests(unittest.TestCase):
         self.assertLess(text.index('CODEX_HOME=' + str(self.root / '.codex-2')),
                         text.index('CODEX_HOME=' + str(self.root / '.codex') + ' '))
 
+    def test_a_delegated_task_does_not_delegate_again(self):
+        self.assertIn('no encargues nada a otros modelos', self.content())
+
     def test_only_codex_2_never_uses_other_account(self):
         text = self.content({'codex-2'})
         self.assertIn('CODEX_HOME=' + str(self.root / '.codex-2'), text)

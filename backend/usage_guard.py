@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Claude Code hook: past the usage limit, tell the session to stop and leave a handoff. It must never break a session."""
+"""Claude Code and Codex hook: past the usage limit, tell the session to stop and leave a handoff. It must never break a session."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,6 @@ import sys
 import tempfile
 import time
 
-COMMAND = 'omarchy-agent-usage-claude'
 CACHE_SECONDS = 60
 USAGE_GUARD_MESSAGE = ('AI Team: {label} va por el {used} % y tu límite es {limit} %. Deja de avanzar en la tarea ahora y no empieces nada nuevo; '
            'lo que queda es para no perder el trabajo. Guarda con memory_save (kind handoff, en el proyecto de la tarea) un relevo detallado: '
@@ -20,16 +20,20 @@ USAGE_GUARD_MESSAGE = ('AI Team: {label} va por el {used} % y tu límite es {lim
            'Después avisa al usuario de dónde quedó y detente. Sigue trabajando solo si el usuario te lo pide expresamente.')
 
 
-def read_limits():
+def read_limits(agent, codex_home):
     root = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'omarchy-ai-team'
-    cache = root / 'usage-guard.json'
+    # One reading per account: two Codex profiles have separate limits.
+    suffix = '' if agent == 'claude' else '-codex-' + hashlib.sha256(os.fsencode(codex_home)).hexdigest()[:12]
+    cache = root / f'usage-guard{suffix}.json'
     try:
         if time.time() - cache.stat().st_mtime < CACHE_SECONDS:
             return json.loads(cache.read_text())
     except (OSError, ValueError):
         pass
-    tool = shutil.which(COMMAND) or f'/usr/share/omarchy/bin/{COMMAND}'
-    result = subprocess.run([tool, '--limits-only'], capture_output=True, text=True, timeout=10, check=True)
+    command = f'omarchy-agent-usage-{agent}'
+    tool = shutil.which(command) or f'/usr/share/omarchy/bin/{command}'
+    environment = {**os.environ, **({'CODEX_HOME': codex_home} if agent == 'codex' else {})}
+    result = subprocess.run([tool, '--limits-only'], capture_output=True, text=True, timeout=10, check=True, env=environment)
     limits = json.loads(result.stdout)['limits']
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     with tempfile.NamedTemporaryFile('w', dir=root, delete=False) as stream:
@@ -41,13 +45,15 @@ def read_limits():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--settings', required=True)
+    parser.add_argument('--agent', choices=('claude', 'codex'), default='claude')
+    parser.add_argument('--codex-home', default='')
     args = parser.parse_args()
     event = json.load(sys.stdin)['hook_event_name']
     path = Path(args.settings)
     guard = {'enabled': True, 'percent': 90, **(json.loads(path.read_text()).get('usageGuard', {}) if path.exists() else {})}
     if not guard['enabled']:
         return
-    for row in read_limits():
+    for row in read_limits(args.agent, args.codex_home):
         used = round(row['percent'] * 100)
         if used >= guard['percent']:
             text = USAGE_GUARD_MESSAGE.format(label=row['label'], used=used, limit=guard['percent'])
