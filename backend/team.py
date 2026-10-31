@@ -11,6 +11,10 @@ CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna')
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
+STRONG_ORDER = (('claude', 'opus'), ('codex', 'sol'), ('claude', 'sonnet'), ('codex', 'luna'))
+FALLBACK_ORDER = {'plan': STRONG_ORDER, 'code': STRONG_ORDER,
+                  'review': (('claude', 'sonnet'), ('claude', 'opus'), ('codex', 'sol'), ('codex', 'luna'), ('pi', '')),
+                  'simple': (('pi', ''), ('claude', 'haiku'), ('codex', 'luna'), ('claude', 'sonnet'))}
 ROLE_EFFORTS = dict(zip(ROLES, ('xhigh', 'high', 'high', 'medium')))
 
 
@@ -114,6 +118,31 @@ def recommend(selected, catalog, free_pi):
 
 def same_model(left, right):
     return bool(left and right and (left['agent'], left['model']) == (right['agent'], right['model']))
+
+
+def codex_version(row):
+    match = re.fullmatch(r'gpt-(\d+(?:\.\d+)*)-\w+', row['model'])
+    return tuple(map(int, match[1].split('.'))) if match else ()
+
+
+def alternatives(key, roles, options, limit=3):
+    """Ordered free or subscription models for a role; writing roles exclude Pi."""
+    main = roles.get(key)
+    if not main:
+        return []
+    # A reviewer must stay independent of whoever writes, in both directions.
+    others = [roles.get(name) for name in {'review': ('code', 'simple'), 'code': ('review',)}.get(key, ())]
+    allowed = [row for row in options if not row['paid'] and not same_model(row, main)
+               and not any(same_model(row, other) for other in others)]
+    # Free models with levels first: they let the role keep its effort.
+    ranked = sorted(options, key=lambda row: row['agent'] == 'pi' and row['efforts'] == [''])
+    ordered = []
+    for agent, name in FALLBACK_ORDER[key]:
+        matches = [row for row in ranked if row['agent'] == agent and name in row['model']]
+        # Only the newest Codex of a family: an older one is not a different author.
+        if agent == 'codex' and matches: matches = [max(matches, key=codex_version)]
+        ordered += [row for row in matches if row in allowed and row not in ordered]
+    return [dict(agent=row['agent'], model=row['model'], effort=row['recommendedEfforts'][key]) for row in ordered[:limit]]
 
 
 def effective(config, selected, catalog, free_pi):

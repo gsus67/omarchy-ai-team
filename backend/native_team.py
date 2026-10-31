@@ -44,7 +44,7 @@ def instruction(original,paths,enabled,*,team=None):
                  +(': '+command if command else '')+'. '
                  'Si tu sandbox o tus permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, di claramente que ese papel no se hizo con su modelo: un ayudante interno de tu CLI no cuenta como revisión independiente. '
                  'Lee la skill '+ID+' en '+json.dumps(str(paths['source']/'SKILL.md'),ensure_ascii=False)
-                 +' para los demás comandos y reglas. Conserva los permisos nativos; nunca de pago sin consentimiento.')
+                 +' para los demás comandos, las alternativas si un modelo no responde y las reglas. Conserva los permisos nativos; nunca de pago sin consentimiento.')
     return native_plugins.instruction_block(original,'team',message if enabled else None)
 
 
@@ -163,6 +163,11 @@ def text(paths, settings_file, team=None):
         'Codex-2 primero; solo ante un error real de cuota usa Codex si también está seleccionado. '
         'Si ambas cuentas agotan cuota, avisa y usa otro recomendado permitido; si no existe, pide una decisión. '
         'No inventes cuotas ni actives un proveedor de pago.',
+        'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
+        'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
+        'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '
+        'Una revisión nunca la hace el modelo que escribió el cambio: salta esa alternativa. '
+        'Informa qué modelo hizo cada papel y por qué se cambió. Si no queda alternativa, déjalo pendiente y dilo; no lo des por hecho.',
         'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas; '
         'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.',
         '', 'Sustituye <dir> y <encargo> por valores concretos citados como argumentos de shell. '
@@ -173,6 +178,13 @@ def text(paths, settings_file, team=None):
         lines += [roles.LABELS[key]+':', '```sh']
         lines += role_commands(key, row, profiles)
         lines += ['```', '']
+        options = roles.alternatives(key, assignments, state.get('options', []))
+        if options:
+            lines += ['Alternativas de '+roles.LABELS[key]+', en orden:', '```sh']
+            for number, option in enumerate(options, 1):
+                # One model can take one line per Codex account: the number marks the alternative.
+                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles)]
+            lines += ['```', '']
     # Native permission recipes remain explicit even when a role uses another family.
     for agent, writing, reading in (('codex', 'workspace-write', 'read-only'), ('claude', 'acceptEdits', 'plan')):
         row = next((r for r in assignments.values() if r['agent']==agent), None)
