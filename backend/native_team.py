@@ -135,7 +135,8 @@ def role_commands(key, row, profiles):
         return [claude_command(row, 'plan' if key in ('plan', 'review') else 'acceptEdits')]
     if key in ('review', 'simple'):
         provider, model = row['model'].split('/', 1)
-        return ['cd '+shlex.quote('<dir>')+' && '+shlex.join(['pi', '-p', '--provider', provider, '--model', model, '<encargo>'])+' </dev/null']
+        thinking = ['--thinking', row['effort']] if row.get('effort') else []
+        return ['cd '+shlex.quote('<dir>')+' && '+shlex.join(['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])+' </dev/null']
     return ['# Pi: encargo pendiente; requiere otra CLI para este papel.']
 
 

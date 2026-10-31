@@ -252,6 +252,9 @@ def provider_settings(config):
             or len(catalog['models'])>100 or not isinstance(catalog.get('checkedAt'),str)):
         raise native_plugins.PluginError(tr('El catálogo Nous no es compatible; no acredita una conexión real.'))
     if catalog:
+        efforts=catalog.get('effortModels',[])
+        if not isinstance(efforts,list) or not all(isinstance(model,str) and model.endswith(':free') for model in efforts):
+            raise native_plugins.PluginError(tr('El catálogo Nous no es compatible; no acredita una conexión real.'))
         expected={'id','name','contextWindow','maxTokens','reasoning','cost','input'}
         for row in catalog['models']:
             if (not isinstance(row,dict) or set(row)!=expected or not isinstance(row['id'],str)
@@ -372,7 +375,10 @@ def free_nous_catalog(value):
                      'reasoning':'reasoning' in row.get('supported_parameters',[]),
                      'cost':{'input':0,'output':0,'cacheRead':0,'cacheWrite':0},'input':['text']})
     if not rows:raise native_plugins.PluginError(tr('Nous no confirmó modelos :free con todos los precios cero y herramientas; no habrá sustitución de pago.'))
-    return {'models':rows,'checkedAt':datetime.now(timezone.utc).isoformat(),'url':NOUS_URL+'/models',
+    # Kept apart from the rows, which go to models.json and must keep Pi's schema.
+    announced={row.get('id') for row in value['data'] if isinstance(row,dict) and isinstance(row.get('supported_parameters'),list) and 'reasoning_effort' in row['supported_parameters']}
+    return {'models':rows,'effortModels':[row['id'] for row in rows if row['reasoning'] and row['id'] in announced],
+            'checkedAt':datetime.now(timezone.utc).isoformat(),'url':NOUS_URL+'/models',
             'accountVerified':False,'quotaVerified':False,'safetyMarginPercent':25,
             'detail':tr('Catálogo público de precio cero; autenticación, acceso y cuota efectivos pendientes. Margen objetivo 25 %, todavía sin límite numérico al que aplicarlo.')}
 

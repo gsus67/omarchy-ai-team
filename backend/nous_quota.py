@@ -180,6 +180,8 @@ const NOUS_KEYRING = '''+json.dumps(keyring_attributes(settings_file))+''';
   });
   pi.on("message_end", async (event,ctx) => {
     if (ctx.model?.provider !== "nous" || !managedRequest || event.message.role !== "assistant" || event.message.stopReason !== "error" || retryAfterKnown) return;
+    // Nous says these belong to one model, not the account: fail this request and leave other sessions running.
+    if (/at capacity upstream|model is currently unavailable/i.test(event.message.errorMessage ?? "")) return;
     try { const result=await call("error",[]); if (result.paused) ctx.abort(); }
     catch (error) { ctx.abort(); throw error; }
   });

@@ -39,6 +39,9 @@ SMOKE = r'''
   property int scopePopupStep: 0
   property int teamStep: 0
   property real teamRowY: 0
+  property real teamContentHeight: 0
+  property int selectorStep: 0
+  property real selectorContentHeight: 0
   property int teamWaits: 0
   property bool teamHoverMoved: false
   property bool teamHoverChecked: false
@@ -111,6 +114,17 @@ SMOKE = r'''
       var component = harness.snapshot.components.find(c => c.id === "superpowers")
       var componentToggle = find(harness, "goal-quality", [])
       if (!second || !component || !componentToggle) { fail("Shared component or second profile missing"); return }
+
+      if (selectorStep < 2) {
+        var selectorContent = find(harness,"harnessContent",[])
+        if (selectorStep === 0) {
+          selectorContentHeight = selectorContent.implicitHeight
+          selector.open();selectorStep++;return
+        }
+        if (!selector.popupOpen) { fail("Agent selector did not open"); return }
+        if (selectorContent.implicitHeight !== selectorContentHeight) { fail("Opening the agent selector stretched the panel"); return }
+        selector.close();selectorStep++;return
+      }
 
       if (languageStep < 3) {
         harness.page = "settings"
@@ -691,12 +705,14 @@ SMOKE = r'''
         }
         if (teamStep === 3) {
           teamRowY = find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y
+          teamContentHeight = teamContent.implicitHeight
           reviewModel.open();teamStep++;return
         }
         if (teamStep === 4) {
           var teamRoom = find(harness,"team-role-review-room",[])
           if (!reviewModel.popupOpen || !teamRoom || teamRoom.height <= 0 || reviewModel.mapToItem(teamScroll,0,reviewModel.height).y + teamRoom.height > teamScroll.height) { if (++teamWaits < 20) return; fail("Team model popup extends beyond panel or viewport"); return }
           if (find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y !== teamRowY) { fail("Opening a team popup moved the rows below"); return }
+          if (teamContent.implicitHeight !== teamContentHeight) { fail("Opening a team popup stretched the panel"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
           pointer.keyClick(Qt.Key_Down)
