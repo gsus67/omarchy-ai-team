@@ -5,6 +5,8 @@ import i18n
 from i18n import tr
 
 import argparse
+import contextlib
+import fcntl
 from datetime import datetime, timezone
 from contextlib import contextmanager
 import json
@@ -56,6 +58,18 @@ def config_path():
     if not base.is_absolute():
         raise HarnessError(tr('XDG_CONFIG_HOME debe ser una ruta absoluta.'))
     return base / "omarchy-ai-team" / "settings.json"
+
+
+@contextlib.contextmanager
+def after_update_lock():
+    path = config_path().with_name('after-update.lock')
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def load_config():
@@ -800,17 +814,22 @@ def _main(argv=None):
             save_config(config)
             message = tr('Comprobación con IA terminada. Consulta los resultados por agente.')
         elif args.command == 'after-update':
-            version = plugin_version()
-            if config.get('pluginVersion') != version or team_agent_changed(config, status(config)['agents']):
-                errors = refresh_connections(config)
-                if native_pi.provider_settings(config)['nous']:
-                    try:
-                        nous_quota.configure(config_path(), True)
-                    except (native_plugins.PluginError, OSError, ValueError) as error:
-                        errors.append(str(error))
-                config['pluginVersion'] = version
-                save_config(config)
-                message = '; '.join(errors) if errors else tr('Reconectado tras actualizar a {version}', version=version)
+            # One bar per monitor runs this at once: only the first may update and restart the shell.
+            with after_update_lock():
+                config = load_config()
+                version = plugin_version()
+                if config.get('pluginVersion') != version or team_agent_changed(config, status(config)['agents']):
+                    errors = refresh_connections(config)
+                    if native_pi.provider_settings(config)['nous']:
+                        try:
+                            nous_quota.configure(config_path(), True)
+                        except (native_plugins.PluginError, OSError, ValueError) as error:
+                            errors.append(str(error))
+                    # Not on first install: nothing old is loaded yet.
+                    if config.get('pluginVersion') not in (None, version): operation = {'shellRestart': True}
+                    config['pluginVersion'] = version
+                    save_config(config)
+                    message = '; '.join(errors) if errors else tr('Reconectado tras actualizar a {version}', version=version)
         elif args.command in ('pi-provider','pi-provider-check','pi-model','pi-auth','pi-nous-refresh','pi-nous-quota','pi-provider-probe','pi-nous-resume'):
             if not config.get('agents',{}).get('pi'):
                 raise HarnessError(tr('Selecciona Pi en Modelos y agentes antes de configurar sus proveedores.'))
