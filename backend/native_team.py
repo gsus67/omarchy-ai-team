@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shlex
 import stat
+import tomllib
 
 from atomic_files import atomic_write
 import memory_archive
@@ -88,8 +89,20 @@ def prepare(paths,settings_file,*,team=None):
     atomic_write(marker,json.dumps({'schemaVersion':1,'sha256':hashlib.sha256(content.encode()).hexdigest()}))
 
 
-def set_guard_hook(file,settings_file,enabled):
-    """Add or remove only our hook in Claude's settings; the script reads the limit at run time."""
+def guard_hook_trusted(home):
+    """Codex skips a hook until the user approves it with /hooks; every hook in the file needs its approval."""
+    try:
+        hooks=json.loads((home/'hooks.json').read_text()).get('hooks',{})
+        total=sum(len(entry.get('hooks',[])) for entries in hooks.values() for entry in entries)
+    except (OSError,ValueError,AttributeError,TypeError):return True  # Nothing installed that could be approved.
+    if not total:return True
+    try:states=tomllib.loads((home/'config.toml').read_text()).get('hooks',{}).get('state',{})
+    except (OSError,ValueError):return False
+    return sum(key.startswith(str(home/'hooks.json')) and 'trusted_hash' in value for key,value in states.items())>=total
+
+
+def set_guard_hook(file,settings_file,enabled,*,agent='claude',home=None):
+    """Add or remove only our hook in the CLI's settings; the script reads the limit at run time."""
     if not enabled and not file.exists():return
     invalid=native_plugins.PluginError(tr('La configuración de Claude no es válida; se conserva.'))
     if file.is_symlink():raise invalid
@@ -101,7 +114,8 @@ def set_guard_hook(file,settings_file,enabled):
     # Foreign entries are kept as they are, whatever their shape.
     ours=lambda entry:isinstance(entry,dict) and isinstance(entry.get('hooks'),list) and any(isinstance(hook,dict) and script.name in str(hook.get('command','')) for hook in entry['hooks'])
     # Always exit 0: in a prompt hook a failure would block the user, for example once the plugin is gone.
-    command='[ -f '+shlex.quote(str(script))+' ] && '+shlex.join(['/usr/bin/python3','-B',str(script),'--settings',str(settings_file)])+' || true'
+    command='[ -f '+shlex.quote(str(script))+' ] && '+shlex.join(['/usr/bin/python3','-B',str(script),'--settings',str(settings_file),
+                                                                 *(['--agent','codex','--codex-home',str(home)] if agent=='codex' else [])])+' || true'
     hooks=dict(original.get('hooks',{}))
     for event in ('PostToolUse','UserPromptSubmit'):
         kept=[entry for entry in hooks.get(event,[]) if not ours(entry)]
@@ -127,9 +141,9 @@ def apply(agent,binary,action,receipt=None,*,settings_file=None,team=None):
             raise native_plugins.PluginError(tr('El destino de skills es ajeno o un enlace; se conserva.'))
         prepare(paths,settings_file,team=team);paths['target'].parent.mkdir(parents=True,mode=0o700,exist_ok=True)
         if not owned(paths):paths['target'].symlink_to(paths['source'],target_is_directory=True)
-    if agent=='claude':
+    if agent in ('claude','codex'):
         # Before anything else changes. A broken file must not stop the team from being turned off.
-        try:set_guard_hook(paths['home']/'settings.json',settings_file,enabled)
+        try:set_guard_hook(paths['home']/('settings.json' if agent=='claude' else 'hooks.json'),settings_file,enabled,agent=agent,home=paths['home'])
         except native_plugins.PluginError:
             if enabled:raise
     config=shared_memory.local_config(agent);original=shared_memory.startup_text(agent,config)
@@ -137,9 +151,11 @@ def apply(agent,binary,action,receipt=None,*,settings_file=None,team=None):
     if agent=='codex':
         file,layer=native_plugins.codex_user_layer(binary)
         updated=instruction(layer['config'].get('developer_instructions',''),paths,enabled,team=team)
-        if updated!=layer['config'].get('developer_instructions',''):
-            native_plugins.codex_request(binary,'config/batchWrite',{'filePath':file,'expectedVersion':layer['version'],'reloadUserConfig':False,
-                'edits':[{'keyPath':'developer_instructions','value':updated or None,'mergeStrategy':'replace'}]})
+        edits=[{'keyPath':'developer_instructions','value':updated or None,'mergeStrategy':'replace'}] if updated!=layer['config'].get('developer_instructions','') else []
+        if enabled and layer['config'].get('features',{}).get('hooks') is not True:
+            edits.append({'keyPath':'features.hooks','value':True,'mergeStrategy':'replace'})
+        if edits:
+            native_plugins.codex_request(binary,'config/batchWrite',{'filePath':file,'expectedVersion':layer['version'],'reloadUserConfig':False,'edits':edits})
     elif agent=="pi":
         import native_pi
         native_pi.write_startup(original,updated)
@@ -191,7 +207,8 @@ def text(paths, settings_file, team=None):
         'La sesión habitual dirige. Si el papel corresponde a tu propia CLI y modelo, hazlo tú mismo sin lanzarte en headless. '
         'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva; todo lo demás se encarga. Respeta Superpowers como única metodología: sus pasos se reparten con estos papeles. '
         'Si el sandbox o los permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, informa de que ese papel no se hizo con su modelo. Un ayudante interno de tu CLI no cuenta como revisión independiente. '
-        'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación y «no hagas commits». '
+        'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, «no hagas commits» y «no encargues nada a otros modelos». '
+        'Si tú recibiste un encargo así, hazlo y devuelve el resultado: revisar y repartir corresponde a la sesión que dirige. '
         'Revisa los resultados y ejecuta pruebas antes de darlos por buenos. La revisión corresponde al modelo de Revisar. '
         'Usa un worktree Git por escritor paralelo. Los encargos no dejan archivos sueltos: temporales con `mktemp -d`, borrados al terminar, nunca registros en `/tmp` compartido. Con memoria compartida activa, guarda allí el plan y las decisiones para el traspaso; '
         'no captures transcripciones. Informa qué modelo hizo qué y tokens/coste solo si la CLI los reporta. '

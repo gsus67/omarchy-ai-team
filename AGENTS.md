@@ -189,7 +189,7 @@ Esta decisión no autoriza tocar perfiles reales. Aceptación con peticiones nat
 lanzar otras CLI dentro de su sandbox y debe informarlo, sin presentar ayudantes
 internos como revisión independiente.
 
-Decisión del usuario (2026-10-31): un hook nativo de Claude (`backend/usage_guard.py`)
+Decisión del usuario (2026-10-31): un hook nativo de Claude y Codex (`backend/usage_guard.py`)
 avisa a la sesión al llegar al límite de consumo, 90 % por defecto, para que pare y deje
 un relevo. Solo añade contexto: no bloquea, no lee la conversación ni ejecuta modelos.
 

@@ -126,10 +126,12 @@ SMOKE = r'''
       if (selectorStep < 2) {
         var selectorContent = find(harness,"harnessContent",[])
         if (selectorStep === 0) {
+          // Busy while the status check that runs when the plugin loads is still going.
+          if (!selector.enabled) return
           selectorContentHeight = selectorContent.implicitHeight
           selector.open();selectorStep++;return
         }
-        if (!selector.popupOpen) { fail("Agent selector did not open"); return }
+        if (!selector.popupOpen) { selector.open();return }
         if (selectorContent.implicitHeight !== selectorContentHeight) { fail("Opening the agent selector stretched the panel"); return }
         selector.close();selectorStep++;return
       }
@@ -879,8 +881,9 @@ for line in sys.stdin:
   result={'layers':[{'name':{'type':'user','file':str(file)},'version':'fixture','config':config}]}
  elif method=='config/batchWrite':
   file=Path(request['params']['filePath']);file.parent.mkdir(parents=True,exist_ok=True)
-  value=request['params']['edits'][0]['value']
-  file.write_text('developer_instructions = '+json.dumps(value or '')+'\n')
+  for edit in request['params']['edits']:
+   if edit['keyPath']=='developer_instructions':
+    file.write_text('developer_instructions = '+json.dumps(edit['value'] or '')+'\n')
   result={}
  elif method=='skills/list':
   skills=Path(os.environ['CODEX_HOME'])/'skills'

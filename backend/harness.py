@@ -182,9 +182,22 @@ def team_context(config):
     return selected, catalog, free_pi
 
 
+def usage_guard_pending(config, selected):
+    if not config.get('team', {}).get('enabled') or not team.usage_guard(config)['enabled']:
+        return []
+    pending = []
+    for agent in ('codex-2', 'codex'):
+        if agent in selected:
+            with agent_profile(agent) as cli:
+                if not native_team.guard_hook_trusted(native_plugins.agent_home(cli)):
+                    pending.append(AGENTS[agent])
+    return pending
+
+
 def team_state(config):
     selected, catalog, free_pi = team_context(config)
-    return {**team.effective(config, selected, catalog, free_pi), 'selected': sorted(selected), 'usageGuard': team.usage_guard(config)}
+    return {**team.effective(config, selected, catalog, free_pi), 'selected': sorted(selected), 'usageGuard': team.usage_guard(config),
+            'usageGuardPending': usage_guard_pending(config, selected)}
 
 
 def component_options(key: str, config: dict) -> dict:
