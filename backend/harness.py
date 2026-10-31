@@ -870,6 +870,8 @@ def _main(argv=None):
             elif args.command=='pi-nous-refresh':
                 if not native_pi.provider_settings(config)['nous']:raise HarnessError(tr('Activa primero la preferencia Nous.'))
                 operation={'nousCatalog':native_pi.refresh_nous(config,settings_file=config_path())};save_config(config)
+                # Models can leave the catalog: the team skill must not keep pointing at them.
+                if config.get('team',{}).get('enabled'):manage_component(config,'team','sync')
                 message=tr('Catálogo de precio cero actualizado; cuenta y cuota efectivos siguen pendientes.')
             elif args.command=='pi-model':
                 inventory,_=mise_inventory();tool=agent_tool('pi',inventory)

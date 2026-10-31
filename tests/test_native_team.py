@@ -103,6 +103,18 @@ class NativeTeamTests(unittest.TestCase):
             self.assertEqual(self.run_main(['team-recommend'])[0], 0)
             manage.assert_not_called()
 
+    def test_refreshing_the_nous_catalog_resyncs_the_team_only_when_enabled(self):
+        self.config['agents'] = {'claude': True, 'pi': True}
+        self.config['piProviders'] = {'nous': True}
+        self.config['team'] = {'enabled': True, 'roles': {}}; harness.save_config(self.config)
+        with patch.object(harness.native_pi, 'refresh_nous', return_value={}), patch.object(harness, 'manage_component') as manage:
+            self.assertEqual(self.run_main(['pi-nous-refresh'])[0], 0)
+            manage.assert_called_once_with(unittest.mock.ANY, 'team', 'sync')
+        self.config['team']['enabled'] = False; harness.save_config(self.config)
+        with patch.object(harness.native_pi, 'refresh_nous', return_value={}), patch.object(harness, 'manage_component') as manage:
+            self.assertEqual(self.run_main(['pi-nous-refresh'])[0], 0)
+            manage.assert_not_called()
+
     def test_team_all_uses_managed_component(self):
         harness.save_config(self.config)
         for action in ('enable', 'disable', 'verify', 'sync'):
