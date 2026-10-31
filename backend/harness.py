@@ -184,7 +184,7 @@ def team_context(config):
 
 def team_state(config):
     selected, catalog, free_pi = team_context(config)
-    return {**team.effective(config, selected, catalog, free_pi), 'selected': sorted(selected)}
+    return {**team.effective(config, selected, catalog, free_pi), 'selected': sorted(selected), 'usageGuard': team.usage_guard(config)}
 
 
 def component_options(key: str, config: dict) -> dict:
@@ -751,6 +751,9 @@ def _main(argv=None):
         restore.add_argument("--project-path",default="")
     commands.add_parser('team-models', help=tr('Actualizar catálogo nativo de modelos sin inferencia'))
     commands.add_parser('team-recommend', help=tr('Volver a los papeles recomendados'))
+    usage_guard = commands.add_parser('usage-guard', help=tr('Guardar y parar al llegar a un porcentaje de consumo'))
+    usage_guard.add_argument('enabled', choices=('true', 'false'))
+    usage_guard.add_argument('percent', type=int)
     team_set = commands.add_parser('team-set', help=tr('Elegir el modelo de un papel'))
     team_set.add_argument('role', choices=team.ROLES)
     team_set.add_argument('agent', choices=('claude', 'codex', 'pi'))
@@ -937,6 +940,10 @@ def _main(argv=None):
             config['localToolsSettings'] = value
             save_config(config)
             message = tr('Binario comprobado. La conexión nativa se verifica por separado.')
+        elif args.command == 'usage-guard':
+            team.set_usage_guard(config, args.enabled == 'true', args.percent)
+            save_config(config)
+            message = tr('Límite de consumo guardado.')
         elif args.command in ('team-set', 'team-recommend', 'team-models'):
             if args.command == 'team-set':
                 selected, catalog, free_pi = team_context(config)

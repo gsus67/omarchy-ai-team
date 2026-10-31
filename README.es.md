@@ -33,6 +33,8 @@ Para quitarlo, usa `omarchy plugin remove gsus67.ai-team`. Antes, desactiva cada
 
 Las normas comunes van en un proyecto llamado `compartido`. Desde otra carpeta solo se pueden nombrar los repos que estén directamente en `~/Work`.
 
+**Guardar y parar:** al llegar al 90 % del consumo de Claude, de 5 horas o semanal, se ordena a las sesiones parar y dejar un relevo detallado en la memoria del proyecto. Cambia el límite o desactívalo en **Ajustes → Equipo**.
+
 Pi con Nous solo ofrece modelos gratuitos. Grok con xAI es de pago y requiere tu consentimiento explícito. Solo los errores de la cuenta pausan Nous para todas las sesiones. Nous no publica un cliente OAuth para terceros, así que ese inicio de sesión usa el de Hermes y podría dejar de funcionar; las API keys de `/login nous` las guarda Pi en texto plano.
 
 ## Desarrollo

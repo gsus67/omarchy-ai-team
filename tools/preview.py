@@ -711,6 +711,8 @@ SMOKE = r'''
         if (teamStep === 3) {
           teamRowY = find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y
           teamContentHeight = teamContent.implicitHeight
+          var guardField = find(harness,"usage-guard-percent",[])
+          if (!guardField || guardField.value !== 90 || !find(harness,"usage-guard-switch",[]).checked) { fail("Usage guard must default to 90 and on"); return }
           teamContentY = teamScroll.contentItem.contentY
           reviewModel.open();teamStep++;return
         }

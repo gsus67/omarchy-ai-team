@@ -648,5 +648,10 @@
   "▶ Abrir {nombre}": "▶ Open {nombre}",
   "★ Recomendado": "★ Recommended",
   "★ {esfuerzo}": "★ {esfuerzo}",
-  "★ {modelo}": "★ {modelo}"
+  "★ {modelo}": "★ {modelo}",
+  "Guardar y parar al (%)": "Save and stop at (%)",
+  "Guardar y parar al llegar a un porcentaje de consumo": "Save and stop at a usage percentage",
+  "Límite de consumo guardado.": "Usage limit saved.",
+  "El límite de consumo debe estar entre 50 y 99 %.": "The usage limit must be between 50 and 99 %.",
+  "La configuración de Claude no es válida; se conserva.": "The Claude settings are not valid; they are preserved."
 }
