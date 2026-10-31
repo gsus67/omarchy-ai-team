@@ -286,6 +286,7 @@ def provider_choice(config,provider,enabled,confirmed=False,settings_file=None):
         if settings_file:
             import nous_quota
             nous_quota.configure(settings_file,False)
+            nous_quota.clear_oauth(settings_file)
     if provider=='xai' and not enabled:
         record=config.get('piManagedModel')
         if record:
@@ -321,7 +322,7 @@ def default_model(config,model):
     config['piManagedModel']={'model':model,'previous':previous}
 
 
-def check_provider(binary,provider):
+def check_provider(binary,provider,settings_file=None):
     if provider not in ('xai','nous'):raise native_plugins.PluginError(tr('Proveedor Pi no admitido.'))
     result=subprocess.run([binary,'auth','check','--provider',provider,'--json','--no-refresh'],cwd=Path.home(),
                           env={**os.environ,'PI_CODING_AGENT_DIR':str(home()),'PI_OFFLINE':'1'},capture_output=True,text=True,timeout=20)
@@ -330,6 +331,12 @@ def check_provider(binary,provider):
     from datetime import datetime,timezone
     # No --credentials, no bearer/API-key printing, no automatic refresh.
     ready=result.returncode==0 and value.get('status')=='ready'
+    if provider=='nous' and not ready and settings_file:
+        # `pi auth check` loads no extensions, so it cannot see the Nous OAuth session.
+        import nous_quota
+        try:session=read('auth.json').get('nous')
+        except (OSError,ValueError,native_plugins.PluginError):session=None
+        ready=isinstance(session,dict) and session.get('type')=='oauth' and session.get('access')==session.get('refresh')=='keyring' and nous_quota.oauth_stored(settings_file)
     return {'ready':ready,'remoteVerified':False,'checkedAt':datetime.now(timezone.utc).isoformat(),
             'detail':tr('Credenciales locales disponibles; conexión remota pendiente.') if ready else tr('Autenticación necesaria en el menú /login de Pi. No se copian claves ni cuentas.')}
 

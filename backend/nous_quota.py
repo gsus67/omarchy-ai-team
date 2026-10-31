@@ -36,12 +36,108 @@ def paths(settings_file):
     return root/'tools/pi-nous'/key/'extension.ts',root/'state/nous-quota.json'
 
 
+# Nous publishes no client for third parties: this is the Hermes device flow and client id.
+# The fixed portal keeps tokens from being redirected; errors carry only the OAuth code.
+# Tokens live only in the encrypted keyring; what Pi writes to auth.json holds placeholders.
+KEYRING_SERVICE='ai-team-pi-nous'
+OAUTH_LOGIN='''type NousCredentials = { access: string; refresh: string; expires: number };
+type NousTokens = { access: string; refresh: string };
+function nousSave(tokens: NousTokens) {
+  try {
+    execFileSync("secret-tool",["store","--label=AI Team Pi Nous",...NOUS_KEYRING],
+      {input:JSON.stringify(tokens),timeout:30000,stdio:["pipe","ignore","ignore"]});
+  } catch { throw new Error("Nous: the encrypted keyring is unavailable; nothing was stored in plain text."); }
+}
+function nousLoad(): NousTokens {
+  try {
+    const tokens = JSON.parse(execFileSync("secret-tool",["lookup",...NOUS_KEYRING],
+      {encoding:"utf8",timeout:30000,stdio:["ignore","pipe","ignore"]}));
+    if (typeof tokens.access === "string" && typeof tokens.refresh === "string") return tokens;
+  } catch {}
+  throw new Error("Nous: no session in the encrypted keyring; unlock it or log in again.");
+}
+const NOUS_PORTAL = "https://portal.nousresearch.com";
+const NOUS_CLIENT = "hermes-cli";
+async function nousPost(path: string, body: Record<string,string>, headers: Record<string,string> = {}, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(30000);
+  const response = await fetch(NOUS_PORTAL+path, {method:"POST",
+    headers:{Accept:"application/json","Content-Type":"application/x-www-form-urlencoded",...headers},
+    body:new URLSearchParams(body).toString(), signal:signal ? AbortSignal.any([signal,timeout]) : timeout});
+  const data: any = await response.json().catch(() => ({}));
+  return {ok:response.ok, status:response.status, data, code:typeof data.error === "string" ? data.error : ""};
+}
+function nousCredentials(data: any, previous = ""): NousCredentials {
+  const refresh = typeof data.refresh_token === "string" ? data.refresh_token : previous;
+  if (typeof data.access_token !== "string" || !refresh) throw new Error("Nous token response is incomplete.");
+  nousSave({access:data.access_token,refresh});
+  const ttl = Number(data.expires_in);
+  const seconds = Number.isFinite(ttl) && ttl > 0 ? ttl : 900;
+  return {access:"keyring", refresh:"keyring", expires:Date.now()+Math.max(seconds-120,seconds/2)*1000};
+}
+function nousPause(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve,reject) => {
+    if (signal?.aborted) return reject(new Error("Nous login cancelled."));
+    const timer = setTimeout(resolve,ms);
+    signal?.addEventListener("abort",() => { clearTimeout(timer); reject(new Error("Nous login cancelled.")); },{once:true});
+  });
+}
+async function nousLogin(callbacks: any): Promise<NousCredentials> {
+  const signal: AbortSignal | undefined = callbacks.signal;
+  const device = await nousPost("/api/oauth/device/code",{client_id:NOUS_CLIENT,scope:"inference:invoke"},{},signal);
+  if (!device.ok || typeof device.data.device_code !== "string") throw new Error(`Nous device code failed (${device.status} ${device.code})`);
+  callbacks.onAuth({url:device.data.verification_uri_complete,instructions:`Code: ${device.data.user_code}`});
+  const deadline = Date.now()+Number(device.data.expires_in || 600)*1000;
+  let wait = Math.max(1,Number(device.data.interval) || 5);
+  while (Date.now() < deadline) {
+    await nousPause(wait*1000,signal);
+    const token = await nousPost("/api/oauth/token",{grant_type:"urn:ietf:params:oauth:grant-type:device_code",client_id:NOUS_CLIENT,device_code:device.data.device_code},{},signal);
+    if (token.ok) return nousCredentials(token.data);
+    if (token.code === "authorization_pending") continue;
+    if (token.code === "slow_down") { wait += 5; continue; }
+    throw new Error(`Nous login failed (${token.status} ${token.code})`);
+  }
+  throw new Error("Nous login timed out.");
+}
+async function nousRefresh(): Promise<NousCredentials> {
+  // Single-use token: Pi serializes refreshes and the rotated value goes back to the keyring.
+  const {refresh} = nousLoad();
+  const result = await nousPost("/api/oauth/token",{grant_type:"refresh_token",client_id:NOUS_CLIENT},{"x-nous-refresh-token":refresh});
+  if (!result.ok) throw new Error(`Nous refresh failed (${result.status} ${result.code})`);
+  return nousCredentials(result.data,refresh);
+}
+'''
+
+
+def keyring_attributes(settings_file):
+    return ['service',KEYRING_SERVICE,'account',paths(settings_file)[0].parent.name]
+
+
+def oauth_stored(settings_file):
+    try:
+        return native_pi.subprocess.run(['secret-tool','lookup',*keyring_attributes(settings_file)],stdin=native_pi.subprocess.DEVNULL,
+                                        stdout=native_pi.subprocess.DEVNULL,stderr=native_pi.subprocess.DEVNULL,timeout=30).returncode==0
+    except (OSError,native_pi.subprocess.SubprocessError):
+        return False
+
+
+def clear_oauth(settings_file):
+    try:
+        native_pi.subprocess.run(['secret-tool','clear',*keyring_attributes(settings_file)],stdin=native_pi.subprocess.DEVNULL,
+                                 stdout=native_pi.subprocess.DEVNULL,stderr=native_pi.subprocess.DEVNULL,timeout=30)
+    except (OSError,native_pi.subprocess.SubprocessError):
+        pass  # Without a keyring tool there is no stored session to remove.
+
+
 def extension(settings_file):
     source,state=paths(settings_file)
     command=[sys.executable,str(Path(__file__).resolve()),'--settings',str(settings_file),'--state',str(state)]
     # Provider/model metadata only: never read or replace event.payload/messages.
     return '''import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-export default function(pi: ExtensionAPI) {
+import { execFileSync } from "node:child_process";
+const NOUS_KEYRING = '''+json.dumps(keyring_attributes(settings_file))+''';
+'''+OAUTH_LOGIN+'''export default function(pi: ExtensionAPI) {
+  // Authentication only: the free catalog and endpoint stay in models.json.
+  pi.registerProvider("nous",{oauth:{name:"Nous Portal",login:nousLogin,refreshToken:nousRefresh,getApiKey:() => nousLoad().access}});
   const command = '''+json.dumps(command)+''';
   async function call(action: string, args: string[], signal?: AbortSignal) {
     const result = await pi.exec(command[0], [...command.slice(1), action, ...args], {timeout:5000, signal});
