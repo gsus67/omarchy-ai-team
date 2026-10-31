@@ -206,6 +206,8 @@ def text(paths, settings_file, team=None):
     lines.extend(['', *(saved_message(warning, 'es') for warning in state.get('warnings', [])), '',
         'La sesión habitual dirige. Si el papel corresponde a tu propia CLI y modelo, hazlo tú mismo sin lanzarte en headless. '
         'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva; todo lo demás se encarga. Respeta Superpowers como única metodología: sus pasos se reparten con estos papeles. '
+        'Un encargo que no responde no se espera ni se repite sin fin: intenta lanzarlo una sola vez con `timeout 60` si estás en un sandbox que puede impedirlo; '
+        'si no responde, sigue con lo que puedas hacer tú, di qué papel quedó pendiente y termina. '
         'Si el sandbox o los permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, informa de que ese papel no se hizo con su modelo. Un ayudante interno de tu CLI no cuenta como revisión independiente. '
         'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, «no hagas commits» y «no encargues nada a otros modelos». '
         'Si tú recibiste un encargo así, hazlo y devuelve el resultado: revisar y repartir corresponde a la sesión que dirige. '

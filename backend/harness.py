@@ -598,7 +598,7 @@ def _status(config=None):
     result = {"schemaVersion": 1, "phase": 7, "omarchyVersion": version,
             "pluginVersion": manifest_version, "needsReconnect": config.get('pluginVersion') != manifest_version or team_agent_changed(config, agents),
             "agents": agents, "components": components,
-            "deferred": ["Grok", "Nous"], "warning": warning,
+            "deferred": ["Grok"], "warning": warning,
             "launcher": {"defaultAgent": default, "canLaunch": can_launch, "detail": launch_detail,
                          "menu": native_launcher.inspect_menu(config, AGENTS, Path(__file__).resolve())},
             "memory": memory_info,
