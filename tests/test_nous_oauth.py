@@ -12,6 +12,12 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 import native_pi
 import nous_quota as quota
 
+def node_runs_typescript():
+    if not shutil.which('node'):return False
+    version=subprocess.run(['node','--version'],capture_output=True,text=True).stdout.lstrip('v').split('.')
+    return (int(version[0]),int(version[1]))>=(22,6)
+
+
 HARNESS=r'''
 import { pathToFileURL } from "node:url";
 const [extension,scenario]=process.argv.slice(2);
@@ -49,7 +55,7 @@ DEVICE={'status':200,'body':{'device_code':'synthetic-device','user_code':'ABCD'
                              'verification_uri_complete':'https://portal.nousresearch.com/activate?user_code=ABCD'}}
 
 
-@unittest.skipUnless(shutil.which('node'),'Node ejecuta la extensión generada')
+@unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
 class NousOAuthExtensionTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
@@ -161,7 +167,7 @@ process.exit(0);
 '''
 
 
-@unittest.skipUnless(shutil.which('node'),'Node ejecuta la extensión generada')
+@unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
 class NousResponseRecordingTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
@@ -179,7 +185,7 @@ class NousResponseRecordingTests(unittest.TestCase):
     def test_success_is_recorded_without_holding_the_stream(self):
         self.assertEqual(self.respond(200),{'finished':True,'recorded':True})
 
-    def test_rate_limit_is_recorded_before_the_next_request_can_start(self):
+    def test_rate_limit_keeps_the_response_handler_waiting_for_the_record(self):
         self.assertEqual(self.respond(429),{'finished':False,'recorded':True})
 
 
