@@ -40,6 +40,7 @@ SMOKE = r'''
   property int teamStep: 0
   property real teamRowY: 0
   property real teamContentHeight: 0
+  property real teamContentY: 0
   property int selectorStep: 0
   property real selectorContentHeight: 0
   property int teamWaits: 0
@@ -77,6 +78,13 @@ SMOKE = r'''
   function fail(message) {
     console.error("HARNESS_SMOKE_FAIL: " + message)
     Qt.quit()
+  }
+
+  // The panel window covers the screen, so popups float past the card without moving it.
+  function popupFitsWindow(control) {
+    var window = control.Window.window
+    var tallest = 8 * Style.spacing.popupRowHeight + 7 * Style.spacing.labelGap + Style.spacing.xxs
+    return !!window && control.mapToItem(null,0,control.height).y + tallest <= window.height
   }
 
   function shot(name, noAdvance) {
@@ -250,8 +258,6 @@ SMOKE = r'''
           }
           if (harness.page !== "tokens" || !find(harness,"local-tools-scope",[]).visible || !find(harness,"local-tool-rg",[]).visible || find(harness,"local-tool-git",[]) || find(harness,"local-tool-shellcheck",[]) || find(harness,"local-tools-search",[]) || find(harness,"local-tools-category",[])) { fail("Tokens page not filtered or advanced controls missing"); return }
           var scopeControl=find(harness,"local-tools-scope",[])
-          var scopeRoom=find(harness,"local-tools-scope-room",[])
-          if (!scopeRoom) { fail("Pointer target unavailable: local-tools-scope-room"); return }
           var scopeScroll=find(harness,"harness-scroll",[])
           if (scopeControl.options.length <= 8) { fail("Scope fixture must exercise a long list"); return }
           if (scopePopupStep === 0) {
@@ -261,12 +267,11 @@ SMOKE = r'''
           }
           if (scopePopupStep === 1) { scopeControl.open();scopePopupStep++;return }
           if (scopePopupStep === 2) {
-            if (!scopeControl.popupOpen || scopeRoom.height <= 0) { fail("Scope popup extends beyond panel"); return }
-            if (scopeControl.mapToItem(scopeScroll,0,scopeControl.height).y + scopeRoom.height > scopeScroll.height) { fail("Scope popup is clipped by scroll viewport"); return }
+            if (!scopeControl.popupOpen || !popupFitsWindow(scopeControl)) { fail("Scope popup extends beyond window"); return }
             scopeControl.close();scopePopupStep++;return
           }
           if (scopePopupStep === 3) {
-            if (scopeControl.popupOpen || scopeRoom.height !== 0) { fail("Scope popup room was not released"); return }
+            if (scopeControl.popupOpen) { fail("Scope popup did not close"); return }
             scopeScroll.contentItem.contentY=0
             scopePopupStep++;return
           }
@@ -706,13 +711,14 @@ SMOKE = r'''
         if (teamStep === 3) {
           teamRowY = find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y
           teamContentHeight = teamContent.implicitHeight
+          teamContentY = teamScroll.contentItem.contentY
           reviewModel.open();teamStep++;return
         }
         if (teamStep === 4) {
-          var teamRoom = find(harness,"team-role-review-room",[])
-          if (!reviewModel.popupOpen || !teamRoom || teamRoom.height <= 0 || reviewModel.mapToItem(teamScroll,0,reviewModel.height).y + teamRoom.height > teamScroll.height) { if (++teamWaits < 20) return; fail("Team model popup extends beyond panel or viewport"); return }
+          if (!reviewModel.popupOpen || !popupFitsWindow(reviewModel)) { if (++teamWaits < 20) return; fail("Team model popup extends beyond panel or viewport"); return }
           if (find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y !== teamRowY) { fail("Opening a team popup moved the rows below"); return }
           if (teamContent.implicitHeight !== teamContentHeight) { fail("Opening a team popup stretched the panel"); return }
+          if (teamScroll.contentItem.contentY !== teamContentY) { if (++teamWaits < 20) return; fail("Opening a team popup scrolled the page"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
           pointer.keyClick(Qt.Key_Down)
@@ -727,8 +733,7 @@ SMOKE = r'''
         }
         if (teamStep === 6) {
           var planPopup = find(harness,"team-effort-plan",[])
-          var effortRoom = find(harness,"team-effort-plan-room",[])
-          if (!planPopup.popupOpen || !effortRoom || effortRoom.height <= 0 || planPopup.mapToItem(teamScroll,0,planPopup.height).y + effortRoom.height > teamScroll.height) { fail("Team effort popup is clipped by viewport"); return }
+          if (!planPopup.popupOpen || !popupFitsWindow(planPopup)) { fail("Team effort popup extends beyond window"); return }
           pointer.keyClick(Qt.Key_Down)
           pointer.keyClick(Qt.Key_Down)
           pointer.keyClick(Qt.Key_Return)
