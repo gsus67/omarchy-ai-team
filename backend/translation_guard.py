@@ -15,7 +15,7 @@ INSTRUCTIONS = {
     'nous_quota.py': {'extension'},
     'ai_check.py': {'prompt_for'},
 }
-INSTRUCTION_CONSTANTS = {'SECURITY_DESCRIPTION', 'TOKENS_DESCRIPTION', 'SECURITY_TEXT',
+INSTRUCTION_CONSTANTS = {'USAGE_GUARD_MESSAGE', 'SECURITY_DESCRIPTION', 'TOKENS_DESCRIPTION', 'SECURITY_TEXT',
                          'TOKENS_TEXT', 'SECURITY_COMMANDS', 'SECURITY_LESSONS', 'TOKENS_COMMANDS'}
 PROPER = {'AI Team', 'ECC Memory Vault', 'Superpowers', 'Claude', 'Claude Code', 'Codex',
           'Codex-2', 'Pi', 'Grok', 'Nous', 'xAI', 'English', 'Español', 'Tokens', 'Git', 'Python',

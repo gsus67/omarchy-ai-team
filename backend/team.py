@@ -145,6 +145,16 @@ def alternatives(key, roles, options, limit=3):
     return [dict(agent=row['agent'], model=row['model'], effort=row['recommendedEfforts'][key]) for row in ordered[:limit]]
 
 
+def usage_guard(config):
+    return {'enabled': True, 'percent': 90, **config.get('usageGuard', {})}
+
+
+def set_usage_guard(config, enabled, percent):
+    if type(enabled) is not bool or type(percent) is not int or not 50 <= percent <= 99:
+        raise TeamError(tr('El límite de consumo debe estar entre 50 y 99 %.'))
+    config['usageGuard'] = {'enabled': enabled, 'percent': percent}
+
+
 def effective(config, selected, catalog, free_pi):
     recommendations, warnings = recommend(selected, catalog, free_pi)
     choices = options(selected, catalog, free_pi, config.get('piPaidApproved', False))

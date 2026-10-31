@@ -8,7 +8,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import stat
 
+from atomic_files import atomic_write
 import memory_archive
 import native_plugins
 import native_skills
@@ -86,6 +88,35 @@ def prepare(paths,settings_file,*,team=None):
     atomic_write(marker,json.dumps({'schemaVersion':1,'sha256':hashlib.sha256(content.encode()).hexdigest()}))
 
 
+def set_guard_hook(file,settings_file,enabled):
+    """Add or remove only our hook in Claude's settings; the script reads the limit at run time."""
+    if not enabled and not file.exists():return
+    invalid=native_plugins.PluginError(tr('La configuración de Claude no es válida; se conserva.'))
+    if file.is_symlink():raise invalid
+    try:original=json.loads(memory_archive.read_file(file,1024*1024)) if file.exists() else {}
+    except (OSError,ValueError,native_plugins.PluginError) as error:raise invalid from error
+    if not isinstance(original,dict) or not isinstance(original.get('hooks',{}),dict):raise invalid
+    if any(not isinstance(original.get('hooks',{}).get(event,[]),list) for event in ('PostToolUse','UserPromptSubmit')):raise invalid
+    script=Path(__file__).with_name('usage_guard.py')
+    # Foreign entries are kept as they are, whatever their shape.
+    ours=lambda entry:isinstance(entry,dict) and isinstance(entry.get('hooks'),list) and any(isinstance(hook,dict) and script.name in str(hook.get('command','')) for hook in entry['hooks'])
+    # Always exit 0: in a prompt hook a failure would block the user, for example once the plugin is gone.
+    command='[ -f '+shlex.quote(str(script))+' ] && '+shlex.join(['/usr/bin/python3','-B',str(script),'--settings',str(settings_file)])+' || true'
+    hooks=dict(original.get('hooks',{}))
+    for event in ('PostToolUse','UserPromptSubmit'):
+        kept=[entry for entry in hooks.get(event,[]) if not ours(entry)]
+        if enabled:kept.append({'hooks':[{'type':'command','command':command,'timeout':15}]})
+        if kept:hooks[event]=kept
+        else:hooks.pop(event,None)
+    updated={**original,'hooks':hooks}
+    if not hooks:updated.pop('hooks')
+    if updated==original:return
+    mode=stat.S_IMODE(file.stat().st_mode) if file.exists() else 0o600
+    file.parent.mkdir(parents=True,mode=0o700,exist_ok=True)
+    atomic_write(file,json.dumps(updated,ensure_ascii=False,indent=2)+'\n')
+    file.chmod(mode)
+
+
 def apply(agent,binary,action,receipt=None,*,settings_file=None,team=None):
     if action not in ('enable','disable','verify') or not settings_file:
         raise native_plugins.PluginError(tr('Falta una operación o configuración válida de equipo.'))
@@ -96,6 +127,11 @@ def apply(agent,binary,action,receipt=None,*,settings_file=None,team=None):
             raise native_plugins.PluginError(tr('El destino de skills es ajeno o un enlace; se conserva.'))
         prepare(paths,settings_file,team=team);paths['target'].parent.mkdir(parents=True,mode=0o700,exist_ok=True)
         if not owned(paths):paths['target'].symlink_to(paths['source'],target_is_directory=True)
+    if agent=='claude':
+        # Before anything else changes. A broken file must not stop the team from being turned off.
+        try:set_guard_hook(paths['home']/'settings.json',settings_file,enabled)
+        except native_plugins.PluginError:
+            if enabled:raise
     config=shared_memory.local_config(agent);original=shared_memory.startup_text(agent,config)
     updated=instruction(original,paths,enabled,team=team)
     if agent=='codex':
