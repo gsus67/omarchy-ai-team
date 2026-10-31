@@ -145,6 +145,44 @@ class NousOAuthExtensionTests(unittest.TestCase):
         self.assertEqual(self.run_extension('key',credentials=self.stored(access='synthetic-access'))['result'],'synthetic-access')
 
 
+RESPONSE_HARNESS=r'''
+import { pathToFileURL } from "node:url";
+const [extension,status]=process.argv.slice(2);
+const handlers={};const calls=[];
+const module=await import(pathToFileURL(extension));
+module.default({registerProvider(){},getSettings(){return {}},on(name,handler){handlers[name]=handler},
+  exec(_command,args){calls.push(args);return args.includes("admit") ? Promise.resolve({code:0,stdout:'{"allowed":true,"managed":true}'}) : new Promise(()=>{})}});
+const ctx={model:{provider:"nous",id:"m",baseUrl:"https://inference-api.nousresearch.com/v1"},abort(){}};
+await handlers.before_provider_request({},ctx);
+const finished=await Promise.race([handlers.after_provider_response({status:Number(status),headers:{}},ctx).then(()=>true),
+  new Promise(resolve=>setTimeout(()=>resolve(false),200))]);
+process.stdout.write(JSON.stringify({finished,recorded:calls.some(args=>args.includes("response"))}));
+process.exit(0);
+'''
+
+
+@unittest.skipUnless(shutil.which('node'),'Node ejecuta la extensión generada')
+class NousResponseRecordingTests(unittest.TestCase):
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        env=patch.dict(os.environ,{'HOME':str(self.root),'PI_CODING_AGENT_DIR':str(self.root/'agent'),'XDG_DATA_HOME':str(self.root/'data')})
+        env.start();self.addCleanup(env.stop)
+        self.extension=self.root/'extension.ts';self.extension.write_text(quota.extension(self.root/'settings.json'))
+        self.harness=self.root/'harness.mjs';self.harness.write_text(RESPONSE_HARNESS)
+
+    def respond(self,status):
+        result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),str(status)],
+                              capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
+
+    def test_success_is_recorded_without_holding_the_stream(self):
+        self.assertEqual(self.respond(200),{'finished':True,'recorded':True})
+
+    def test_rate_limit_is_recorded_before_the_next_request_can_start(self):
+        self.assertEqual(self.respond(429),{'finished':False,'recorded':True})
+
+
 class NousOAuthCheckTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
