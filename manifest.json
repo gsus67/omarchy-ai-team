@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "gsus67.ai-team",
   "name": "AI Team",
-  "version": "0.20.4",
+  "version": "0.20.5",
   "author": "gsus67",
   "license": "MIT",
   "description": "Panel nativo de agentes, Superpowers, memoria ECC, catálogo local, auditoría opcional y recuperación.",
