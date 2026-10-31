@@ -180,8 +180,9 @@ const NOUS_KEYRING = '''+json.dumps(keyring_attributes(settings_file))+''';
   });
   pi.on("message_end", async (event,ctx) => {
     if (ctx.model?.provider !== "nous" || !managedRequest || event.message.role !== "assistant" || event.message.stopReason !== "error" || retryAfterKnown) return;
-    // Nous says these belong to one model, not the account: fail this request and leave other sessions running.
-    if (/at capacity upstream|model is currently unavailable/i.test(event.message.errorMessage ?? "")) return;
+    // Only the account can stop every session. Anything else, including a saturated model, fails this request alone.
+    const failure = event.message.errorMessage ?? "";
+    if (!/^(401|402|403|429)\\b/.test(failure) || /at capacity upstream|model is currently unavailable/i.test(failure)) return;
     try { const result=await call("error",[]); if (result.paused) ctx.abort(); }
     catch (error) { ctx.abort(); throw error; }
   });
