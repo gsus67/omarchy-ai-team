@@ -653,5 +653,6 @@
   "Guardar y parar al llegar a un porcentaje de consumo": "Save and stop at a usage percentage",
   "Límite de consumo guardado.": "Usage limit saved.",
   "El límite de consumo debe estar entre 50 y 99 %.": "The usage limit must be between 50 and 99 %.",
-  "La configuración de Claude no es válida; se conserva.": "The Claude settings are not valid; they are preserved."
+  "La configuración de Claude no es válida; se conserva.": "The Claude settings are not valid; they are preserved.",
+  "Falta aprobar el aviso de consumo en {perfiles}: abre Codex con ese perfil, escribe /hooks y pulsa t.": "Approve the usage warning in {perfiles}: open Codex with that profile, type /hooks and press t."
 }

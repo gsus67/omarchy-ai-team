@@ -102,6 +102,127 @@ class GuardScriptTests(unittest.TestCase):
         self.assertEqual(self.run_guard().returncode, 0)
 
 
+class CodexGuardScriptTests(GuardScriptTests):
+    """The same behaviour, reading the usage of the Codex account that runs the hook."""
+
+    def usage(self, session=0.5, weekly=0.2):
+        payload = json.dumps({'limits': [{'label': 'Session (5-hour)', 'percent': session}, {'label': 'Weekly (7-day)', 'percent': weekly}]})
+        tool = self.bin / 'omarchy-agent-usage-codex'
+        tool.write_text(f"#!/bin/sh\necho \"call $CODEX_HOME\" >> '{self.calls}'\necho '{payload}'\n")
+        tool.chmod(0o700)
+
+    def run_guard(self, event='PostToolUse', stdin=None):
+        env = {'PATH': f"{self.bin}:{os.environ['PATH']}", 'XDG_STATE_HOME': str(self.root / 'state'), 'HOME': str(self.root)}
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'backend/usage_guard.py'), '--settings', str(self.settings),
+                               '--agent', 'codex', '--codex-home', '/perfil/uno'],
+                              input=json.dumps({'hook_event_name': event}) if stdin is None else stdin, capture_output=True, text=True, env=env, timeout=20)
+
+    def cache(self):
+        return next((self.root / 'state/omarchy-ai-team').glob('usage-guard*.json'))
+
+    def test_default_limit_is_ninety_percent(self):
+        self.usage(session=0.89); self.assertEqual(self.context(self.run_guard()), '')
+        self.cache().unlink()
+        self.usage(session=0.9); self.assertIn('90', self.context(self.run_guard()))
+
+    def test_stale_reading_is_refreshed(self):
+        self.run_guard(); os.utime(self.cache(), (1, 1)); self.run_guard()
+        self.assertEqual(self.calls.read_text().count('call'), 2)
+
+    def test_cache_is_private(self):
+        self.run_guard()
+        self.assertEqual(stat.S_IMODE(self.cache().stat().st_mode), 0o600)
+
+    def test_never_breaks_a_session(self):
+        for body in ("#!/bin/sh\nexit 3\n", "#!/bin/sh\necho nope\n", "#!/bin/sh\necho '{}'\n"):
+            with self.subTest(body):
+                (self.bin / 'omarchy-agent-usage-codex').write_text(body)
+                for cache in (self.root / 'state').rglob('usage-guard*.json'): cache.unlink()
+                self.assertEqual(self.context(self.run_guard()), '')
+
+    def test_reads_the_usage_of_its_own_account(self):
+        self.run_guard()
+        self.assertIn('/perfil/uno', self.calls.read_text())
+
+    def test_each_account_has_its_own_reading(self):
+        self.usage(session=0.99); self.run_guard()
+        env = {'PATH': f"{self.bin}:{os.environ['PATH']}", 'XDG_STATE_HOME': str(self.root / 'state'), 'HOME': str(self.root)}
+        subprocess.run([sys.executable, '-B', str(ROOT / 'backend/usage_guard.py'), '--settings', str(self.settings), '--agent', 'codex',
+                        '--codex-home', '/perfil/dos'], input='{"hook_event_name":"PostToolUse"}', capture_output=True, text=True, env=env)
+        self.assertIn('/perfil/dos', self.calls.read_text())
+
+
+class CodexGuardHookTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.root = Path(temp.name)
+        self.file = self.root / 'hooks.json'; self.config = self.root / 'plugin.json'
+
+    def test_hook_names_the_agent_and_its_account(self):
+        native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root / 'mi perfil')
+        command = json.loads(self.file.read_text())['hooks']['PostToolUse'][0]['hooks'][0]['command']
+        self.assertIn('--agent codex', command)
+        self.assertIn('mi perfil', command)
+
+    def test_the_command_does_not_change_between_runs_so_approval_stays_valid(self):
+        native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root)
+        before = self.file.read_text()
+        native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root)
+        self.assertEqual(self.file.read_text(), before)
+
+    def test_a_foreign_hook_keeps_its_place_so_its_approval_stays_valid(self):
+        foreign = {'hooks': [{'type': 'command', 'command': 'ajeno'}]}
+        self.file.write_text(json.dumps({'hooks': {'PostToolUse': [foreign]}}))
+        native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root)
+        self.assertEqual(json.loads(self.file.read_text())['hooks']['PostToolUse'][0], foreign)
+
+
+class CodexApprovalWarningTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.root = Path(temp.name)
+
+    def test_warns_while_the_hook_is_not_approved(self):
+        (self.root / 'config.toml').write_text('')
+        (self.root / 'hooks.json').write_text(json.dumps({'hooks': {'PostToolUse': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}}))
+        self.assertFalse(native_team.guard_hook_trusted(self.root))
+
+    def test_nothing_to_approve_without_hooks(self):
+        self.assertTrue(native_team.guard_hook_trusted(self.root))
+        (self.root / 'hooks.json').write_text('{}')
+        self.assertTrue(native_team.guard_hook_trusted(self.root))
+
+    def test_no_warning_once_approved(self):
+        path = str(self.root / 'hooks.json')
+        (self.root / 'hooks.json').write_text(json.dumps({'hooks': {'PostToolUse': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}}))
+        (self.root / 'config.toml').write_text(f'[hooks.state."{path}:post_tool_use:0:0"]\ntrusted_hash = "sha256:x"\n')
+        self.assertTrue(native_team.guard_hook_trusted(self.root))
+
+    def test_a_second_hook_without_approval_still_warns(self):
+        path = str(self.root / 'hooks.json')
+        hook = {'hooks': [{'type': 'command', 'command': 'x'}]}
+        (self.root / 'hooks.json').write_text(json.dumps({'hooks': {'PostToolUse': [hook], 'UserPromptSubmit': [hook]}}))
+        (self.root / 'config.toml').write_text(f'[hooks.state."{path}:post_tool_use:0:0"]\ntrusted_hash = "sha256:x"\n')
+        self.assertFalse(native_team.guard_hook_trusted(self.root))
+
+    def test_an_unreadable_config_counts_as_not_approved(self):
+        (self.root / 'hooks.json').write_text(json.dumps({'hooks': {'PostToolUse': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}}))
+        (self.root / 'config.toml').write_text('= roto')
+        self.assertFalse(native_team.guard_hook_trusted(self.root))
+
+
+class CodexPendingStatusTests(unittest.TestCase):
+    def test_each_profile_is_checked_in_its_own_home(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); root = Path(temp.name)
+        hook = json.dumps({'hooks': {'PostToolUse': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}})
+        for name in ('.codex', '.codex-2'):
+            (root / name).mkdir(); (root / name / 'hooks.json').write_text(hook); (root / name / 'config.toml').write_text('')
+        path = root / '.codex/hooks.json'
+        (root / '.codex/config.toml').write_text(f'[hooks.state."{path}:post_tool_use:0:0"]\ntrusted_hash = "sha256:x"\n')
+        config = {'agents': {'codex': True, 'codex-2': True}, 'team': {'enabled': True, 'roles': {}}}
+        with patch.dict(os.environ, {'HOME': str(root)}), patch.object(harness.Path, 'home', return_value=root):
+            os.environ.pop('CODEX_HOME', None)
+            self.assertEqual(harness.team_state(config)['usageGuardPending'], ['Codex-2'])
+
+
 class GuardSettingTests(unittest.TestCase):
     def test_default_and_changed_values(self):
         self.assertEqual(team.usage_guard({}), {'enabled': True, 'percent': 90})

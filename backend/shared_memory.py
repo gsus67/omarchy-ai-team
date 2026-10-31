@@ -272,6 +272,8 @@ def set_codex_connection(binary, runtime, enabled, receipt):
     if enabled:
         edits.extend({"keyPath": f"mcp_servers.{SERVER}.{key}", "value": value, "mergeStrategy": "replace"}
                      for key, value in expected_server(runtime, "codex").items())
+        # Tasks run without anyone to answer a prompt; this covers only this server, and a relay must be able to save.
+        edits.append({"keyPath": f"mcp_servers.{SERVER}.default_tools_approval_mode", "value": "approve", "mergeStrategy": "replace"})
     if enabled or current is not None:
         edits.append({"keyPath": f"mcp_servers.{SERVER}.enabled", "value": enabled, "mergeStrategy": "replace"})
     if updated != original:
