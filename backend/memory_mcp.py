@@ -58,11 +58,18 @@ def _main():
     args = parser.parse_args()
     if not Path(args.store).is_absolute():
         parser.error(tr('El almacén de memoria debe ser una ruta absoluta.'))
-    store=project_store(Path.cwd(),args.store)
-    record_project(store,Path.cwd())
+    home=Path.home()
     environment = {**os.environ, "ECC_MEMORY_HARNESS": args.agent, "ECC_MEMORY_ALLOW_USER_SCOPE": "0",
-                   "ECC_MEMORY_PROJECT_ROOT": str(store)}
-    script = str(Path(args.runtime) / "scripts/memory-mcp.mjs")
+                   "AI_TEAM_ECC_RUNTIME": str(args.runtime), "AI_TEAM_MEMORY_STORE": str(args.store),
+                   "AI_TEAM_PROJECTS_ROOT": str(home/"Work")}
+    # A session opened in the home folder belongs to no project: it says which one in conversation.
+    if Path.cwd().resolve()!=home.resolve():
+        store=project_store(Path.cwd(),args.store)
+        record_project(store,Path.cwd())
+        identity=project_identity(Path.cwd())
+        environment.update(AI_TEAM_SESSION_STORE=str(store),
+                           AI_TEAM_SESSION_PROJECT=identity.parent.name if identity.name==".git" else identity.name)
+    script = str(Path(__file__).with_name("memory_projects.mjs"))
     with runtime_guard.lease(runtime_guard.memory_lock(args.store), inherit=True):
         os.execvpe(args.node, [args.node, script], environment)
 

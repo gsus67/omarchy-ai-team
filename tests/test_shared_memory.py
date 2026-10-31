@@ -186,12 +186,16 @@ class SharedMemoryTests(unittest.TestCase):
 
     def test_native_host_environment_filter_cannot_change_the_shared_store(self):
         package = self.package()
-        # Stand in only for the external runtime; run our wrapper as a real process.
-        (package / "scripts/memory-mcp.mjs").write_text('import json, os\nprint(json.dumps(os.environ["ECC_MEMORY_PROJECT_ROOT"]))\n')
-        runtime = memory.runtime_at(package, sys.executable)
+        # Stand in only for Node; run our launcher as a real process.
+        node = self.root / "fake-node"
+        node.write_text('#!' + sys.executable + '\nimport json, os\nprint(json.dumps(os.environ["AI_TEAM_SESSION_STORE"]))\n')
+        node.chmod(0o700)
+        runtime = memory.runtime_at(package, str(node))
         command = memory.mcp_command(runtime, "codex")
         filtered = {key: value for key, value in os.environ.items() if key != "XDG_DATA_HOME"}
-        result = subprocess.run(command, cwd=self.root, env=filtered, capture_output=True, text=True, check=True)
+        # Not the home folder: a session there has no project of its own.
+        session = self.root / "proyecto"; session.mkdir()
+        result = subprocess.run(command, cwd=session, env=filtered, capture_output=True, text=True, check=True)
         selected = Path(json.loads(result.stdout))
         self.assertTrue(selected.is_relative_to(self.root / "data/omarchy-ai-team/memory"), selected)
         self.assertFalse((self.root / "data/omarchy-ai-team/memory").exists())

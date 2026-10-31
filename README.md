@@ -19,7 +19,7 @@ y herramientas locales desde una pantalla organizada por objetivos:
 
 Seleccionas los perfiles una vez y activas cada función con un solo interruptor.
 Abres tu CLI habitual en cualquier proyecto y pides tareas en lenguaje natural;
-el proyecto de memoria se determina desde la sesión. No hay un orquestador:
+la memoria se separa por proyecto: dices en cuál trabajas y usa la suya, incluso con varios en una misma sesión. No hay un orquestador:
 Superpowers aporta planificación, TDD y revisión dentro de las sesiones nativas.
 ECC Memory Vault es el único motor central, local y de código abierto. Cada
 sesión conserva su contexto privado; los worktrees comparten la memoria del
