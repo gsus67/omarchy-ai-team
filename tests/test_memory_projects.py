@@ -214,5 +214,14 @@ class MemoryProjectsTests(unittest.TestCase):
         self.assertEqual(list(self.store.rglob('mem_*.md')), [])
 
 
+class MemoryInstructionTests(unittest.TestCase):
+    def test_instructions_load_the_memory_at_the_start_with_or_without_a_named_project(self):
+        sys.path.insert(0, str(ROOT / 'backend'))
+        import shared_memory
+        text = shared_memory.instructions('', True)
+        for wanted in ('Al empezar', 'el de esta sesión si está dentro de un repo', 'compartido', 'memory_doctor', 'pregunta'):
+            self.assertIn(wanted, text)
+
+
 if __name__ == '__main__':
     unittest.main()

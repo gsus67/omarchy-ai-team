@@ -122,10 +122,10 @@ def probe(runtime, agent, store=None):
 
 def instructions(original, enabled=False):
     message = ("Memoria compartida: si el MCP ai-team-memory está disponible en esta sesión, "
-               "cada memoria pertenece a un proyecto. Cuando el usuario diga en qué proyecto trabaja, llama a memory_search "
-               "con project y su nombre exacto (memory_doctor lista los proyectos) y también con project compartido, que guarda "
-               "las normas comunes; amplía con memory_read solo lo necesario. Si trabaja en varios, usa el proyecto de cada dato. "
-               "Si no está claro a cuál corresponde, pregunta. Una sesión abierta dentro de un repo usa el suyo por defecto. "
+               "cada memoria pertenece a un proyecto. Al empezar una tarea, llama a memory_search con project: el de esta sesión si está "
+               "dentro de un repo o el que diga el usuario, por su nombre exacto (memory_doctor lista los proyectos). Busca también en "
+               "project compartido, que guarda las normas comunes, y amplía con memory_read solo lo necesario. Si trabaja en varios, "
+               "usa el proyecto de cada dato. Si no está claro a cuál corresponde, pregunta. "
                "Al terminar algo, guarda con memory_save (ámbito project, destinos all y project) los hechos, decisiones y "
                "aprendizajes duraderos, y di en qué proyecto los guardaste; usa compartido solo si valen para todos. "
                "No guardes credenciales, conversaciones ni contexto privado. No copies la memoria a otro motor. "
