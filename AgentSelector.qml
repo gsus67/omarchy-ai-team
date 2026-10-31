@@ -1,21 +1,17 @@
 import QtQuick
 import "I18n.js" as I18n
-import QtQuick.Layouts
 import qs.Ui as Ui
-import qs.Commons
 
 Ui.MultiSelect {
   id: root
   property var translations: ({})
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
-  readonly property var metrics: Style.spacing
   objectName: "agent-selector"
   property var agents: []
   property bool busy: false
   readonly property var selectedIds: root.agents.filter(agent => agent.enabled).map(agent => agent.id)
   signal selectionRequested(var ids)
   enabled: !root.busy
-  Layout.bottomMargin: room.height
   showLabel: false
   placeholderText: root.tr("Buscar agente…")
   emptyText: root.tr("Sin agentes")
@@ -39,17 +35,6 @@ Ui.MultiSelect {
     enabled: root.enabled
     cursorShape: Qt.PointingHandCursor
     onClicked: if (Date.now() - root.closedAt > 250) root.toggle()
-  }
-
-  Item {
-    id: room
-    objectName: "agent-selector-room"
-    anchors.top: parent.bottom
-    width: parent.width
-    // MultiSelect includes a search header and displays at most six rows.
-    height: root.popupOpen ? Math.min(root.options.length * root.popupRowHeight
-      + Math.max(0, root.options.length - 1) * root.metrics.labelGap + Style.space(50),
-      6 * root.popupRowHeight + 5 * root.metrics.labelGap + Style.space(50)) + root.metrics.xxs : 0
   }
 
   onChanged: values => {

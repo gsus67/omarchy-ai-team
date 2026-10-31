@@ -167,6 +167,49 @@ process.exit(0);
 '''
 
 
+ERROR_HARNESS=r'''
+import { pathToFileURL } from "node:url";
+const [extension,message]=process.argv.slice(2);
+const handlers={};const calls=[];
+const module=await import(pathToFileURL(extension));
+module.default({registerProvider(){},getSettings(){return {}},on(name,handler){handlers[name]=handler},
+  exec(_command,args){calls.push(args);return Promise.resolve({code:0,stdout:args.includes("admit") ? '{"allowed":true,"managed":true}' : '{"paused":true}'})}});
+const ctx={model:{provider:"nous",id:"m",baseUrl:"https://inference-api.nousresearch.com/v1"},abort(){}};
+await handlers.before_provider_request({},ctx);
+await handlers.message_end({message:{role:"assistant",stopReason:"error",errorMessage:message}},ctx);
+process.stdout.write(JSON.stringify({paused:calls.some(args=>args.includes("error"))}));
+process.exit(0);
+'''
+
+
+@unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
+class NousErrorPauseTests(unittest.TestCase):
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        env=patch.dict(os.environ,{'HOME':str(self.root),'PI_CODING_AGENT_DIR':str(self.root/'agent'),'XDG_DATA_HOME':str(self.root/'data')})
+        env.start();self.addCleanup(env.stop)
+        self.extension=self.root/'extension.ts';self.extension.write_text(quota.extension(self.root/'settings.json'))
+        self.harness=self.root/'harness.mjs';self.harness.write_text(ERROR_HARNESS)
+
+    def pauses(self,message):
+        result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),message],
+                              capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)['paused']
+
+    def test_a_saturated_free_model_does_not_pause_every_session(self):
+        self.assertFalse(self.pauses('429: {"status":429,"message":"The requested model is temporarily at capacity upstream. This is not your API key\'s rate limit — please retry shortly."}'))
+
+    def test_an_unavailable_free_model_does_not_pause_every_session(self):
+        self.assertFalse(self.pauses('503: {"status":503,"message":"The requested model is currently unavailable."}'))
+
+    def test_an_account_rate_limit_still_pauses(self):
+        self.assertTrue(self.pauses('429: {"status":429,"message":"Rate limit exceeded"}'))
+
+    def test_an_unknown_error_still_pauses(self):
+        self.assertTrue(self.pauses('undefined is not a function'))
+
+
 @unittest.skipUnless(node_runs_typescript(),'Node 22.6 o superior ejecuta la extensión generada')
 class NousResponseRecordingTests(unittest.TestCase):
     def setUp(self):

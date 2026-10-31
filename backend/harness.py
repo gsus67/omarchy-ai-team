@@ -160,7 +160,8 @@ def detect_tool(name, inventory):
 def team_context(config):
     selected = {key for key in AGENTS if config.get('agents', {}).get(key)}
     catalog = {'codex': config.get('teamModels', {}).get('codex', []),
-               'pi': config.get('agentCatalogs', {}).get('pi', {}).get('models', [])}
+               'pi': config.get('agentCatalogs', {}).get('pi', {}).get('models', []),
+               'nousEffort': ['nous/'+model for model in config.get('piNousCatalog', {}).get('effortModels', [])]}
     free_pi = ['nous/'+row['id'] for row in config.get('piNousCatalog', {}).get('models', [])
                if row['id'].endswith(':free') and row.get('cost')
                and all(value == 0 for value in row['cost'].values())]

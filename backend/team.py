@@ -10,6 +10,7 @@ LABELS = dict(zip(ROLES, (tr('Planificar'), tr('Programar'), tr('Revisar'), tr('
 CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna')
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+PI_EFFORTS = ('low', 'medium', 'high')
 ROLE_EFFORTS = dict(zip(ROLES, ('xhigh', 'high', 'high', 'medium')))
 
 
@@ -27,6 +28,10 @@ def codex_models(catalog):
         {'id': model, 'supportedReasoningEfforts': [{'reasoningEffort': effort} for effort in
          (('medium', 'high', 'xhigh') if model == CODEX_DEFAULTS[0] else ('medium', 'high'))]}
         for model in CODEX_DEFAULTS]
+
+
+def pi_efforts(catalog, model):
+    return list(PI_EFFORTS) if model in catalog.get('nousEffort', []) else ['']
 
 
 def newest_codex(catalog, family):
@@ -47,7 +52,7 @@ def options(selected, catalog, free_pi, paid_ok):
             models = [(row['id'], [effort['reasoningEffort'] for effort in row.get('supportedReasoningEfforts', [])]
                        or ['high', 'medium']) for row in codex_models(catalog)]
         else:
-            models = [(model, ['']) for model in dict.fromkeys([
+            models = [(model, pi_efforts(catalog, model)) for model in dict.fromkeys([
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]
         for model, efforts in models:
             paid = agent == 'pi' and model not in free_pi
@@ -77,6 +82,10 @@ def recommend(selected, catalog, free_pi):
             efforts = [r['reasoningEffort'] for r in row.get('supportedReasoningEfforts', [])] or ['high', 'medium']
             if effort not in efforts:
                 effort = recommended_effort('plan' if effort == 'xhigh' else 'simple' if effort == 'medium' else 'code', efforts)
+        if agent == 'pi':
+            supported = pi_efforts(catalog, model)
+            if effort not in supported:
+                effort = recommended_effort('plan' if effort == 'xhigh' else 'simple' if effort == 'medium' else 'code', supported)
         return dict(agent=agent, model=model, effort=effort)
     if 'codex' in available and not catalog.get('codex'):
         warnings.append(tr('Catálogo de Codex no disponible; se usan modelos integrados sin comprobar el catálogo.'))
@@ -87,14 +96,14 @@ def recommend(selected, catalog, free_pi):
                          review=choice('codex', strong, 'high'),
                          simple=choice('codex', cheap, 'medium'))
         elif 'pi' in available and free_pi:
-            roles.update(review=choice('pi', free_pi[0]), simple=choice('pi', free_pi[0]))
+            roles.update(review=choice('pi', free_pi[0], ROLE_EFFORTS['review']), simple=choice('pi', free_pi[0], ROLE_EFFORTS['simple']))
     elif 'codex' in available:
         roles = {key: choice('codex', model, effort) for key, model, effort in (
             ('plan', strong, 'xhigh'), ('code', strong, 'high'),
             ('review', cheap, 'high'), ('simple', cheap, 'medium'))}
-        if 'pi' in available and free_pi: roles['simple'] = choice('pi', free_pi[0])
+        if 'pi' in available and free_pi: roles['simple'] = choice('pi', free_pi[0], ROLE_EFFORTS['simple'])
     elif 'pi' in available and free_pi:
-        roles = {key: choice('pi', free_pi[0]) for key in ROLES}
+        roles = {key: choice('pi', free_pi[0], ROLE_EFFORTS[key]) for key in ROLES}
     else:
         roles = {}
         warnings.append(tr('No hay modelos gratuitos comprobados disponibles para el equipo.') if available else tr('Selecciona agentes para el equipo.'))
@@ -118,6 +127,11 @@ def effective(config, selected, catalog, free_pi):
         stored = config.get('team', {}).get('roles', {}).get(key, {})
         manual = bool(stored.get('manual'))
         value = {field: stored.get(field, '') for field in ('agent', 'model', 'effort')} if manual else recommended
+        if manual and value['agent'] == 'pi':
+            # The catalog decides which free models have levels and can change after the role was saved.
+            levels = next((row['efforts'] for row in choices if same_model(row, value)), None)
+            if levels and value['effort'] not in levels and (not value['effort'] or levels == ['']):
+                value = {**value, 'effort': recommended_effort(key, levels)}
         if manual and not any(same_model(row, value) and value['effort'] in row['efforts']
                               and (not row['paid'] or config.get('piPaidApproved', False)) for row in choices):
             warnings.append(tr('{papel}: el agente ya no está seleccionado o el modelo no está disponible; se usa el recomendado.', papel=LABELS[key]))
