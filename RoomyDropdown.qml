@@ -14,27 +14,45 @@ Item {
 
   implicitWidth: dropdown.implicitWidth
   implicitHeight: dropdown.implicitHeight
-  // Keep height equal to the trigger; the layout owns the reserved space.
-  Layout.bottomMargin: room.height
 
   function open() { dropdown.open() }
   function close() { dropdown.close() }
 
-  function revealPopup() {
-    if (!root.popupOpen) return
+  // The popup floats over the rows below, so it only needs scroll room past the
+  // end of the content; the layout stays where it is.
+  property Flickable scroller: null
+  function findScroller() {
     for (let ancestor = root.parent; ancestor; ancestor = ancestor.parent) {
       const flickable = ancestor as Flickable
-      if (!flickable) continue
-      const bottom = root.mapToItem(flickable.contentItem, 0, root.height).y + room.height
-      flickable.contentY = Math.max(0, Math.min(flickable.contentHeight - flickable.height,
-        Math.max(flickable.contentY, bottom - flickable.height)))
-      break
+      if (flickable) return flickable
     }
+    return null
+  }
+  function revealPopup() {
+    if (!root.popupOpen) return
+    const flickable = root.findScroller()
+    if (!flickable) return
+    root.scroller = flickable
+    const bottom = root.mapToItem(flickable.contentItem, 0, root.height).y + room.height
+    flickable.bottomMargin = Math.max(0, bottom - flickable.contentHeight)
+    flickable.contentY = Math.max(0, Math.min(flickable.contentHeight + flickable.bottomMargin - flickable.height,
+      Math.max(flickable.contentY, bottom - flickable.height)))
+  }
+  function releaseScroll() {
+    const flickable = root.scroller
+    if (!flickable) return
+    root.scroller = null
+    flickable.bottomMargin = 0
+    flickable.contentY = Math.max(0, Math.min(flickable.contentY, flickable.contentHeight - flickable.height))
   }
   // The native popup closes on any outside press, including its own trigger,
   // so the release would reopen it. Ignore the click that closed it.
   property real closedAt: 0
-  onPopupOpenChanged: if (popupOpen) Qt.callLater(root.revealPopup); else root.closedAt = Date.now()
+  onPopupOpenChanged: {
+    if (popupOpen) { Qt.callLater(root.revealPopup); return }
+    root.closedAt = Date.now()
+    root.releaseScroll()
+  }
   onVisibleChanged: if (!visible) root.close()
 
   Ui.Dropdown {

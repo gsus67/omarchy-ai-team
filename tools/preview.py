@@ -38,6 +38,7 @@ SMOKE = r'''
   property bool tokensAdvancedChecked: false
   property int scopePopupStep: 0
   property int teamStep: 0
+  property real teamRowY: 0
   property int teamWaits: 0
   property bool teamHoverMoved: false
   property bool teamHoverChecked: false
@@ -246,8 +247,7 @@ SMOKE = r'''
           }
           if (scopePopupStep === 1) { scopeControl.open();scopePopupStep++;return }
           if (scopePopupStep === 2) {
-            var popupContent=find(harness,"harnessContent",[])
-            if (!scopeControl.popupOpen || scopeRoom.height <= 0 || scopeControl.mapToItem(popupContent,0,scopeControl.height).y + scopeRoom.height > popupContent.height) { fail("Scope popup extends beyond panel"); return }
+            if (!scopeControl.popupOpen || scopeRoom.height <= 0) { fail("Scope popup extends beyond panel"); return }
             if (scopeControl.mapToItem(scopeScroll,0,scopeControl.height).y + scopeRoom.height > scopeScroll.height) { fail("Scope popup is clipped by scroll viewport"); return }
             scopeControl.close();scopePopupStep++;return
           }
@@ -689,10 +689,14 @@ SMOKE = r'''
           pointer.mouseMove(hoverPark,hoverPark.width / 2,hoverPark.height / 2)
           teamHoverChecked=true;return
         }
-        if (teamStep === 3) { reviewModel.open();teamStep++;return }
+        if (teamStep === 3) {
+          teamRowY = find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y
+          reviewModel.open();teamStep++;return
+        }
         if (teamStep === 4) {
           var teamRoom = find(harness,"team-role-review-room",[])
-          if (!reviewModel.popupOpen || !teamRoom || teamRoom.height <= 0 || reviewModel.mapToItem(teamContent,0,reviewModel.height).y + teamRoom.height > teamContent.height || reviewModel.mapToItem(teamScroll,0,reviewModel.height).y + teamRoom.height > teamScroll.height) { if (++teamWaits < 20) return; fail("Team model popup extends beyond panel or viewport"); return }
+          if (!reviewModel.popupOpen || !teamRoom || teamRoom.height <= 0 || reviewModel.mapToItem(teamScroll,0,reviewModel.height).y + teamRoom.height > teamScroll.height) { if (++teamWaits < 20) return; fail("Team model popup extends beyond panel or viewport"); return }
+          if (find(harness,"team-label-simple",[]).mapToItem(teamScroll.contentItem.contentItem,0,0).y !== teamRowY) { fail("Opening a team popup moved the rows below"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
           pointer.keyClick(Qt.Key_Down)
