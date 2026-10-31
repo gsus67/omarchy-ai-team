@@ -137,6 +137,28 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
   }
+  RowLayout {
+    Layout.fillWidth: true
+    spacing: root.metrics.xxs
+    Ui.NumberField {
+      id: guardPercent
+      objectName: "usage-guard-percent"
+      Layout.fillWidth: true
+      label: root.tr("Guardar y parar al (%)")
+      from: 50
+      to: 99
+      value: (root.info.usageGuard || {}).percent || 90
+      enabled: !root.busy
+      onModified: value => root.commandRequested(["usage-guard", String(guardSwitch.checked), String(value)])
+    }
+    Ui.ToggleSwitch {
+      id: guardSwitch
+      objectName: "usage-guard-switch"
+      checked: (root.info.usageGuard || {}).enabled !== false
+      enabled: !root.busy
+      onToggled: root.commandRequested(["usage-guard", String(!checked), String(guardPercent.value)])
+    }
+  }
 
   Ui.PanelSeparator { Layout.fillWidth: true }
   Repeater {
