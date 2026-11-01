@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 import harness
 import ai_check
 import memory_mcp
+import native_team
 import shared_memory
 
 
@@ -138,6 +139,26 @@ class AiCheckTests(unittest.TestCase):
             self.assertFalse(options.get('shell', False))
             self.assertTrue((options['input']).strip())
             self.assertNotIn('danger-full-access', ' '.join(args))
+        self.assert_cleaned()
+
+    def test_claude_2_uses_its_own_config_dir_with_the_claude_commands(self):
+        self.config['agents'] = {'claude-2': True}
+        self.snapshot['agents'] = [dict(id='claude-2', name='Claude Code-2', enabled=True, installation='installed',
+                                        binary='/fake/claude')]
+        for component in self.snapshot['components']:
+            component['targets'] = [dict(agent='claude-2', enabled=True, verified=True)]
+        result = self.run_check()
+        self.assertTrue(all(row['ok'] for row in result['results']), result)
+        (args, options), = self.calls
+        self.assertEqual(args[:2], ['/fake/claude', '-p'])
+        self.assertEqual(args[args.index('--model') + 1], 'haiku')
+        self.assertEqual(options['env']['CLAUDE_CONFIG_DIR'], str(self.root / '.claude-2'))
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(self.root / '.claude-2')}):
+            second = native_team.layout('claude')['source'] / 'SKILL.md'
+        first = native_team.layout('claude')['source'] / 'SKILL.md'
+        self.assertIn('Read(/' + str(second) + ')', args)
+        self.assertNotIn('Read(/' + str(first) + ')', args)
+        self.assertEqual(os.environ['CLAUDE_CONFIG_DIR'], str(self.root / '.claude'))
         self.assert_cleaned()
 
     def test_expected_vs_reported_lists_all_failures_in_spanish(self):

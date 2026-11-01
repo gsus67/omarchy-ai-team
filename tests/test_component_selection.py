@@ -214,13 +214,13 @@ class ComponentSelectionTests(unittest.TestCase):
         self.assertTrue(self.native["codex-2"]["enabled"])
         self.assertEqual(self.component(reply)["connectedCount"], 2)
 
-    def test_absent_second_profile_is_not_created_or_selected(self):
+    def test_selecting_absent_second_profile_creates_empty_private_directory(self):
         (self.root / ".codex-2").rmdir()
         code, reply = self.command("set-agent", "codex-2", "true")
-        self.assertEqual(code, 1)
-        self.assertFalse((self.root / ".codex-2").exists())
-        self.assertEqual(self.actions, [])
-        self.assertFalse(next(a for a in reply["data"]["agents"] if a["id"] == "codex-2")["enabled"])
+        self.assertEqual(code, 0)
+        self.assertEqual((self.root / ".codex-2").stat().st_mode & 0o777, 0o700)
+        self.assertEqual(list((self.root / ".codex-2").iterdir()), [])
+        self.assertTrue(next(a for a in reply["data"]["agents"] if a["id"] == "codex-2")["enabled"])
 
     def test_named_profiles_ignore_active_codex_home_and_restore_it_after_errors(self):
         before = os.environ["CODEX_HOME"]

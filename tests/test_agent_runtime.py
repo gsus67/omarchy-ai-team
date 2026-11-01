@@ -94,3 +94,19 @@ class AgentRuntimeTests(unittest.TestCase):
 
 
 if __name__ == '__main__':unittest.main()
+
+
+class UninstallTests(unittest.TestCase):
+    def test_uninstall_rejects_missing_and_external_cli(self):
+        import agent_runtime
+        missing = lambda name, inv: {'installation': 'missing'}
+        with self.assertRaises(agent_runtime.AgentError):
+            agent_runtime.operate('claude', 'uninstall', {}, missing, lambda: ({}, ''))
+        external = lambda name, inv: {'installation': 'installed', 'binary': '/usr/bin/claude'}
+        with self.assertRaises(agent_runtime.AgentError):
+            agent_runtime.operate('claude', 'uninstall', {}, external, lambda: ({}, ''))
+
+    def test_profile_two_cannot_uninstall_shared_cli(self):
+        import harness
+        with self.assertRaises(harness.HarnessError):
+            harness.manage_agent_cli('claude-2', 'uninstall')

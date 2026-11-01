@@ -207,6 +207,7 @@ ColumnLayout {
           busy: root.busy
           onCommandRequested: arguments => root.commandRequested(arguments)
           onAuthorizationRequested: (arguments, explanation) => root.authorizationRequested(arguments, explanation)
+          onUninstallRequested: (arguments, explanation) => root.uninstallRequested(arguments, explanation)
         }
       }
 

@@ -17,7 +17,10 @@ ColumnLayout {
   property bool busy: false
   readonly property var fonts: Style.font
   readonly property bool installed: root.agent.installation === "installed"
+  readonly property bool cliReady: root.installed || (root.agent.installation === "missing-profile" && !!root.agent.cliInstalled)
+  readonly property bool canUninstall: root.installed && root.agent.manager === "mise" && ["claude", "codex", "pi"].indexOf(root.agent.id) !== -1
   signal commandRequested(var arguments)
+  signal uninstallRequested(var arguments, string explanation)
   signal authorizationRequested(var arguments, string explanation)
   spacing: Style.space(6)
 
@@ -25,7 +28,7 @@ ColumnLayout {
   CompactRow {
     Layout.fillWidth: true
     label: root.tr("CLI")
-    status: root.agent.installation === "missing-profile" ? root.tr("Perfil no disponible") : root.installed ? root.agent.version || root.tr("Instalado") : root.tr("No instalado")
+    status: root.agent.installation === "missing-profile" ? root.tr("Perfil sin crear · inicia sesión para crearlo") : root.installed ? root.agent.version || root.tr("Instalado") : root.tr("No instalado")
     switchVisible: false
     navigationEnabled: false
   }
@@ -47,10 +50,26 @@ ColumnLayout {
     Ui.Button {
       objectName: "authenticate-" + root.agent.id
       text: root.tr("Iniciar sesión")
-      visible: root.installed && (root.agent.id !== "pi" || root.agent.enabled)
+      visible: root.cliReady && (root.agent.id !== "pi" || root.agent.enabled)
       focusable: true
       enabled: !root.busy
       onClicked: root.commandRequested(root.agent.id === "pi" ? ["pi-auth"] : ["authenticate-profile", root.agent.id])
+    }
+    Ui.Button {
+      objectName: "install-agent-" + root.agent.id
+      text: root.tr("Instalar CLI")
+      visible: !root.cliReady
+      focusable: true
+      enabled: !root.busy
+      onClicked: root.commandRequested(["agent-install", root.agent.id])
+    }
+    Ui.Button {
+      objectName: "uninstall-agent-" + root.agent.id
+      text: root.tr("Desinstalar CLI")
+      visible: root.canUninstall
+      focusable: true
+      enabled: !root.busy
+      onClicked: root.uninstallRequested(["agent-uninstall", root.agent.id], root.tr("Se quitará solo la CLI de {nombre}. Tus cuentas, sesiones y preferencias se conservan.", {nombre: root.agent.name}))
     }
     Ui.Button {
       objectName: "launch-agent-" + root.agent.id

@@ -184,18 +184,20 @@ def _check_codex_cwd(command, cwd):
         raise ValueError(tr('El directorio -C/--cd no coincide con --cwd.'))
 
 
-def prepare(command, agent, role, config, cwd, *, override=None):
+def prepare(command, agent, role, config, cwd, *, override=None, profile=None):
     policy = context_policy.resolve(config, role, override=override)
     if policy['enabled'] and agent in ('codex', 'codex-2'):
         _check_codex_cwd(command, cwd)
     if policy['enabled'] and policy['fresh_worker_per_subtask']:
         command = _fresh_command(command, agent)
-    args, assignments = native_launcher.invocation(agent, config=config, role=role,
+    args, assignments = native_launcher.invocation(profile or agent, config=config, role=role,
                                                   context_override=override, cwd=cwd)
     environment = dict(os.environ)
     environment.update(item.split('=', 1) for item in assignments)
     if agent in ('codex', 'codex-2'):
         environment['CODEX_HOME'] = str(Path.home()/('.codex-2' if agent == 'codex-2' else '.codex'))
+    if profile == 'claude-2':
+        environment['CLAUDE_CONFIG_DIR'] = str(Path.home()/'.claude-2')
     capsule = json.loads(environment['AI_TEAM_CONTEXT']) if any(x.startswith('AI_TEAM_CONTEXT=') for x in assignments) else None
     return [command[0], *args, *command[1:]], environment, capsule
 
@@ -237,7 +239,7 @@ def _bounded(report, capsule):
         return failure
 
 
-def run(command, agent, role, config, cwd, *, override=None, output=None):
+def run(command, agent, role, config, cwd, *, override=None, output=None, profile=None):
     output = output or sys.stdout
     policy = context_policy.resolve(config, role, override=override)
     if not policy['enabled']:
@@ -248,7 +250,7 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
     fatal = None
     pi_output = bytearray()
     pi_overflow = False
-    prepared, environment, capsule = prepare(command, agent, role, config, cwd, override=override)
+    prepared, environment, capsule = prepare(command, agent, role, config, cwd, override=override, profile=profile)
     measure = policy['measure_task_tokens'] and capsule is not None
     totals, turns = dict.fromkeys(COUNTERS, 0), 0
     if measure:
@@ -331,7 +333,7 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--settings')
-    parser.add_argument('--agent', choices=('claude', 'codex', 'codex-2', 'pi'), required=True)
+    parser.add_argument('--agent', choices=('claude', 'claude-2', 'codex', 'codex-2', 'pi'), required=True)
     parser.add_argument('--role', choices=context_policy.ROLES, required=True)
     parser.add_argument('--cwd', required=True)
     parser.add_argument('--context-override', type=json.loads)
@@ -347,7 +349,8 @@ def main(argv=None):
         else:
             config = harness.load_config()
         os.chdir(Path(args.cwd).resolve(strict=True))
-        return run(command, args.agent, args.role, config, Path.cwd(), override=args.context_override)
+        agent = 'claude' if args.agent == 'claude-2' else args.agent
+        return run(command, agent, args.role, config, Path.cwd(), override=args.context_override, profile=args.agent)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         # Only a literal bounded startup failure; no child output is relayed here.
         print(json.dumps(_failure(str(error)[:512]), ensure_ascii=False))

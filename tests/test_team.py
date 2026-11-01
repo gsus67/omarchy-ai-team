@@ -90,6 +90,12 @@ class TeamTests(unittest.TestCase):
         self.assertTrue(all(row == role('codex', 'other', 'medium') for row in roles.values()))
         self.assertIn('predeterminado', ' '.join(warnings))
 
+    def test_claude_2_alone_selects_the_claude_family(self):
+        self.assertEqual(team.families({'claude-2'}), ['claude'])
+        self.assertEqual(team.families({'claude-2', 'codex-2', 'pi'}), ['claude', 'codex', 'pi'])
+        roles, _ = team.recommend({'claude-2'}, {}, [])
+        self.assertTrue(roles and all(row['agent'] == 'claude' for row in roles.values()))
+
     def test_options(self):
         cat = {**CAT, 'pi': [{'id': 'xai/grok'}]}
         options = team.options({'claude', 'codex-2', 'pi'}, cat, ['nous/x:free'], True)
