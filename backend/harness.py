@@ -21,6 +21,7 @@ import tempfile
 import native_plugins
 import shared_memory
 import native_launcher
+import context_policy
 import memory_archive
 import memory_backups
 import memory_mcp
@@ -107,6 +108,7 @@ def load_config():
             for key, record in installs.items())):
         raise HarnessError(tr('El registro de instalaciones del catálogo no es válido; se conserva la configuración.'))
     memory_backups.settings(value)
+    context_policy.settings(value)
     settings = local_catalog.validate(value)
     if 'localToolsSettings' in value:
         value['localToolsSettings'] = {key: settings[key] for key in value['localToolsSettings']}
@@ -509,7 +511,7 @@ def select_agents(config: dict, wanted: set[str], *, reconcile: bool = False) ->
         raise HarnessError('; '.join(errors))
 
 
-def launch_agent(config, agent):
+def launch_agent(config, agent, *, role='jefe', context_override=None, apply_context=True):
     if not agent:
         raise HarnessError(tr('Elige un agente predeterminado en Modelos y agentes.'))
     if not config.get("agents", {}).get(agent, False):
@@ -517,12 +519,10 @@ def launch_agent(config, agent):
     inventory, _ = mise_inventory(); tool = agent_tool(agent, inventory)
     if tool["installation"] != "installed":
         raise HarnessError(tr('El perfil no está disponible; no se abrió ninguna sesión.'))
-    current = status(config)
-    for component in current["components"]:
-        if component["enabled"]:
-            manage_component(config, component["id"], "sync")
     with agent_profile(agent) as cli:
-        native_launcher.launch(tool["binary"], agent, native_plugins.agent_home(cli))
+        native_launcher.launch(tool["binary"], agent, native_plugins.agent_home(cli),
+                               config=config if apply_context else None, role=role,
+                               context_override=context_override if apply_context else None)
 
 
 def memory_status(config):
@@ -613,6 +613,7 @@ def _status(config=None):
                            "projectOptions": project_options}}
     team_component = next(row for row in components if row['id'] == 'team')
     result['team'] = {**team_state(config), **team_component}
+    result['context'] = context_policy.snapshot(config)
     result['goals'] = goals.rows(result, config)
     result['summary'] = goals.summary(result, result['goals'])
     return result
@@ -745,7 +746,24 @@ def _main(argv=None):
     menu.add_argument("enabled", choices=("true", "false"))
     launch = commands.add_parser("launch", help=tr('Abrir un perfil seleccionado mediante la terminal nativa'))
     launch.add_argument("agent", choices=AGENTS)
-    commands.add_parser("launch-default", help=tr('Abrir el perfil predeterminado del plugin'))
+    launch_default = commands.add_parser("launch-default", help=tr('Abrir el perfil predeterminado del plugin'))
+    def parse_context_override(text):
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise argparse.ArgumentTypeError(tr('La excepción de contexto debe ser un objeto JSON con motivo.'))
+        return value
+    for opening in (launch, launch_default):
+        opening.add_argument('--role', choices=context_policy.ROLES, default='jefe')
+        opening.add_argument('--context-override', type=parse_context_override)
+    context_set = commands.add_parser('context-set', help=tr('Guardar un ajuste de contexto del plugin'))
+    context_set.add_argument('key')
+    context_set.add_argument('value')
+    context_reset = commands.add_parser('context-reset', help=tr('Restaurar los ajustes de contexto recomendados'))
+    for editing in (context_set, context_reset):
+        editing.add_argument('--role', choices=context_policy.ROLES)
+    for name in ('context-checkpoint', 'context-brief', 'context-precompact'):
+        action = commands.add_parser(name, help=tr('Guardar estado explícito o consultar el índice mediante ECC'))
+        action.add_argument('--instance', default=os.environ.get('AI_TEAM_CONTEXT'))
     backup_config=commands.add_parser("memory-configure",help=tr('Elegir destino, frecuencia y retención de copias'))
     backup_config.add_argument("destination")
     backup_config.add_argument("--hours",type=int,default=24,choices=(1,6,12,24,168))
@@ -810,6 +828,9 @@ def _main(argv=None):
     language_parser = commands.add_parser('set-language', help=tr('Guardar el idioma del panel'))
     language_parser.add_argument('language', choices=('system', 'es', 'en'))
     args = parser.parse_args(argv)
+    if args.command in ('context-checkpoint', 'context-brief', 'context-precompact'):
+        import context_state
+        return context_state.main([args.command.removeprefix('context-'), *(['--instance', args.instance] if args.instance else [])])
     try:
         if args.command == 'catalog-context':
             try:
@@ -825,6 +846,18 @@ def _main(argv=None):
             config['language'] = args.language
             save_config(config)
             message = tr('Idioma guardado.')
+        elif args.command in ('context-set', 'context-reset'):
+            # Only the plugin's own settings.json changes: validate a copy, then save atomically.
+            try:
+                value = json.loads(args.value) if args.command == 'context-set' else None
+            except ValueError:
+                raise HarnessError(tr('El valor de contexto debe ser JSON válido.')) from None
+            updated = (context_policy.with_value(config, args.key, value, args.role)
+                       if args.command == 'context-set' else context_policy.without(config, args.role))
+            config.clear()
+            config.update(updated)
+            save_config(config)
+            message = tr('Ajuste de contexto guardado. Se aplica en sesiones nuevas.')
         elif args.command == 'ai-check':
             config['aiCheck'] = ai_check.run(config, status(config))
             save_config(config)
@@ -897,7 +930,7 @@ def _main(argv=None):
                 native_pi.default_model(config,args.model);save_config(config)
                 message=tr('Predeterminado Pi guardado. No se inició ninguna consulta; las sesiones abiertas conservan su modelo.')
             elif args.command=='pi-auth':
-                launch_agent(config,'pi')
+                launch_agent(config,'pi', apply_context=False)
                 message=tr('Pi abierto. En su menú nativo /login elige el proveedor y completa la autenticación. AI Team no recibe la clave. Abrir no inicia una consulta al modelo.')
             else:
                 if not native_pi.provider_settings(config)[args.provider]:raise HarnessError(tr('Activa primero ese proveedor.'))
@@ -1074,7 +1107,7 @@ def _main(argv=None):
             message = tr('Autenticación nativa abierta en terminal. Completa el inicio de sesión con tu cuenta; abrirla no acredita autenticación ni activa componentes.')
         elif args.command in ("launch", "launch-default"):
             agent = args.agent if args.command == "launch" else config.get("defaultAgent", "")
-            launch_agent(config, agent)
+            launch_agent(config, agent, role=args.role, context_override=args.context_override)
             message = tr('Lanzamiento solicitado para {nombre} con su modelo y permisos nativos.', nombre=AGENTS[agent])
         elif args.command in ("superpowers-all", "memory-all", "local-tools-all", "team-all"):
             key = args.command.removesuffix("-all")
