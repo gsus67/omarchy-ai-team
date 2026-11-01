@@ -3,6 +3,7 @@
 from i18n import tr
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,7 @@ import sys
 import tempfile
 
 import native_plugins
+import context_policy
 
 
 class LauncherError(native_plugins.PluginError):
@@ -105,7 +107,45 @@ def sync_menu(config, agents, script):
     config['launcherDesktop'] = receipts
 
 
-def launch(binary, agent, home, *, arguments=()):
+def invocation(agent, *, config=None, role='jefe', context_override=None, cwd=None):
+    """Shared per-process builder for terminal and explicit headless recipes."""
+    if config is None and context_override is None:
+        return [], []
+    policy = context_policy.resolve(config if config is not None else {}, role, override=context_override)
+    args, environment = context_policy.launch_options(agent, policy)
+    if policy['enabled']:
+        if agent == 'claude':
+            for switch in ('DISABLE_AUTO_COMPACT', 'DISABLE_COMPACT'):
+                if os.environ.get(switch, '').lower() in ('1', 'true', 'yes'):
+                    raise context_policy.ContextPolicyError(tr('Compactación nativa desactivada por {switch}; resuélvelo o desactiva la política para esta ejecución.', switch=switch))
+        import context_state
+        capsule = context_state.instance(agent, role, cwd or terminal_cwd(), policy)
+        capsule['memory_enabled'] = (config or {}).get('memoryEnabled', False) is True and (
+            (config or {}).get('agents', {}).get(agent, False) is True)
+        extra_args, extra_env = context_state.launch_options(capsule)
+        args += extra_args
+        environment += extra_env
+    return args, environment
+
+
+def terminal_cwd():
+    """Directory Omarchy opens a new terminal in; the backend's own cwd if unknown."""
+    tool = shutil.which('omarchy-cmd-terminal-cwd')
+    if tool:
+        try:
+            answer = subprocess.run([tool], capture_output=True, text=True, timeout=3, check=False)
+            path = Path(answer.stdout.strip())
+            if answer.returncode == 0 and answer.stdout.strip() and path.is_dir():
+                return path
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass  # unknown terminal directory: keep the backend's own
+    return Path.cwd()
+
+
+def launch(binary, agent, home, *, arguments=(), config=None, role='jefe', context_override=None, cwd=None):
+    # Freeze one directory: the context capsule and the terminal must share it.
+    cwd = Path(cwd).resolve() if cwd else None
+    policy_args, policy_env = invocation(agent, config=config, role=role, context_override=context_override, cwd=cwd)
     omarchy = shutil.which('omarchy')
     if not omarchy:
         raise LauncherError(tr('Omarchy no está disponible para abrir la terminal.'))
@@ -113,13 +153,16 @@ def launch(binary, agent, home, *, arguments=()):
     # terminal command.
     args = [omarchy, 'launch', 'terminal', '/usr/bin/env',
             '-u', 'CODEX_HOME', '-u', 'CLAUDE_CONFIG_DIR']
+    frozen = next((x.split('=', 1)[1] for x in policy_env if x.startswith('AI_TEAM_CONTEXT=')), None)
+    if frozen:
+        args[4:4] = ['-C', json.loads(frozen)['cwd']]  # env changes directory before running the CLI
     if agent == 'pi':
         args+=['-u','PI_CODING_AGENT_DIR','PI_CODING_AGENT_DIR='+str(home)]
     elif agent != 'claude':
         args.append('CODEX_HOME='+str(home))
     elif os.environ.get('CLAUDE_CONFIG_DIR'):
         args.append('CLAUDE_CONFIG_DIR='+str(home))
-    args += [binary, *arguments]
+    args += [*policy_env, binary, *policy_args, *arguments]
     subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
 

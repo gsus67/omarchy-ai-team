@@ -101,15 +101,16 @@ class ComponentSelectionTests(unittest.TestCase):
         self.assertFalse(reply["data"]["launcher"]["canLaunch"])
         self.assertEqual(harness.load_config()["foreign"], "preserve")
 
-    def test_enabled_component_failure_prevents_a_session_from_starting(self):
+    def test_launch_leaves_enabled_component_reconciliation_to_explicit_actions(self):
         self.configured(["codex"], enabled=True)
         self.fail_agent = "codex"
         import native_launcher
         with patch.object(native_launcher, "launch") as launch:
             code, reply = self.command("launch", "codex")
-            self.assertEqual(code, 1)
-            self.assertIn("synthetic connection failure", reply["error"])
-            launch.assert_not_called()
+            self.assertEqual(code, 0)
+            launch.assert_called_once()
+            self.assertEqual(self.actions, [])
+            self.assertTrue(self.component(reply)['enabled'])
 
     def test_menu_preference_without_selected_profiles_never_installs_or_launches(self):
         self.configured([], enabled=False)

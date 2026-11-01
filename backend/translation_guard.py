@@ -8,6 +8,7 @@ from string import Formatter
 
 # These functions produce agent instructions or generated program source, not panel copy.
 INSTRUCTIONS = {
+    'context_state.py': {'instructions', '_body', 'stable_instructions', '_idle_notice'},
     'native_local_tools.py': {'text', 'instruction'},
     'native_team.py': {'text', 'instruction', 'codex_command', 'claude_command', 'role_commands'},
     'shared_memory.py': {'instructions'},

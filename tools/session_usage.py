@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import context_run
 import harness
 import native_plugins
 
@@ -42,10 +43,29 @@ def continuation_availability(response, window):
             "continuationResetsAt":max(resets) if resets and known else None}
 
 
+def task_tokens(before, after):
+    """Per-task token delta from two private snapshots; never touches quota, auth or models."""
+    try:
+        delta = context_run.token_delta(*(json.loads(Path(path).read_text()) for path in (before, after)))
+    except (OSError, ValueError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 1
+    # Cost is reported only when a CLI delivers it; the snapshots carry no cost.
+    print(json.dumps({"ok": True, "tokens": delta, "cost": None}))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("current", "codex", "codex-2"), default="current")
+    parser.add_argument("--task-tokens", action="store_true", help="Compare two token snapshots instead of reading quota")
+    parser.add_argument("--before")
+    parser.add_argument("--after")
     args = parser.parse_args()
+    if args.task_tokens:
+        if not (args.before and args.after):
+            parser.error("--task-tokens requires --before and --after")
+        return task_tokens(args.before, args.after)
     if args.profile != "current":
         os.environ["CODEX_HOME"] = str(Path.home() / (".codex" if args.profile == "codex" else ".codex-2"))
     try:

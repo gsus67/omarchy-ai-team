@@ -17,14 +17,6 @@ ColumnLayout {
   property var team: ({})
   property var aiCheck: ({})
   property bool busy: false
-  readonly property var defaultOptions: {
-    var options = [{value: "none", label: root.tr("Ninguno")}]
-    for (const agent of root.agents) {
-      if (agent.enabled)
-        options.push({value: agent.id, label: agent.name})
-    }
-    return options
-  }
   signal commandRequested(var arguments)
   signal pageRequested(string id)
   spacing: Style.space(6)
@@ -73,19 +65,12 @@ ColumnLayout {
     onToggled: root.commandRequested(["team-all", root.team.enabled ? "disable" : "enable"])
   }
   CompactRow {
+    objectName: "context-row"
     Layout.fillWidth: true
-    label: root.tr("Abrir con")
+    label: root.tr("Contexto")
+    status: root.tr("Sesiones nuevas")
     switchVisible: false
-    navigationEnabled: false
-  }
-  Ui.ButtonGroup {
-    objectName: "default-agent"
-    spacing: root.metrics.xxs
-    fontSize: root.fonts.caption
-    options: root.defaultOptions
-    value: root.launcher.defaultAgent || "none"
-    enabled: !root.busy
-    onChanged: value => root.commandRequested(["set-default-agent", value])
+    onOpened: root.pageRequested("context")
   }
   CompactRow {
     objectName: "launcher-menu"
