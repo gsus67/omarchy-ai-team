@@ -15,6 +15,22 @@ export default function (pi) {
     if (ctx.hasUI) ctx.ui.notify(message, "info");
     else console.error(message);
   };
+  let initialContext;
+  const runHook = async (action) => {
+    try {
+      const { stdout } = await execFileAsync("python3", [stateScript, action, "--instance", capsuleText], { encoding: "utf8", timeout: 90000 });
+      return JSON.parse(stdout).hookSpecificOutput?.additionalContext;
+    } catch { return undefined; }
+  };
+  if (capsule.memory_enabled !== false) {
+    pi.on("session_start", async () => { initialContext = await runHook("start"); });
+    pi.on("before_agent_start", async (event) => {
+      const idle = policy.suggest_resume_after_idle ? await runHook("idle") : undefined;
+      const additions = [initialContext, idle].filter(Boolean);
+      initialContext = undefined;
+      if (additions.length) return { message: { customType: "ai-team-context", content: additions.join("\n\n"), display: false } };
+    });
+  }
   pi.on("turn_end", (_event, ctx) => {
     const tokens = ctx.getContextUsage()?.tokens;
     if (tokens == null) {
@@ -26,11 +42,11 @@ export default function (pi) {
   });
   pi.on("session_before_compact", async (event, ctx) => {
     const tokens = event.preparation.tokensBefore;
-    if (tokens == null || tokens < policy.compact_floor_tokens) {
+    if (event.reason !== "overflow" && (tokens == null || tokens < policy.compact_floor_tokens)) {
       log(ctx, tokens == null ? messages.unknown || "Contexto: tokens desconocidos; no se compacta." : messages.floor || "Contexto: compactación bajo el piso cancelada.");
       return { cancel: true };
     }
-    if (policy.dump_state_before) {
+    if (capsule.memory_enabled !== false && policy.dump_state_before) {
       try {
         const { stdout } = await execFileAsync("python3", [stateScript, "precompact", "--instance", capsuleText], { encoding: "utf8", timeout: 90000 });
         const result = JSON.parse(stdout);

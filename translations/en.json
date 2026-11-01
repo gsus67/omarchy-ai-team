@@ -323,6 +323,7 @@
   "Herramienta o selector no admitido.": "Unsupported tool or selector.",
   "Herramientas locales": "Local tools",
   "Historial, diferencias y worktrees mediante Git existente.": "History, diffs, and worktrees using existing Git.",
+  "No se permite --worktree con la política de contexto activa.": "--worktree is not allowed while the context policy is active.",
   "Idioma": "Language",
   "Idioma guardado.": "Language saved.",
   "Indica un reset oficial UTC vigente; no se inventa un tiempo de espera.": "Enter a current official UTC reset; no wait time will be invented.",
@@ -723,5 +724,7 @@
   "Explorar con Tareas sencillas": "Explore with Simple tasks",
   "Relevo al pausar": "Handoff on pause",
   "Avisar tras inactividad": "Warn after idle",
-  "Caché inactiva (minutos)": "Idle cache (minutes)"
+  "Caché inactiva (minutos)": "Idle cache (minutes)",
+  "El directorio -C/--cd no coincide con --cwd.": "The -C/--cd directory does not match --cwd.",
+  "Falta el directorio de -C/--cd.": "The directory for -C/--cd is missing."
 }

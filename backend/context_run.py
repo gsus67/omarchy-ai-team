@@ -97,7 +97,8 @@ def _write_snapshots(capsule_id, **snapshots):
 _CODEX_VALUE_OPTIONS = frozenset((
     '-c', '--config', '-m', '--model', '-p', '--profile', '-s', '--sandbox', '-a', '--ask-for-approval',
     '-C', '--cd', '-i', '--image', '--add-dir', '--color', '--output-schema', '-o', '--output-last-message',
-    '--enable', '--disable', '--oss-provider', '--local-provider', '--remote', '--remote-auth-token-env'))
+    '--enable', '--disable', '--oss-provider', '--local-provider', '--remote', '--remote-auth-token-env',
+    '--thread-source', '--cyber-access-program'))
 
 
 def _codex_positionals(rest):
@@ -149,8 +150,44 @@ def _fresh_command(command, agent):
     return [command[0], *rest]
 
 
+def _check_codex_cwd(command, cwd):
+    # Codex accepts options on either side of `exec` and after the prompt.
+    rest = command[1:]
+    selected = None
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if word == '--':
+            break
+        if word == '--worktree':
+            raise ValueError(tr('No se permite --worktree con la política de contexto activa.'))
+        if word in ('-C', '--cd'):
+            if index + 1 >= len(rest):
+                raise ValueError(tr('Falta el directorio de -C/--cd.'))
+            selected = rest[index + 1]
+            index += 2
+            continue
+        if word.startswith('--cd='):
+            selected = word[5:]
+        elif word.startswith('-C') and word != '-C':
+            selected = word[2:].removeprefix('=')
+        elif word in ('-i', '--image'):
+            index += 1
+            while index < len(rest) and not rest[index].startswith('-'):
+                index += 1
+            continue
+        elif word in _CODEX_VALUE_OPTIONS:
+            index += 2
+            continue
+        index += 1
+    if selected is not None and (Path(cwd) / selected).resolve() != Path(cwd).resolve():
+        raise ValueError(tr('El directorio -C/--cd no coincide con --cwd.'))
+
+
 def prepare(command, agent, role, config, cwd, *, override=None):
     policy = context_policy.resolve(config, role, override=override)
+    if policy['enabled'] and agent in ('codex', 'codex-2'):
+        _check_codex_cwd(command, cwd)
     if policy['enabled'] and policy['fresh_worker_per_subtask']:
         command = _fresh_command(command, agent)
     args, assignments = native_launcher.invocation(agent, config=config, role=role,

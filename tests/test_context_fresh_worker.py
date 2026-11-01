@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 import native_team
 
 REPORT = {'status': 'done', 'references': 'backend/a.py:1', 'tests': '1 passed', 'error': '', 'pending': ''}
-CODEX = ['codex', 'exec', '-C', '/work', '-s', 'read-only', '-m', 'chosen',
+CODEX = ['codex', 'exec', '-C', '.', '-s', 'read-only', '-m', 'chosen',
          '-c', 'model_reasoning_effort="high"', 'task']
 CLAUDE = ['claude', '-p', 'task', '--model', 'chosen', '--effort', 'high', '--permission-mode', 'plan']
 
@@ -22,6 +22,7 @@ class FreshWorkerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        (self.root / 'resume').symlink_to(self.root, target_is_directory=True)
 
     def test_each_subtask_gets_its_own_instance_and_a_non_persistent_native_session(self):
         for agent, command, flag in [('codex', CODEX, '--ephemeral'), ('codex-2', CODEX, '--ephemeral'),
@@ -39,7 +40,7 @@ class FreshWorkerTests(unittest.TestCase):
 
     def test_model_effort_sandbox_and_permissions_are_preserved(self):
         codex, _, _ = self.run.prepare(CODEX, 'codex', 'review', {}, self.root)
-        for token in ('-s', 'read-only', '-m', 'chosen', '-C', '/work', 'model_reasoning_effort="high"'):
+        for token in ('-s', 'read-only', '-m', 'chosen', '-C', '.', 'model_reasoning_effort="high"'):
             self.assertIn(token, codex)
         claude, _, _ = self.run.prepare(CLAUDE, 'claude', 'review', {}, self.root)
         for token in ('--model', 'chosen', '--effort', 'high', '--permission-mode', 'plan'):

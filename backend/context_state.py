@@ -366,10 +366,11 @@ def launch_options(capsule):
     serialized = json.dumps(capsule, ensure_ascii=False)
     script = str(Path(__file__).resolve())
     hooks = {}
-    events = {'SessionStart': 'start'}
-    if capsule['policy']['dump_state_before']:
+    memory_enabled = capsule.get('memory_enabled', True)
+    events = {'SessionStart': 'start'} if memory_enabled else {}
+    if memory_enabled and capsule['policy']['dump_state_before']:
         events['PreCompact'] = 'precompact'
-    if _flag(capsule['policy'], 'suggest_resume_after_idle'):
+    if memory_enabled and _flag(capsule['policy'], 'suggest_resume_after_idle'):
         events['UserPromptSubmit'] = 'idle'
     for event, action in events.items():
         command = shlex.join([sys.executable, script, action, '--instance', serialized])
@@ -387,11 +388,11 @@ def launch_options(capsule):
         return ['--append-system-prompt', instructions(capsule)], env + ['AI_TEAM_PI_MESSAGES='+json.dumps(messages, ensure_ascii=False)]
     # Inline hooks still require Codex native trust. Never bypass it or clobber developer_instructions.
     args = ['-c', 'features.hooks=true', '-c', 'compact_prompt='+json.dumps(
-        'Preserve plan, decisions, files:lines, errors, pending and ECC pointers. Discard raw tools/logs. '+instructions(capsule))]
+        'Preserve plan, decisions, files:lines, errors, pending and ECC pointers. Discard raw tools/logs. '+instructions(capsule), ensure_ascii=False)]
     for event, entries in hooks.items():
         # JSON objects are not TOML inline tables.
         entry = entries[0]; hook = entry['hooks'][0]
-        value = '[{matcher='+json.dumps(entry['matcher'])+',hooks=[{type="command",command='+json.dumps(hook['command'])+',timeout=90}]}]'
+        value = '[{matcher='+json.dumps(entry['matcher'])+',hooks=[{type="command",command='+json.dumps(hook['command'], ensure_ascii=False)+',timeout=90}]}]'
         args += ['-c', 'hooks.'+event+'='+value]
     return args, env
 

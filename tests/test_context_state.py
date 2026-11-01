@@ -177,7 +177,7 @@ class ContextStateTests(unittest.TestCase):
         import native_launcher
         with patch.object(native_launcher.shutil, 'which', return_value='/omarchy'), patch.object(native_launcher.subprocess, 'Popen') as spawn:
             for _ in range(2):
-                native_launcher.launch('/codex', 'codex-2', Path(self.temp.name), config={}, role='review')
+                native_launcher.launch('/codex', 'codex-2', Path(self.temp.name), config={'memoryEnabled': True, 'agents': {'codex-2': True}}, role='review')
                 args = spawn.call_args.args[0]
                 capsule = json.loads(next(x.split('=', 1)[1] for x in args if x.startswith('AI_TEAM_CONTEXT=')))
                 self.assertEqual(capsule['cwd'], str(Path.cwd()))

@@ -120,6 +120,8 @@ def invocation(agent, *, config=None, role='jefe', context_override=None, cwd=No
                     raise context_policy.ContextPolicyError(tr('Compactación nativa desactivada por {switch}; resuélvelo o desactiva la política para esta ejecución.', switch=switch))
         import context_state
         capsule = context_state.instance(agent, role, cwd or terminal_cwd(), policy)
+        capsule['memory_enabled'] = (config or {}).get('memoryEnabled', False) is True and (
+            (config or {}).get('agents', {}).get(agent, False) is True)
         extra_args, extra_env = context_state.launch_options(capsule)
         args += extra_args
         environment += extra_env
