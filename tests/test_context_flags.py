@@ -155,6 +155,16 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.run_cli('context-reset')[0], 0)
         self.assertNotIn('context', json.loads(harness.config_path().read_text()))
 
+    def test_page_global_settings_save_and_reject_invalid_values(self):
+        for args in (('enabled', 'false'), ('dump_state_before', 'false'), ('worker_report_on', '["blocked"]')):
+            self.assertEqual(self.run_cli('context-set', *args)[0], 0, args)
+        saved = json.loads(harness.config_path().read_text())['context']
+        self.assertEqual((saved['enabled'], saved['dump_state_before'], saved['worker_report_on']), (False, False, ['blocked']))
+        for bad in (('worker_report_on', '[]'), ('worker_report_on', '["milestone","milestone"]'), ('dump_state_before', '"yes"')):
+            self.assertNotEqual(self.run_cli('context-set', *bad)[0], 0, bad)
+        self.assertNotEqual(self.run_cli('context-set', 'dump_state_before', 'false', '--role', 'code')[0], 0)
+        self.assertEqual(json.loads(harness.config_path().read_text())['context'], saved)
+
 
 if __name__ == '__main__':
     unittest.main()
