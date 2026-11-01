@@ -23,7 +23,11 @@ ColumnLayout {
     {key: "bounded_reads", label: root.tr("Lectura acotada"), native: false},
     {key: "stable_prompt_prefix", label: root.tr("Prefijo estable"), native: true},
     {key: "measure_task_tokens", label: root.tr("Medir tokens por tarea"), native: true},
-    {key: "clear_between_tasks_below_floor", label: root.tr("Limpiar bajo el piso"), native: false}]
+    {key: "clear_between_tasks_below_floor", label: root.tr("Limpiar bajo el piso"), native: false},
+    {key: "group_related_subtasks", label: root.tr("Agrupar subtareas relacionadas"), native: false},
+    {key: "explore_with_simple_role", label: root.tr("Explorar con Tareas sencillas"), native: false},
+    {key: "handoff_on_pause", label: root.tr("Relevo al pausar"), native: false},
+    {key: "suggest_resume_after_idle", label: root.tr("Avisar tras inactividad"), native: true}]
   readonly property var numbers: [
     {key: "compact_at_tokens", label: root.tr("Compactar a los (tokens)"), native: true},
     {key: "compact_floor_tokens", label: root.tr("Piso de contexto (tokens)"), native: false},
@@ -82,6 +86,16 @@ ColumnLayout {
     value: root.values.read_window_lines || 120
     enabled: !root.busy
     onModified: value => root.command("context-set", "read_window_lines", String(value))
+  }
+  Ui.NumberField {
+    objectName: "context-idle_cache_ttl_minutes"
+    Layout.fillWidth: true
+    label: root.tr("Caché inactiva (minutos)")
+    from: 1
+    to: 1440
+    value: root.values.idle_cache_ttl_minutes || 55
+    enabled: !root.busy
+    onModified: value => root.command("context-set", "idle_cache_ttl_minutes", String(value))
   }
   // Token limits can reach 64 bits: the backend snapshot sends them as decimal text and they stay
   // text here, never JavaScript numbers (which round above 2^53).

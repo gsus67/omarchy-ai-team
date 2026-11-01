@@ -16,10 +16,13 @@ class ContextPolicyError(ValueError):
 ROLES = ('jefe', 'plan', 'code', 'review', 'simple')
 NUMERIC = ('compact_at_tokens', 'compact_floor_tokens', 'worker_report_max_tokens')
 WINDOW = 'read_window_lines'
+IDLE_TTL = 'idle_cache_ttl_minutes'
 SAVINGS_BOOLS = ('task_plan_with_pointers', 'fresh_worker_per_subtask', 'bounded_reads',
-                 'stable_prompt_prefix', 'measure_task_tokens', 'clear_between_tasks_below_floor')
+                 'stable_prompt_prefix', 'measure_task_tokens', 'clear_between_tasks_below_floor',
+                 'group_related_subtasks', 'explore_with_simple_role', 'handoff_on_pause',
+                 'suggest_resume_after_idle')
 # Keys a role or a reasoned invocation may override (besides ``enabled`` for invocations).
-OVERRIDABLE = (*NUMERIC, WINDOW, *SAVINGS_BOOLS)
+OVERRIDABLE = (*NUMERIC, WINDOW, IDLE_TTL, *SAVINGS_BOOLS)
 DEFAULTS = {
     'enabled': True,
     'apply': 'launch',
@@ -32,6 +35,7 @@ DEFAULTS = {
     'worker_report_on': ['milestone', 'blocked'],
     **{key: True for key in SAVINGS_BOOLS},
     WINDOW: 120,
+    IDLE_TTL: 55,
 }
 
 
@@ -52,6 +56,8 @@ def _savings(value):
             raise ContextPolicyError(tr('La política de contexto requiere booleanos explícitos.'))
     if WINDOW in value and (type(value[WINDOW]) is not int or not 1 <= value[WINDOW] <= 2000):
         raise ContextPolicyError(tr('La ventana de lectura debe ser un entero entre 1 y 2000.'))
+    if IDLE_TTL in value and (type(value[IDLE_TTL]) is not int or not 1 <= value[IDLE_TTL] <= 1440):
+        raise ContextPolicyError(tr('El tiempo de caché inactiva debe ser un entero entre 1 y 1440 minutos.'))
 
 
 def _floor(value):

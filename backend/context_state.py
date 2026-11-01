@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Per-invocation ECC adapter. No vault parsing, transcripts or semantic summarizer."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import time
+from datetime import datetime
 import uuid
 
 from i18n import tr
+import atomic_files
 import context_policy
 import shared_memory
 
@@ -83,6 +88,7 @@ def _save(client, capsule, kind, body, links=()):
     read = client.call('memory_read', {'id': saved['id'], 'scope': 'project'})['memory']
     if read.get('id') != saved['id'] or read.get('body') != serialized or read.get('tags') != saved['tags']:
         raise ValueError(tr('ECC_CHECKPOINT_VERIFICATION_FAILED: la memoria releída no coincide con la guardada.'))
+    _record_handoff(capsule['id'], kind, saved['id'], serialized)
     return saved['id']
 
 
@@ -117,6 +123,137 @@ def precompact(client, capsule):
     # Even missing/stale state produces an honest event, never a fabricated summary.
     key = _save(client, capsule, 'precompact', body, links)
     return {**body, 'id': key}
+
+
+# --- Idle cold-cache advice: a UserPromptSubmit hook that only ever adds one line of context. ---
+IDLE_FILE, IDLE_SCHEMA = 'last_turn.json', 1
+
+
+def _now():
+    return int(time.time())
+
+
+def _idle_folder(capsule_id, *, create):
+    folder = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state')
+    if create:
+        folder.mkdir(parents=True, exist_ok=True)
+    for part in ('omarchy-ai-team', 'context-usage', str(uuid.UUID(capsule_id))):
+        folder = folder / part
+        if create:
+            folder.mkdir(mode=0o700, exist_ok=True)
+    return folder
+
+
+def _read_state(path, *, limit=1024):
+    """Parsed JSON of a small private state file, or None; never blocks on FIFOs/devices, never follows symlinks."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            return None
+        with os.fdopen(descriptor, 'rb', closefd=False) as source:
+            return json.loads(source.read(limit + 1))
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _last_turn(capsule_id):
+    """Epoch seconds of the previous prompt, or None; only a number is ever stored (no prompt, no transcript)."""
+    try:
+        data = _read_state(_idle_folder(capsule_id, create=False) / IDLE_FILE)
+    except ValueError:
+        return None
+    last = data.get('last_turn') if isinstance(data, dict) and data.get('schema') == IDLE_SCHEMA else None
+    return last if type(last) is int and last >= 0 else None
+
+
+def _record_handoff(capsule_id, kind, memory_id, serialized):
+    """Remember which memory _save wrote and its sha256, so a later re-read can be proven identical. No content stored."""
+    try:
+        atomic_files.atomic_write(_idle_folder(capsule_id, create=True) / f'handoff_{kind}.json', json.dumps(
+            {'schema': IDLE_SCHEMA, 'id': memory_id, 'sha256': hashlib.sha256(serialized.encode()).hexdigest()}))
+    except (OSError, ValueError):
+        pass  # Without a record the handoff simply never counts as verified.
+
+
+def _recorded_handoff(capsule_id, kind):
+    try:
+        data = _read_state(_idle_folder(capsule_id, create=False) / f'handoff_{kind}.json')
+    except ValueError:
+        return None
+    if (isinstance(data, dict) and data.get('schema') == IDLE_SCHEMA and isinstance(data.get('id'), str)
+            and isinstance(data.get('sha256'), str)):
+        return data['id'], data['sha256']
+    return None
+
+
+def _record_turn(capsule_id, now):
+    atomic_files.atomic_write(_idle_folder(capsule_id, create=True) / IDLE_FILE,
+                              json.dumps({'schema': IDLE_SCHEMA, 'last_turn': now}))
+
+
+def _seconds(text):
+    try:
+        return datetime.fromisoformat(str(text).replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return None
+
+
+def _verified_handoff(client, capsule, since):
+    """Id of the checkpoint this instance saved, only if ECC returns exactly the body whose digest _save recorded."""
+    recorded = _recorded_handoff(capsule['id'], 'checkpoint')
+    if recorded is None:
+        return None
+    memory_id, digest = recorded
+    _project(client)
+    read = client.call('memory_read', {'id': memory_id, 'scope': 'project'})['memory']
+    body = read['body']
+    if read.get('id') != memory_id or hashlib.sha256(body.encode()).hexdigest() != digest:
+        return None
+    stored = json.loads(body)
+    validate_state(stored['state'])
+    if (stored['schema'] != 1 or stored['instance'] != capsule['id'] or stored['cwd'] != capsule['cwd']
+            or capsule['id'] not in read.get('tags', []) or 'context-checkpoint' not in read.get('tags', [])):
+        return None
+    created = _seconds(read.get('createdAt'))
+    # Without a valid date freshness cannot be proven, so it does not count as verified.
+    return None if created is None or created < since else memory_id
+
+
+def _idle_notice(minutes, ttl, tokens, floor, handoff):
+    size = (f"contexto de unos {tokens} tokens" if tokens is not None else
+            f"tokens desconocidos (el hook nativo no los informa; piso {floor})")
+    head = (f"Aviso de caché fría: {minutes} min sin actividad (TTL {ttl} min); la caché del prompt probablemente caducó "
+            f"y el próximo turno reenvía todo el contexto: {size}. ")
+    if handoff:
+        brief = shlex.join([sys.executable, str(Path(__file__).resolve()), 'brief'])
+        return head + (f"Existe un relevo ECC verificado de esta instancia ({handoff}): conviene /clear y cargar el brief con "
+                       f"`{brief}`. Díselo al usuario; no se ha limpiado nada y no se limpiará solo.")
+    return head + ("NO hay relevo verificado de esta instancia: NO conviene limpiar todavía. Guarda antes un relevo con el "
+                   "comando de checkpoint y comprueba status=saved.")
+
+
+def idle(capsule, *, now=None, tokens=None, client=None):
+    """Record this turn and return advice if the cache went cold on a big context; never acts on the session."""
+    policy = capsule['policy']
+    if not _flag(policy, 'suggest_resume_after_idle'):
+        return None
+    now = _now() if now is None else now
+    previous = _last_turn(capsule['id'])
+    _record_turn(capsule['id'], now)
+    ttl, floor = _flag(policy, 'idle_cache_ttl_minutes'), _flag(policy, 'compact_floor_tokens')
+    if previous is None or now - previous <= ttl * 60 or (tokens is not None and tokens < floor):
+        return None
+    try:
+        handoff = _verified_handoff(client or ECC(capsule), capsule, previous)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        handoff = None  # Any ECC doubt means no verified handoff.
+    return _idle_notice((now - previous) // 60, ttl, tokens, floor, handoff)
 
 
 def _title(text):
@@ -181,8 +318,22 @@ def _body(capsule, stable):
     if capsule['role'] != 'jefe' and _flag(p, 'bounded_reads'):
         text += (f"Lee en ventanas de {_flag(p, 'read_window_lines')} líneas (rg, ast-grep, jq o rangos de líneas) "
                  "antes que archivos enteros; amplía solo con motivo. ")
+    grouping = capsule['role'] in ('jefe', 'plan') and _flag(p, 'group_related_subtasks')
+    if grouping:
+        text += ("Agrupa las subtareas relacionadas (mismos archivos) en UN obrero y abre otro solo al cambiar de fase "
+                 "(por ejemplo de implementar a revisar): abrir un obrero por cada paso repite lecturas y encarece la sesión. ")
     if capsule['role'] == 'jefe' and _flag(p, 'fresh_worker_per_subtask'):
-        text += ("Abre un obrero nuevo por subtarea, con encargo autocontenido; no reanudes ni heredes su conversación. ")
+        text += ("Abre un obrero nuevo por grupo de subtareas, con encargo autocontenido; no reanudes ni heredes su conversación. "
+                 if grouping else
+                 "Abre un obrero nuevo por subtarea, con encargo autocontenido; no reanudes ni heredes su conversación. ")
+    if _flag(p, 'explore_with_simple_role'):
+        text += ("Exploración: devuelve solo punteros archivo:línea, sin contenido de archivos. "
+                 if capsule['role'] == 'simple' else
+                 "Delega la exploración, lectura y búsquedas al papel Tareas sencillas, que devuelve solo punteros "
+                 "archivo:línea, sin contenido; lee después únicamente esos rangos. ")
+    if _flag(p, 'handoff_on_pause'):
+        text += ("Al terminar un bloque de trabajo o quedar esperando al usuario, guarda un relevo estructurado con el comando de "
+                 "checkpoint y comprueba status=saved; si ECC falla, dilo y no afirmes que existe relevo. ")
     if _flag(p, 'clear_between_tasks_below_floor'):
         text += (f"Al cambiar de tarea con el contexto bajo el piso ({p['compact_floor_tokens']} tokens), guarda el relevo y "
                  "sugiere /clear o su equivalente nativo comprobado; no lo envíes automáticamente. "
@@ -215,9 +366,13 @@ def launch_options(capsule):
     serialized = json.dumps(capsule, ensure_ascii=False)
     script = str(Path(__file__).resolve())
     hooks = {}
-    events = ['SessionStart'] + (['PreCompact'] if capsule['policy']['dump_state_before'] else [])
-    for event in events:
-        command = shlex.join([sys.executable, script, 'start' if event == 'SessionStart' else 'precompact', '--instance', serialized])
+    events = {'SessionStart': 'start'}
+    if capsule['policy']['dump_state_before']:
+        events['PreCompact'] = 'precompact'
+    if _flag(capsule['policy'], 'suggest_resume_after_idle'):
+        events['UserPromptSubmit'] = 'idle'
+    for event, action in events.items():
+        command = shlex.join([sys.executable, script, action, '--instance', serialized])
         hooks[event] = [{'matcher': 'manual|auto' if event == 'PreCompact' else '',
                          'hooks': [{'type': 'command', 'command': command, 'timeout': 90}]}]
     env = ['AI_TEAM_CONTEXT='+serialized]
@@ -238,9 +393,19 @@ def launch_options(capsule):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('checkpoint', 'precompact', 'start', 'brief'))
+    parser.add_argument('action', choices=('checkpoint', 'precompact', 'start', 'brief', 'idle'))
     parser.add_argument('--instance', default=os.environ.get('AI_TEAM_CONTEXT'))
     args = parser.parse_args(argv)
+    if args.action == 'idle':
+        # Advice only: whatever fails stays silent and the turn goes on untouched.
+        try:
+            notice = idle(json.loads(args.instance or '{}'))
+            if notice:
+                print(json.dumps({'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit',
+                                                         'additionalContext': notice}}, ensure_ascii=False))
+        except Exception:
+            return 0
+        return 0
     try:
         capsule = json.loads(args.instance or '{}')
         uuid.UUID(capsule['id'])

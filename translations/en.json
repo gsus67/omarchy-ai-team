@@ -715,5 +715,11 @@
   "Guardar estado explícito o consultar el índice mediante ECC": "Save explicit state or query the index through ECC",
   "Verificación de la CLI nativa o del informe del obrero.": "Native CLI or worker report verification.",
   "Informe ECC; contenido omitido para respetar el presupuesto de transporte.": "ECC report; content omitted to respect the transport budget.",
-  "Guardado ECC fallido; fragmento del error literal.": "ECC save failed; literal error excerpt."
+  "Guardado ECC fallido; fragmento del error literal.": "ECC save failed; literal error excerpt.",
+  "El tiempo de caché inactiva debe ser un entero entre 1 y 1440 minutos.": "The idle cache time must be an integer between 1 and 1440 minutes.",
+  "Agrupar subtareas relacionadas": "Group related subtasks",
+  "Explorar con Tareas sencillas": "Explore with Simple tasks",
+  "Relevo al pausar": "Handoff on pause",
+  "Avisar tras inactividad": "Warn after idle",
+  "Caché inactiva (minutos)": "Idle cache (minutes)"
 }

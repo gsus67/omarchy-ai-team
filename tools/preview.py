@@ -305,6 +305,8 @@ SMOKE = r'''
         } else if (navigationStep === 19) {
           var windowField=find(harness,"context-read_window_lines",[])
           if (harness.page !== "context" || !windowField || !windowField.visible || windowField.value !== 120 || harness.snapshot.context.settings.read_window_lines !== 120) { fail("Context page missing or not at defaults"); return }
+          var idleField=find(harness,"context-idle_cache_ttl_minutes",[]), handoffRow=find(harness,"context-handoff_on_pause",[])
+          if (!idleField || !idleField.visible || idleField.value !== 55 || !handoffRow || !handoffRow.visible || !handoffRow.checked || !find(harness,"context-suggest_resume_after_idle",[]) || !find(harness,"context-group_related_subtasks",[]) || !find(harness,"context-explore_with_simple_role",[])) { fail("Context page lacks the long-session settings at their defaults"); return }
           harness.run(["context-set","read_window_lines","200"])
         } else if (navigationStep === 20) {
           if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { fail("Context setting was not persisted"); return }
