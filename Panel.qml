@@ -48,6 +48,8 @@ Ui.Panel {
     errorText = ""
     message = ""
     if (arguments[0] === "agent-update" || arguments[0] === "runtime-update") message = root.tr("Comprobando y actualizando mediante el gestor oficial…")
+    else if (arguments[0] === "agent-install") message = root.tr("Instalando la CLI con el gestor oficial…")
+    else if (arguments[0] === "agent-uninstall") message = root.tr("Desinstalando la CLI; tus cuentas y sesiones se conservan…")
     else if (arguments[0] === "set-agent" && arguments[2] === "true") message = root.tr("Preparando agente e integraciones; se instalará únicamente lo que falte…")
     launchRequested = arguments[0] === "launch-default"
     var script = decodeURIComponent(String(Qt.resolvedUrl("backend/harness.py")).replace(/^file:\/\//, ""))

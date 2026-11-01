@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -82,6 +83,54 @@ class NativeTeamTests(unittest.TestCase):
         self.assertIn('CODEX_HOME=' + str(self.root / '.codex-2'), text)
         self.assertNotIn('CODEX_HOME=' + str(self.root / '.codex') + ' ', text)
         self.assertIn('cuota', text)
+
+    def test_claude_2_profile_has_its_own_layout_and_commands(self):
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(self.root / '.claude-2')}):
+            second = native_team.layout('claude')
+        first = native_team.layout('claude')
+        self.assertEqual((first['profile'], second['profile']), ('claude', 'claude-2'))
+        self.assertNotEqual(first['source'], second['source'])
+        self.assertEqual(second['target'], self.root / '.claude-2/skills/ai-team-roles')
+
+    def test_only_claude_2_never_uses_the_other_claude_account(self):
+        text = self.content({'claude-2', 'codex'})
+        line = [row for row in text.splitlines() if '--permission-mode plan' in row]
+        self.assertTrue(line)
+        self.assertTrue(all('CLAUDE_CONFIG_DIR=' + str(self.root / '.claude-2') + ' /usr/bin/python3' in row for row in line), line)
+        self.assertIn('Claude Code-2 primero', text)
+        both = self.content({'claude-2', 'claude', 'codex'})
+        self.assertLess(both.index('CLAUDE_CONFIG_DIR=' + str(self.root / '.claude-2')), both.index('env -u CLAUDE_CONFIG_DIR /usr/bin/python3'))
+        main = [row for row in self.content({'claude', 'codex'}).splitlines() if '--agent claude' in row]
+        self.assertTrue(main)
+        self.assertTrue(all('env -u CLAUDE_CONFIG_DIR /usr/bin/python3' in row and '.claude-2' not in row for row in main), main)
+
+    def test_mixed_selections_emit_only_selected_profiles(self):
+        for selected, codex_homes, claude_homes in (
+                ({'claude', 'codex-2'}, {'.codex-2'}, {'main'}),
+                ({'claude-2', 'codex'}, {'.codex'}, {'second'}),
+                ({'claude-2', 'claude', 'codex-2', 'codex'}, {'.codex-2', '.codex'}, {'main', 'second'}),
+                ({'claude-2', 'codex-2'}, {'.codex-2'}, {'second'})):
+            text = self.content(selected)
+            found = {home for home in ('.codex-2', '.codex')
+                     if re.search('CODEX_HOME=' + re.escape(str(self.root / home)) + ' ', text)}
+            self.assertEqual(found, codex_homes, selected)
+            second = 'CLAUDE_CONFIG_DIR=' + str(self.root / '.claude-2') + ' /usr/bin/python3' in text
+            main = 'env -u CLAUDE_CONFIG_DIR /usr/bin/python3' in text
+            self.assertEqual({name for name, on in (('main', main), ('second', second)) if on}, claude_homes, selected)
+
+    def test_claude_2_gets_no_usage_guard_hook(self):
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(self.root / '.claude-2')}), \
+             patch.object(native_team, 'set_guard_hook') as hook, \
+             patch.object(native_team.native_skills, 'loaded', return_value=True), \
+             patch.object(native_team.shared_memory, 'write_claude_startup'), \
+             patch.object(native_team, 'inspect', return_value={'enabled': False, 'verified': False}):
+            native_team.apply('claude', '/bin/claude', 'disable', settings_file=self.settings, team=self.state({'claude-2'}))
+        hook.assert_not_called()
+        with patch.object(native_team, 'set_guard_hook') as hook, \
+             patch.object(native_team.shared_memory, 'write_claude_startup'), \
+             patch.object(native_team, 'inspect', return_value={'enabled': False, 'verified': False}):
+            native_team.apply('claude', '/bin/claude', 'disable', settings_file=self.settings, team=self.state({'claude'}))
+        hook.assert_called_once()
 
     def test_pi_restricted_to_reading_and_never_promises_sandbox(self):
         text = self.content({'pi'})

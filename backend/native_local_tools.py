@@ -70,7 +70,7 @@ TOKENS_COMMANDS = ('\nBusca en rutas concretas y extrae solo los campos necesari
 
 def layout(agent):
     home=native_plugins.agent_home(agent)
-    profile='pi' if agent=='pi' else 'claude' if agent=='claude' else 'codex-2' if home.name=='.codex-2' else 'codex'
+    profile='pi' if agent=='pi' else ('claude-2' if home.name=='.claude-2' else 'claude') if agent=='claude' else 'codex-2' if home.name=='.codex-2' else 'codex'
     key=hashlib.sha256(os.fsencode(home)).hexdigest()[:24]
     return {'home':home,'profile':profile,'target':home/'skills'/ID,
             'source':shared_memory.data_root()/'tools/local-skills'/key}

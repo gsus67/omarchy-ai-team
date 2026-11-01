@@ -64,7 +64,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertTrue(reply["ok"])
         self.assertEqual(harness.load_config()["agents"], {
-            "claude": False, "codex": True, "codex-2": False, "pi": True,
+            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": True,
         })
         self.assertEqual(manage_component.call_count, len(harness.MANAGED))
         self.assertEqual({call.args[1:] for call in manage_component.call_args_list},
@@ -125,12 +125,52 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(original.read_bytes(), before)
         manage_component.assert_not_called()
 
+    def test_set_agents_rejects_missing_claude_2_profile(self):
+        harness.save_config(harness.load_config())
+        before = harness.config_path().read_bytes()
+        def installation(agent, inventory):
+            return {"installation": "missing-profile" if agent == "claude-2" else "installed"}
+        result, reply, manage_component, _ = self.run_patched_cli(
+            "set-agents", "claude-2", agent_tool=installation)
+        self.assertEqual(result, 1)
+        self.assertEqual(reply["error"], "Perfil claude-2 no disponible.")
+        self.assertEqual(harness.config_path().read_bytes(), before)
+        manage_component.assert_not_called()
+
+    def test_claude_2_profile_uses_its_own_directory_and_the_claude_cli(self):
+        home = Path(os.environ["HOME"])
+        self.assertEqual(harness.AGENTS["claude-2"], "Claude Code-2")
+        before = os.environ.get("CLAUDE_CONFIG_DIR"), os.environ.get("CODEX_HOME")
+        with harness.agent_profile("claude-2") as cli:
+            self.assertEqual(cli, "claude")
+            self.assertEqual(os.environ["CLAUDE_CONFIG_DIR"], str(home / ".claude-2"))
+            self.assertEqual(harness.native_plugins.agent_home(cli), home / ".claude-2")
+        self.assertEqual((os.environ.get("CLAUDE_CONFIG_DIR"), os.environ.get("CODEX_HOME")), before)
+        with patch.object(harness, "detect_tool", return_value={"installation": "installed", "binary": "/bin/claude"}) as detect:
+            self.assertEqual(harness.agent_tool("claude-2", {})["installation"], "missing-profile")
+            (home / ".claude-2").mkdir()
+            self.assertEqual(harness.agent_tool("claude-2", {})["installation"], "installed")
+            self.assertEqual(detect.call_args.args[0], "claude")
+
+    def test_claude_2_cli_install_never_creates_the_profile(self):
+        home = Path(os.environ["HOME"])
+        with patch.object(harness, "mise_inventory", return_value=({}, None)), \
+             patch.object(harness.agent_runtime, "operate") as operate:
+            with self.assertRaises(harness.HarnessError) as caught:
+                harness.manage_agent_runtime("claude-2", "install")
+            operate.assert_not_called()
+            self.assertFalse((home / ".claude-2").exists())
+            self.assertIn("claude-2", str(caught.exception.args[0]))
+            (home / ".claude-2").mkdir()
+            harness.manage_agent_runtime("claude-2", "install")
+            self.assertEqual(operate.call_args.args[0], "claude")
+
     def test_set_agent_still_toggles_one_profile(self):
         result, reply, manage_component, _ = self.run_patched_cli("set-agent", "codex", "true")
         self.assertEqual(result, 0)
         self.assertTrue(reply["ok"])
         self.assertEqual(harness.load_config()["agents"], {
-            "claude": False, "codex": True, "codex-2": False, "pi": False,
+            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": False,
         })
         self.assertEqual(manage_component.call_count, len(harness.MANAGED))
 
