@@ -40,7 +40,8 @@ def instruction(original,paths,enabled,*,team=None):
         profiles=[profile for profile in ('codex-2','codex') if profile in state.get('selected',[paths['profile']])]
         review=assignments.get('review')
         command=role_commands('review',review,profiles)[0] if review else ''
-        message=('Equipo activo: tú diriges y los modelos del equipo trabajan, también dentro de los pasos de Superpowers. '
+        message=('Con política de contexto activa en papel Jefe usa solo índice ECC y delegación nativa; las lecturas/ejecuciones van a obreros. '
+                 'Equipo activo: tú diriges y los modelos del equipo trabajan, también dentro de los pasos de Superpowers. '
                  'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva. '
                  'Cualquier otro cambio de código: encarga Programar al modelo de ese papel, salvo que sea tu propio modelo. '
                  'Antes de decir que un cambio de código está terminado, encarga siempre Revisar al modelo de ese papel y corrige lo que encuentre'
@@ -53,7 +54,7 @@ def instruction(original,paths,enabled,*,team=None):
 
 def digest(paths,settings_file,*,team=None):
     value=hashlib.sha256(text(paths,settings_file,team=team).encode())
-    for name in ('native_team.py','team.py','native_skills.py','native_pi.py'):
+    for name in ('native_team.py','team.py','native_skills.py','native_pi.py','native_launcher.py','context_policy.py','context_state.py','context_run.py'):
         value.update(Path(__file__).with_name(name).read_bytes())
     return value.hexdigest()
 
@@ -180,15 +181,25 @@ def claude_command(row, mode):
     return 'cd '+shlex.quote('<dir>')+' && '+shlex.join(['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'], '--permission-mode', mode])+' </dev/null'
 
 
-def role_commands(key, row, profiles):
+def role_commands(key, row, profiles, *, settings_file=None):
+    # A visible recipe, never a background dispatcher. Resolve current settings at execution.
+    def wrapped(profile, arguments):
+        command = ['/usr/bin/python3', str(Path(__file__).with_name('context_run.py').resolve()),
+                   *(['--settings', str(settings_file)] if settings_file else []), '--agent', profile, '--role', key, '--cwd', '<dir>', '--', *arguments]
+        return shlex.join(command)+' </dev/null'
     if row['agent'] == 'codex':
-        return [codex_command(row, profile, 'read-only' if key in ('plan', 'review') else 'workspace-write') for profile in profiles]
+        sandbox = 'read-only' if key in ('plan', 'review') else 'workspace-write'
+        effort = ['-c', 'model_reasoning_effort='+json.dumps(row['effort'])] if row['effort'] else []
+        return ['CODEX_HOME='+shlex.quote(str(Path.home()/('.codex-2' if profile == 'codex-2' else '.codex')))+' '+
+                wrapped(profile, ['codex', 'exec', '-C', '<dir>', '-s', sandbox, '-m', row['model'], *effort, '<encargo>']) for profile in profiles]
     if row['agent'] == 'claude':
-        return [claude_command(row, 'plan' if key in ('plan', 'review') else 'acceptEdits')]
+        return [wrapped('claude', ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
+                                 '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits'])]
     if key in ('review', 'simple'):
         provider, model = row['model'].split('/', 1)
         thinking = ['--thinking', row['effort']] if row.get('effort') else []
-        return ['cd '+shlex.quote('<dir>')+' && '+shlex.join(['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])+' </dev/null']
+        return [wrapped('pi', ['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])]
+
     return ['# Pi: encargo pendiente; requiere otra CLI para este papel.']
 
 
@@ -204,6 +215,10 @@ def text(paths, settings_file, team=None):
         row = assignments.get(key)
         lines.append(roles.LABELS[key]+': '+(' · '.join(filter(None, (row['agent'], row['model'], row['effort']))) if row else 'Pendiente; no hay modelo disponible.'))
     lines.extend(['', *(saved_message(warning, 'es') for warning in state.get('warnings', [])), '',
+        'Con política de contexto activa, una instancia Jefe se limita al índice ECC y a la delegación nativa; los obreros leen y ejecutan. '
+        'Las recetas context_run.py resuelven preferencias actuales por papel y excepción motivada, sin cambiar perfiles. '
+        'Entregan solo el informe final status/references/tests/error/pending, acotado; los detalles extensos van por puntero ECC verificado. '
+        'Sin política se conserva la salida nativa. Umbral, piso, fase segura y presupuesto no son garantías duras. '
         'La sesión habitual dirige. Si el papel corresponde a tu propia CLI y modelo, hazlo tú mismo sin lanzarte en headless. '
         'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva; todo lo demás se encarga. Respeta Superpowers como única metodología: sus pasos se reparten con estos papeles. '
         'Un encargo que no responde no se espera ni se repite sin fin: intenta lanzarlo una sola vez con `timeout 60` si estás en un sandbox que puede impedirlo; '
@@ -231,14 +246,14 @@ def text(paths, settings_file, team=None):
         row = assignments.get(key)
         if not row: continue
         lines += [roles.LABELS[key]+':', '```sh']
-        lines += role_commands(key, row, profiles)
+        lines += role_commands(key, row, profiles, settings_file=settings_file)
         lines += ['```', '']
         options = roles.alternatives(key, assignments, state.get('options', []))
         if options:
             lines += ['Alternativas de '+roles.LABELS[key]+', en orden:', '```sh']
             for number, option in enumerate(options, 1):
                 # One model can take one line per Codex account: the number marks the alternative.
-                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles)]
+                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles, settings_file=settings_file)]
             lines += ['```', '']
     # Native permission recipes remain explicit even when a role uses another family.
     for agent, writing, reading in (('codex', 'workspace-write', 'read-only'), ('claude', 'acceptEdits', 'plan')):
@@ -246,8 +261,8 @@ def text(paths, settings_file, team=None):
         if not row: continue
         lines += ['Permisos nativos de '+agent+' (escritura / revisión):', '```sh']
         if agent == 'codex':
-            lines += [codex_command(row, profile, mode) for profile in profiles for mode in (writing, reading)]
+            lines += [line for key in ('code', 'review') for line in role_commands(key, row, profiles, settings_file=settings_file)]
         else:
-            lines += [claude_command(row, mode) for mode in (writing, reading)]
+            lines += [line for key in ('code', 'review') for line in role_commands(key, row, profiles, settings_file=settings_file)]
         lines += ['```', '']
     return '\n'.join(lines)+'\n'

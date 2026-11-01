@@ -44,7 +44,7 @@ ColumnLayout {
 
   function goBack() {
     if (root.page === "") return
-    root.page = root.page === "team" || (root.snapshot.agents || []).some(agent => agent.id === root.page) ? "settings" : ""
+    root.page = root.page === "team" || root.page === "context" || (root.snapshot.agents || []).some(agent => agent.id === root.page) ? "settings" : ""
   }
 
   function scrollTop() {
@@ -282,6 +282,16 @@ ColumnLayout {
         Layout.fillWidth: true
         info: root.snapshot.team || ({})
         agents: root.snapshot.agents || []
+        defaultAgent: root.launcher.defaultAgent || ""
+        busy: root.busy
+        onCommandRequested: arguments => root.commandRequested(arguments)
+      }
+
+      ContextPage {
+        translations: root.translations
+        visible: root.page === "context"
+        Layout.fillWidth: true
+        info: root.snapshot.context || ({})
         busy: root.busy
         onCommandRequested: arguments => root.commandRequested(arguments)
       }

@@ -44,6 +44,8 @@ SMOKE = r'''
   property int selectorStep: 0
   property real selectorContentHeight: 0
   property int teamWaits: 0
+  // keyClick spins the event loop: without this guard the timer re-enters mid-keypress and skips a step.
+  property bool teamKeying: false
   property bool teamHoverMoved: false
   property bool teamHoverChecked: false
   property int teamModelCommands: 0
@@ -154,7 +156,7 @@ SMOKE = r'''
         languageStep++; return
       }
 
-      if (navigationStep < 22) {
+      if (navigationStep < 28) {
         var click = function(name, button) {
           var item=find(harness,name,[])
           if (!item || !item.visible || !item.enabled) { fail("Pointer target unavailable: " + name); return }
@@ -298,12 +300,31 @@ SMOKE = r'''
           if (harness.page !== "") { fail("Security back did not return home"); return }
           click("open-settings")
         } else if (navigationStep === 18) {
-          if (harness.page !== "settings" || !find(harness,"default-agent",[]).visible) { fail("Settings page missing"); return }
-          click("navigation-back")
+          if (harness.page !== "settings" || !find(harness,"context-row",[]).visible || find(harness,"default-agent",[]).visible) { fail("Settings page missing or still owns the default selector"); return }
+          click("context-row-open")
         } else if (navigationStep === 19) {
+          var windowField=find(harness,"context-read_window_lines",[])
+          if (harness.page !== "context" || !windowField || !windowField.visible || windowField.value !== 120 || harness.snapshot.context.settings.read_window_lines !== 120) { fail("Context page missing or not at defaults"); return }
+          harness.run(["context-set","read_window_lines","200"])
+        } else if (navigationStep === 20) {
+          if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { fail("Context setting was not persisted"); return }
+          click("navigation-back")
+        } else if (navigationStep === 21) {
+          if (harness.page !== "settings") { fail("Context back did not return to settings"); return }
+          click("context-row-open")
+        } else if (navigationStep === 22) {
+          if (harness.page !== "context" || find(harness,"context-read_window_lines",[]).value !== 200) { fail("Reopened context page lost its saved value"); return }
+          harness.run(["context-reset"])
+        } else if (navigationStep === 23) {
+          if (find(harness,"context-read_window_lines",[]).value !== 120 || harness.snapshot.context.settings.read_window_lines !== 120) { fail("Context reset did not restore defaults"); return }
+          click("navigation-back")
+        } else if (navigationStep === 24) {
+          if (harness.page !== "settings") { fail("Context back did not return to settings"); return }
+          click("navigation-back")
+        } else if (navigationStep === 25) {
           if (harness.page !== "") { fail("Settings back did not return home"); return }
           prepareSecondProfile.running=true
-        } else if (navigationStep === 20) {
+        } else if (navigationStep === 26) {
           if (prepareSecondProfile.running) return
           harness.run(["status"])
         } else {
@@ -661,6 +682,7 @@ SMOKE = r'''
       } else if (step === 12) {
         shot("settings")
       } else if (step === 13) {
+        if (teamKeying) return
         var teamInfo = harness.snapshot.team
         var teamRow = find(harness,"team-row",[])
         var teamContent = find(harness,"harnessContent",[])
@@ -683,6 +705,7 @@ SMOKE = r'''
           var reviewModel = find(harness,"team-role-review",[])
           var reviewEffort = find(harness,"team-effort-review",[])
           if (!reviewModel || !reviewEffort) { fail("Separate team model/effort selectors missing"); return }
+          if (!find(harness,"default-agent",[]).visible || !find(harness,"team-label-jefe",[]).visible) { fail("Chief row with the default CLI selector missing from Team"); return }
         }
         if (teamStep === 2) {
           if (harness.page !== "team" || teamModelCommands !== 1 || !teamInfo.options.some(option => option.model === "fixture-medium")) { fail("Opening team did not refresh native models"); return }
@@ -725,8 +748,10 @@ SMOKE = r'''
           if (teamScroll.contentItem.contentY !== teamContentY) { if (++teamWaits < 20) return; fail("Opening a team popup scrolled the page"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
+          teamKeying=true
           pointer.keyClick(Qt.Key_Down)
           pointer.keyClick(Qt.Key_Return)
+          teamKeying=false
           teamStep++;return
         }
         if (teamStep === 5) {
@@ -738,9 +763,11 @@ SMOKE = r'''
         if (teamStep === 6) {
           var planPopup = find(harness,"team-effort-plan",[])
           if (!planPopup.popupOpen || !popupFitsWindow(planPopup)) { fail("Team effort popup extends beyond window"); return }
+          teamKeying=true
           pointer.keyClick(Qt.Key_Down)
           pointer.keyClick(Qt.Key_Down)
           pointer.keyClick(Qt.Key_Return)
+          teamKeying=false
           teamStep++;return
         }
         if (teamStep === 7) {
@@ -806,6 +833,16 @@ SMOKE = r'''
     }
   }
 '''
+
+
+def valid_terminal_request(request, home, binaries):
+    """Smoke contract: native profile/threshold survive per-instance hook arguments."""
+    binary = str(binaries/'codex')
+    if request[:2] != ['launch', 'terminal'] or 'CODEX_HOME='+str(home/'.codex-2') not in request or binary not in request:
+        return False
+    index = request.index(binary)
+    return request[index+1:index+5] == ['-c', 'model_auto_compact_token_limit=100000',
+                                      '-c', 'model_auto_compact_token_limit_scope="total"']
 
 
 def main():
@@ -1036,7 +1073,7 @@ else:sys.exit(99)
                 return 1
             import json
             request = json.loads(launch_record.read_text())
-            if request[:2] != ["launch", "terminal"] or request[-2:] != ["CODEX_HOME="+str(home/".codex-2"), str(binaries/"codex")]:
+            if not valid_terminal_request(request, home, binaries):
                 print("HARNESS_SMOKE_FAIL: wrong terminal/profile request", file=sys.stderr)
                 return 1
             if not systemctl_record.is_file():

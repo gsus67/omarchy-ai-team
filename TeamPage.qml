@@ -14,7 +14,11 @@ ColumnLayout {
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
   property var info: ({})
   property var agents: []
+  property string defaultAgent: ""
   property bool busy: false
+  // The Chief row picks the CLI that "Abrir predeterminado" and the right click open.
+  readonly property var chiefOptions: [{value: "none", label: root.tr("Ninguno")}].concat(
+    root.agents.filter(agent => agent.enabled).map(agent => ({value: agent.id, label: agent.name})))
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   signal commandRequested(var arguments)
@@ -129,6 +133,33 @@ ColumnLayout {
         onChanged: value => role.choose(role.current.agent, role.current.model, value)
       }
     }
+  }
+  // Below the roles on purpose: above them it pushes the effort popups past the window edge.
+  Text {
+    objectName: "team-label-jefe"
+    text: root.tr("Jefe")
+    textFormat: Text.PlainText
+    color: Commons.Color.foreground
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.body
+  }
+  Ui.ButtonGroup {
+    objectName: "default-agent"
+    spacing: root.metrics.xxs
+    fontSize: root.fonts.caption
+    options: root.chiefOptions
+    value: root.defaultAgent || "none"
+    enabled: !root.busy
+    onChanged: value => root.commandRequested(["set-default-agent", value])
+  }
+  Text {
+    Layout.fillWidth: true
+    text: root.tr("El Jefe es la CLI que abre el botón Abrir predeterminado.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
   }
   Text {
     text: root.tr("★ Recomendado")
