@@ -738,5 +738,11 @@
   "mise no confirmó la desinstalación; sigue pendiente.": "mise did not confirm the uninstall; it is still pending.",
   "La CLI se comparte con el perfil principal; desinstálala desde ese perfil.": "The CLI is shared with the main profile; uninstall it from that profile.",
   "Instalar la CLI con el gestor oficial sin crear perfiles ni cuentas": "Install the CLI with the official manager without creating profiles or accounts",
-  "Desinstalar la CLI gestionada por mise conservando cuentas y sesiones": "Uninstall the mise-managed CLI, keeping accounts and sessions"
+  "Desinstalar la CLI gestionada por mise conservando cuentas y sesiones": "Uninstall the mise-managed CLI, keeping accounts and sessions",
+  "Política de contexto activa": "Context policy active",
+  "Guardar estado antes de compactar": "Save state before compacting",
+  "Informe del obrero en": "Worker report on",
+  "hitos": "milestones",
+  "bloqueos": "blockers",
+  "Se aplica al lanzar la sesión · el Jefe recibe un índice de memoria (fijo).": "Applied when the session launches · the Chief gets a memory index (fixed)."
 }
