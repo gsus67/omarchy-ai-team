@@ -136,6 +136,16 @@ def _fresh_command(command, agent):
             raise ValueError(refusal)
         if any(item in ('-p', '--print') for item in rest) and '--no-session-persistence' not in rest:
             rest.insert(0, '--no-session-persistence')
+    elif agent == 'pi':
+        if any(item in ('--continue', '-c', '--resume', '-r', '--session', '--fork')
+               or item.startswith(('--continue=', '--resume=', '--session=', '--fork=')) for item in rest):
+            raise ValueError(refusal)
+        # Anchor the flag at the front: an option that takes a value could swallow a later literal
+        # '--no-session' as its argument, so presence anywhere in the list proves nothing.
+        while rest[:2] == ['--no-session', '--no-session']:
+            del rest[0]
+        if rest[:1] != ['--no-session']:
+            rest.insert(0, '--no-session')
     return [command[0], *rest]
 
 
@@ -199,6 +209,8 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
         return 0
     final = None
     fatal = None
+    pi_output = bytearray()
+    pi_overflow = False
     prepared, environment, capsule = prepare(command, agent, role, config, cwd, override=override)
     measure = policy['measure_task_tokens'] and capsule is not None
     totals, turns = dict.fromkeys(COUNTERS, 0), 0
@@ -216,8 +228,8 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
             prepared[position:position] = ['--json', '--output-schema', str(schema)]
         elif agent == 'claude':
             prepared[1:1] = ['--output-format', 'json', '--json-schema', json.dumps(SCHEMA)]
-        else:
-            raise ValueError(tr('Política de contexto pendiente para Pi; desactívala explícitamente para abrirlo.'))
+        elif agent == 'pi':
+            pass  # Pi print mode emits the final answer as plain text.
         # Raw events are drained and discarded. No transcripts or raw stderr reach the caller.
         with subprocess.Popen(prepared, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
@@ -227,8 +239,18 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
                     break
                 if len(line) > MAX_EVENT:
                     final = None
+                    if agent == 'pi':
+                        pi_overflow = True
+                        pi_output.clear()
                     while line and not line.endswith(b'\n'):
                         line = child.stdout.readline(MAX_EVENT+1)
+                    continue
+                if agent == 'pi':
+                    if len(pi_output) + len(line) > MAX_EVENT:
+                        pi_overflow = True
+                        pi_output.clear()
+                    elif not pi_overflow:
+                        pi_output.extend(line)
                     continue
                 try:
                     event = json.loads(line)
@@ -251,6 +273,11 @@ def run(command, agent, role, config, cwd, *, override=None, output=None):
                 except (ValueError, TypeError, KeyError, AttributeError):
                     continue
             code = child.wait()
+        if agent == 'pi' and not pi_overflow:
+            try:
+                final = _report(pi_output.decode('utf-8'))
+            except (ValueError, UnicodeError, TypeError):
+                final = None
     if measure:
         # Without a single counted event the totals are unknown, never an invented zero.
         _write_snapshots(capsule['id'], after=_snapshot(agent, totals if turns else dict.fromkeys(COUNTERS), turns))

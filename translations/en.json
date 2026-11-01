@@ -1,4 +1,7 @@
 {
+  "Contexto: tokens desconocidos; no se compacta.": "Context: token count unknown; compaction skipped.",
+  "Contexto: compactación bajo el piso cancelada.": "Context: compaction below the floor cancelled.",
+  "Contexto precompact: {status}": "Context precompact: {status}",
   "\nDestino: {destino}": "\nDestination: {destino}",
   "\nProyectos originales del archivo.": "\nOriginal projects from the archive.",
   " Abre sesiones nuevas para cargar las mejoras. Las sesiones abiertas se conservan.": " Open new sessions to load the improvements. Existing sessions are preserved.",
@@ -694,7 +697,6 @@
   "La política solo se aplica al lanzamiento y usa un índice de memoria.": "The policy only applies at launch and uses a memory index.",
   "Los informes de contexto solo admiten hitos y bloqueos sin duplicados.": "Context reports only allow milestones and blocks without duplicates.",
   "Los límites de contexto deben ser enteros positivos admitidos.": "Context limits must be supported positive integers.",
-  "Política de contexto pendiente para Pi; desactívala explícitamente para abrirlo.": "Context policy support is pending for Pi; explicitly disable it to launch.",
   "Checkpoint demasiado grande; usa referencias.": "Checkpoint too large; use references.",
   "Checkpoint incompleto o inválido: usa plan, decisions, files, errors y pending como listas.": "Incomplete or invalid checkpoint: use plan, decisions, files, errors and pending as lists.",
   "Compactación nativa desactivada por {switch}; resuélvelo o desactiva la política para esta ejecución.": "Native compaction disabled by {switch}; resolve it or disable the policy for this invocation.",

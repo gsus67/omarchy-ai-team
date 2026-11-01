@@ -94,6 +94,33 @@ class FreshWorkerTests(unittest.TestCase):
         prepared, _, _ = self.run.prepare(['claude', '-p', 'x', '--continue'], 'claude', 'code', config, self.root)
         self.assertIn('--continue', prepared)
 
+    def test_pi_no_session_is_a_real_flag_once_even_when_the_text_looks_like_it(self):
+        # A value-taking option may swallow a literal '--no-session' as its argument.
+        prepared, _, _ = self.run.prepare(['pi', '--append-system-prompt', '--no-session', '-p', 'task'], 'pi', 'code', {}, self.root)
+        self.assertEqual(prepared[prepared.index('--no-session') - 1] in ('--append-system-prompt',), False)
+        flag = prepared.index('--no-session')
+        self.assertLess(flag, len(prepared) - prepared[::-1].index('--append-system-prompt') - 1)
+        self.assertEqual(prepared[-4:], ['--append-system-prompt', '--no-session', '-p', 'task'])
+        prepared, _, _ = self.run.prepare(['pi', '--no-session', '--no-session', '-p', 'task'], 'pi', 'code', {}, self.root)
+        self.assertEqual(prepared.count('--no-session'), 1)
+
+    def test_pi_fresh_sessions_reject_continuations_and_preserve_recipe(self):
+        for flag in ('--continue', '-c', '--resume', '-r', '--session', '--fork', '--session=id', '--fork=id'):
+            for args in ([flag, '-p', 'task'], ['-p', 'task', flag]):
+                with self.subTest(args=args), self.assertRaisesRegex(ValueError, 'no se permite reanudar ni bifurcar'):
+                    self.run.prepare(['pi', *args], 'pi', 'code', {}, self.root)
+        for command in (['pi', '-p', 'task', '--model', 'chosen'],
+                        ['pi', '--no-session', '-p', 'task', '--model', 'chosen']):
+            prepared, _, _ = self.run.prepare(command, 'pi', 'code', {}, self.root)
+            self.assertEqual(prepared.count('--no-session'), 1)
+            self.assertEqual(prepared[-4:], ['-p', 'task', '--model', 'chosen'])
+        config = {'context': {'fresh_worker_per_subtask': False}}
+        prepared, _, _ = self.run.prepare(['pi', '-p', 'task', '-c'], 'pi', 'code', config, self.root)
+        self.assertNotIn('--no-session', prepared)
+        self.assertEqual(prepared[-3:], ['-p', 'task', '-c'])
+        prepared, _, _ = self.run.prepare(CODEX, 'codex', 'code', {}, self.root)
+        self.assertIn('model_reasoning_effort="high"', prepared)
+
     def test_wrapper_runs_the_child_with_the_ephemeral_flag_and_keeps_the_five_field_filter(self):
         argv_file = self.root / 'argv.json'
         fake = self.root / 'native'

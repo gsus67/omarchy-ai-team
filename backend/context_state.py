@@ -380,6 +380,11 @@ def launch_options(capsule):
         args = ['--settings', json.dumps({'hooks': hooks}), '--append-system-prompt', instructions(capsule)]
         # Native snapshot: the rendered prompt is recorded once and reused verbatim until compaction.
         return args + (['--system-prompt-snapshot', 'on'] if _stable(capsule) else []), env
+    if capsule['agent'] == 'pi':
+        messages = {'unknown': str(tr('Contexto: tokens desconocidos; no se compacta.')),
+                    'floor': str(tr('Contexto: compactación bajo el piso cancelada.')),
+                    'status': str(tr('Contexto precompact: {status}', status='{status}'))}
+        return ['--append-system-prompt', instructions(capsule)], env + ['AI_TEAM_PI_MESSAGES='+json.dumps(messages, ensure_ascii=False)]
     # Inline hooks still require Codex native trust. Never bypass it or clobber developer_instructions.
     args = ['-c', 'features.hooks=true', '-c', 'compact_prompt='+json.dumps(
         'Preserve plan, decisions, files:lines, errors, pending and ECC pointers. Discard raw tools/logs. '+instructions(capsule))]

@@ -5,6 +5,7 @@ report and checkpoint settings are resolved here for subsequent native consumers
 """
 
 from copy import deepcopy
+from pathlib import Path
 
 from i18n import tr
 
@@ -178,4 +179,6 @@ def launch_options(agent, policy):
     if agent in ('codex', 'codex-2'):
         return ['-c', f'model_auto_compact_token_limit={threshold}',
                 '-c', 'model_auto_compact_token_limit_scope="total"'], []
-    raise ContextPolicyError(tr('Política de contexto pendiente para Pi; desactívala explícitamente para abrirlo.'))
+    if agent == 'pi':
+        return ['--extension', str(Path(__file__).resolve().parent.parent / 'extensions' / 'pi-context-policy.ts')], []
+    raise ContextPolicyError(tr('El agente predeterminado no es válido; se conserva la configuración.'))

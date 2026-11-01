@@ -24,6 +24,90 @@ class ContextSettingsTests(unittest.TestCase):
         import context_policy
         self.policy = context_policy
 
+    def test_pi_invocation_injects_process_extension_and_capsule(self):
+        import context_state
+        args, env = native_launcher.invocation('pi', config={}, role='code', cwd=Path.cwd())
+        self.assertEqual(args[0], '--extension')
+        self.assertTrue(Path(args[1]).is_file())
+        self.assertEqual(args[2], '--append-system-prompt')
+        self.assertEqual(len(args), 4)
+        capsule = json.loads(next(item.partition('=')[2] for item in env if item.startswith('AI_TEAM_CONTEXT=')))
+        self.assertEqual(args[3], context_state.instructions(capsule))
+        self.assertEqual(capsule['policy']['compact_at_tokens'], 150000)
+
+    def test_pi_extension_enforces_threshold_floor_and_unknown_usage(self):
+        import subprocess
+        extension = Path(__file__).resolve().parents[1] / 'extensions/pi-context-policy.ts'
+        script = """
+const {default: extension} = await import(process.argv[1]);
+const handlers = {}; const calls = []; const messages = [];
+extension({on: (event, fn) => handlers[event] = fn});
+let tokens = null;
+const ctx = {hasUI: true, ui: {notify: message => messages.push(message)},
+ getContextUsage: () => ({tokens}), compact: options => calls.push(options)};
+handlers.turn_end({}, ctx);
+tokens = 150000; handlers.turn_end({}, ctx);
+tokens = 150001; handlers.turn_end({}, ctx);
+const low = await handlers.session_before_compact({preparation: {tokensBefore: 69999}}, ctx);
+const enough = await handlers.session_before_compact({preparation: {tokensBefore: 70000}}, ctx);
+console.log(JSON.stringify({calls, messages, low, enough: enough ?? null}));
+"""
+        capsule = {'policy': {'compact_at_tokens': 150000, 'compact_floor_tokens': 70000, 'dump_state_before': False}}
+        result = subprocess.run(['node', '--input-type=module', '-e', script, extension.as_uri()],
+                                env={**os.environ, 'AI_TEAM_CONTEXT': json.dumps(capsule)},
+                                capture_output=True, text=True, check=True)
+        value = json.loads(result.stdout)
+        self.assertEqual(len(value['calls']), 1)
+        self.assertIn('archivos:líneas', value['calls'][0]['customInstructions'])
+        self.assertEqual(value['low'], {'cancel': True})
+        self.assertIsNone(value['enough'])
+        self.assertTrue(any('desconocidos' in message for message in value['messages']))
+
+    def test_pi_precompact_failure_is_reported_without_cancelling(self):
+        import subprocess
+        import tempfile
+        import shutil
+        extension = Path(__file__).resolve().parents[1] / 'extensions/pi-context-policy.ts'
+        script = """
+const {default: extension} = await import(process.argv[1]);
+const handlers = {}; const messages = [];
+extension({on: (event, fn) => handlers[event] = fn});
+const result = await handlers.session_before_compact({preparation: {tokensBefore: 150001}},
+ {hasUI: true, ui: {notify: message => messages.push(message)}});
+console.log(JSON.stringify({result: result ?? null, messages}));
+"""
+        capsule = {'policy': {'compact_at_tokens': 150000, 'compact_floor_tokens': 70000, 'dump_state_before': True}}
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, 'PATH': directory, 'AI_TEAM_CONTEXT': json.dumps(capsule)}
+            result = subprocess.run([shutil.which('node'), '--input-type=module', '-e', script, extension.as_uri()],
+                                    env=env, capture_output=True, text=True, check=True)
+        value = json.loads(result.stdout)
+        self.assertIsNone(value['result'])
+        self.assertIn('failed', value['messages'][0])
+
+    def test_pi_precompact_slow_child_does_not_block_event_loop(self):
+        import shutil
+        import subprocess
+        extension = Path(__file__).resolve().parents[1] / 'extensions/pi-context-policy.ts'
+        script = """
+const {default: extension} = await import(process.argv[1]);
+const handlers = {}; let ticked = false;
+extension({on: (event, fn) => handlers[event] = fn});
+setTimeout(() => { ticked = true; }, 10);
+const result = await handlers.session_before_compact({preparation: {tokensBefore: 150001}},
+ {hasUI: true, ui: {notify: () => {}}});
+console.log(JSON.stringify({ticked, result: result ?? null}));
+"""
+        capsule = {'policy': {'compact_floor_tokens': 70000, 'dump_state_before': True}}
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / 'python3'
+            child.write_text('#!/usr/bin/python3\nimport time\ntime.sleep(0.3)\nprint(\'{"status":"ok"}\')\n')
+            child.chmod(0o700)
+            env = {**os.environ, 'PATH': directory, 'AI_TEAM_CONTEXT': json.dumps(capsule)}
+            result = subprocess.run([shutil.which('node'), '--input-type=module', '-e', script, extension.as_uri()],
+                                    env=env, capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(json.loads(result.stdout), {'ticked': True, 'result': None})
+
     def test_defaults_resolve_every_role_without_mutating_input_or_shared_defaults(self):
         config = {'foreign': {'keep': True}}
         original = deepcopy(config)
@@ -226,8 +310,8 @@ class ContextLaunchTests(unittest.TestCase):
         self.assertIn('CLAUDE_CODE_AUTO_COMPACT_WINDOW=170000', args)
         self.assertEqual(config, original)
 
-    def test_unsupported_native_ranges_and_pi_fail_before_spawning(self):
-        for agent, threshold in [('claude', 99999), ('claude', 1000001), ('pi', 150000)]:
+    def test_unsupported_native_ranges_fail_before_spawning(self):
+        for agent, threshold in [('claude', 99999), ('claude', 1000001)]:
             with self.subTest(agent=agent, threshold=threshold):
                 self.popen.reset_mock()
                 with self.assertRaisesRegex(ValueError, 'Claude|Pi'):

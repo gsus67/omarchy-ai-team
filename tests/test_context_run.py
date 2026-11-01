@@ -53,6 +53,25 @@ class ContextRunTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), REPORT)
         self.assertNotIn('PRIVATE', output.getvalue())
 
+    def test_pi_transport_accepts_plain_final_report_and_preserves_profile(self):
+        fake = self.fake('import json\nprint('+repr(json.dumps(REPORT))+')\n')
+        output = io.StringIO()
+        with patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(self.root/'pi')}):
+            prepared, env, capsule = self.run.prepare([fake, '-p', 'task'], 'pi', 'code', {}, self.root)
+            self.assertEqual(env['PI_CODING_AGENT_DIR'], str(self.root/'pi'))
+            self.assertEqual(prepared[1], '--extension')
+            self.assertEqual(capsule['agent'], 'pi')
+            code = self.run.run([fake, '-p', 'task'], 'pi', 'code', {}, self.root, output=output)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), REPORT)
+        self.assertFalse((self.root/'pi').exists())
+
+    def test_pi_transport_accepts_multiline_report(self):
+        fake = self.fake('print('+repr(json.dumps(REPORT, indent=2))+')\n')
+        output = io.StringIO()
+        self.assertEqual(self.run.run([fake, '-p', 'task'], 'pi', 'code', {}, self.root, output=output), 0)
+        self.assertEqual(json.loads(output.getvalue()), REPORT)
+
     def test_claude_native_structured_result_and_fatal_event_only(self):
         for agent, text, expected in [('claude', {'type': 'result', 'structured_output': REPORT, 'is_error': False}, 0),
                                       ('codex', {'type': 'error', 'message': 'literal native fatal'}, 7)]:
