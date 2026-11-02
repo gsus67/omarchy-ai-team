@@ -13,11 +13,9 @@ import tempfile
 import time
 
 CACHE_SECONDS = 60
-USAGE_GUARD_MESSAGE = ('AI Team: {label} va por el {used} % y tu límite es {limit} %. Deja de avanzar en la tarea ahora y no empieces nada nuevo; '
-           'lo que queda es para no perder el trabajo. Guarda con memory_save (kind handoff, en el proyecto de la tarea) un relevo detallado: '
-           'qué pidió el usuario, qué quedó hecho y comprobado, qué falta, el siguiente paso exacto, los archivos y la rama, y lo que está a medias. '
-           'Debe poder continuarlo otro modelo sin más contexto. Deja los cambios en disco; no los deshagas ni los publiques. '
-           'Después avisa al usuario de dónde quedó y detente. Sigue trabajando solo si el usuario te lo pide expresamente.')
+USAGE_GUARD_MESSAGE = ('AI Team: {label} va por el {used} % y tu límite es {limit} %. Para ya y no delegues trabajo nuevo a obreros ni subagentes. '
+           'Deja el relevo con `/usr/bin/python3 backend/context_state.py checkpoint` (comprueba status=saved) o, si no hay política de contexto, con memory_save (kind handoff).')
+UNKNOWN_MESSAGE = 'AI Team: cuota desconocida, sin margen asumido: no delegar trabajo nuevo hasta conocerla.'
 
 
 def claude_config_dir(event):
@@ -83,12 +81,26 @@ def main():
     guard = {'enabled': True, 'percent': 90, **(json.loads(path.read_text()).get('usageGuard', {}) if path.exists() else {})}
     if not guard['enabled']:
         return
-    for row in read_limits(args.agent, args.codex_home, claude_config_dir(payload) if args.agent == 'claude' else ''):
-        used = round(row['percent'] * 100)
-        if used >= guard['percent']:
-            text = USAGE_GUARD_MESSAGE.format(label=row['label'], used=used, limit=guard['percent'])
-            print(json.dumps({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': text}}))
-            return
+    try:
+        rows = read_limits(args.agent, args.codex_home, claude_config_dir(payload) if args.agent == 'claude' else '')
+        text = ''
+        known = False
+        for row in rows or ():
+            try:
+                used = round(row['percent'] * 100)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue  # a broken row must not hide the others
+            known = True
+            if used >= guard['percent']:
+                text = USAGE_GUARD_MESSAGE.format(label=row['label'], used=used, limit=guard['percent'])
+                break
+        if not known:
+            text = UNKNOWN_MESSAGE if event == 'UserPromptSubmit' else ''
+    except Exception:  # noqa: BLE001 - unknown quota is reported, never assumed.
+        # Once per user prompt only: PostToolUse fires on every tool call and would repeat the notice.
+        text = UNKNOWN_MESSAGE if event == 'UserPromptSubmit' else ''
+    if text:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': text}}))
 
 
 if __name__ == '__main__':
