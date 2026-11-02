@@ -192,6 +192,51 @@ def _check_codex_cwd(command, cwd):
         raise ValueError(tr('El directorio -C/--cd no coincide con --cwd.'))
 
 
+# Keys the plugin injects with `-c` that a native argument must not override.
+_CODEX_PROTECTED_KEYS = frozenset(('model_auto_compact_token_limit', 'features.hooks'))
+
+
+def _codex_override_key(option, operand):
+    """Config key set by one `-c/--config/--enable/--disable` operand, or None for other options."""
+    if option in ('-c', '--config'):
+        key, equals, _ = operand.partition('=')
+        return key.strip() if equals else None  # without `=` Codex reports the syntax error itself
+    operand = operand.strip()
+    if option in ('--enable', '--disable'):
+        return 'features.hooks' if operand == 'hooks' else operand
+    return operand
+
+
+def _codex_config_keys(rest):
+    """Yield the config key changed by every native override option before the delimiter."""
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if word == '--':
+            return
+        option, operand = word, None
+        if word.startswith(('--config=', '--enable=', '--disable=')):
+            option, _, operand = word.partition('=')
+        elif word.startswith('-c') and not word.startswith('--') and word != '-c':
+            option, operand = '-c', word[2:].removeprefix('=')
+        elif word in ('-c', '--config', '--enable', '--disable') and index + 1 < len(rest):
+            operand = rest[index + 1]
+        if operand is not None:
+            yield _codex_override_key(option, operand)
+        index += 2 if word in _CODEX_VALUE_OPTIONS else 1
+
+
+def _check_codex_context_overrides(command, injected_args):
+    """Refuse a native Codex argument that overrides a key the context policy injected."""
+    protected = _CODEX_PROTECTED_KEYS.intersection(_codex_config_keys(injected_args))
+    for key in _codex_config_keys(command[1:]):
+        # Assigning an ancestor table (`features={...}`) also discards the injected child key.
+        for clave in sorted(protected):
+            if key is not None and (clave == key or clave.startswith(f'{key}.')):
+                raise ValueError(tr('El argumento nativo de Codex modifica {clave}, gestionada por Contexto. '
+                                    'Cambia ese ajuste en Contexto o desactívalo para esta ejecución.', clave=clave))
+
+
 def prepare(command, agent, role, config, cwd, *, override=None, profile=None):
     policy = context_policy.resolve(config, role, override=override)
     if policy['enabled'] and agent in ('codex', 'codex-2'):
@@ -200,6 +245,8 @@ def prepare(command, agent, role, config, cwd, *, override=None, profile=None):
         command = _fresh_command(command, agent)
     args, assignments = native_launcher.invocation(profile or agent, config=config, role=role,
                                                   context_override=override, cwd=cwd)
+    if agent in ('codex', 'codex-2'):
+        _check_codex_context_overrides(command, args)
     environment = dict(os.environ)
     environment.update(item.split('=', 1) for item in assignments)
     if agent in ('codex', 'codex-2'):

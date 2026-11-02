@@ -789,5 +789,6 @@
   "Total": "Total",
   "{cantidad} tokens en 30 días": "{cantidad} tokens in 30 days",
   "El Jefe es el consumo de las sesiones. Los obreros (Planificar, Programar, Revisar y Sencillas) se cuentan desde que se registran sus encargos{desde}.": "The Chief is the sessions' consumption. Workers (Plan, Code, Review and Simple) are counted since their tasks started being recorded{desde}.",
-  "Proveedor": "Provider"
+  "Proveedor": "Provider",
+  "El argumento nativo de Codex modifica {clave}, gestionada por Contexto. Cambia ese ajuste en Contexto o desactívalo para esta ejecución.": "The native Codex argument changes {clave}, managed by Context. Change that setting in Context or disable it for this invocation."
 }
