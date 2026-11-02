@@ -50,9 +50,18 @@ class PriceTableTests(unittest.TestCase):
         saved = json.loads(self.file.read_text())['gpt-6.1-sol']
         self.assertEqual((saved['input'], saved['output']), (9, 3))
 
-    def test_an_empty_text_clears_a_price(self):
+    def test_an_empty_text_is_zero(self):
         price_table.set_value('claude-opus-5-5', 'input', '')
-        self.assertIsNone(json.loads(self.file.read_text())['claude-opus-5-5']['input'])
+        self.assertEqual(json.loads(self.file.read_text())['claude-opus-5-5']['input'], 0.0)
+
+    def test_set_values_saves_nothing_when_any_value_is_invalid(self):
+        with self.assertRaises(ValueError):
+            price_table.set_values({'gpt-6.1-sol': {'input': '2', 'output': 'lots'}})
+        self.assertFalse(self.file.exists())
+
+    def test_only_a_model_with_no_price_at_all_counts_as_missing(self):
+        price_table.set_value('gpt-6.1-sol', 'input', '2')
+        self.assertEqual(price_table.missing(), 6)
 
     def test_invalid_values_and_unknown_names_are_rejected_without_touching_the_file(self):
         for model, field, text in (('gpt-6.1-sol', 'input', 'lots'), ('gpt-6.1-sol', 'input', '-1'), ('gpt-6.1-sol', 'input', 'nan'),

@@ -68,6 +68,10 @@ class PricesTests(unittest.TestCase):
             self.assertEqual({loaded[model][kind] for kind in ('output', 'cacheRead', 'cacheWrite')}, {1}, model)  # its neighbours stay
             self.assertIsInstance(prices.cost_usd(loaded, model, KINDS), float)
 
+    def test_an_empty_cell_next_to_a_set_price_counts_as_zero(self):
+        row = {'input': 2.0, 'output': None, 'cacheRead': None, 'cacheWrite': None}
+        self.assertAlmostEqual(prices.cost_usd({'m': row}, 'm', KINDS), 2.0)
+
     def test_user_prices_override_defaults(self):
         self.path.parent.mkdir(parents=True)
         self.path.write_text(json.dumps({'gpt-6.1-sol': {'input': 1.0, 'output': 2.0, 'cacheRead': 0.1, 'cacheWrite': 1.0}}))

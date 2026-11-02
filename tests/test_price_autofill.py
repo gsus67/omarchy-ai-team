@@ -70,7 +70,8 @@ class AutofillTests(unittest.TestCase):
         saved = json.loads(price_table.path().read_text())
         self.assertEqual(saved['gpt-6.1-sol']['output'], 10.0)
         self.assertIsNone(saved['gpt-6.1-sol']['cacheWrite'])
-        self.assertIn('gpt-6.1-sol', result['pending'])
+        self.assertNotIn('gpt-6.1-sol', result['pending'])  # one cell left empty counts as 0, the model is priced
+        self.assertIn('gpt-6-sol', result['pending'])
         self.assertEqual(run.call_args.kwargs['env']['CLAUDE_CONFIG_DIR'], str(self.home / '.claude-2'))
 
     def test_a_codex_chief_is_read_from_its_json_events(self):

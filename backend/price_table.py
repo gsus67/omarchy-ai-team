@@ -36,7 +36,7 @@ def rows():
 
 
 def missing():
-    return sum(1 for row in rows() if any(row[field] is None for field in FIELDS))
+    return sum(1 for row in rows() if unpriced(row))
 
 
 def _number(value):
@@ -60,24 +60,36 @@ def ensure_writable():
         raise ValueError(tr('El archivo de precios está dañado: arréglalo o bórralo antes de guardar.'))
 
 
-def set_value(model, field, text):
-    """Save one price; an empty text clears it. Raises ValueError (translated) for anything invalid."""
+def unpriced(row):
+    """A model with no price at all; a single empty cell next to a set one just counts as 0."""
+    return all(row[field] is None for field in FIELDS)
+
+
+def set_values(changes):
+    """Save ``{model: {field: text}}`` in one write; an empty text is 0. Raises ValueError (translated), saving nothing, for anything invalid."""
     ensure_writable()
     table = _load()
-    if model not in table or field not in FIELDS:
+    if not isinstance(changes, dict):
         raise ValueError(tr('Ese precio no existe.'))
-    text = str(text).strip()
-    if text == '':
-        table[model][field] = None
-    else:
-        try:
-            value = float(text)
-        except ValueError:
-            raise ValueError(tr('El precio debe ser un número entre 0 y 1000 (USD por millón de tokens).')) from None
-        if not _number(value):
-            raise ValueError(tr('El precio debe ser un número entre 0 y 1000 (USD por millón de tokens).'))
-        table[model][field] = value
+    for model, fields in changes.items():
+        if model not in table or not isinstance(fields, dict):
+            raise ValueError(tr('Ese precio no existe.'))
+        for field, text in fields.items():
+            if field not in FIELDS:
+                raise ValueError(tr('Ese precio no existe.'))
+            text = str(text).strip()
+            try:
+                value = float(text) if text else 0.0
+            except ValueError:
+                value = -1
+            if not _number(value):
+                raise ValueError(tr('El precio debe ser un número entre 0 y 1000 (USD por millón de tokens).'))
+            table[model][field] = value
     _save(table)
+
+
+def set_value(model, field, text):
+    set_values({model: {field: text}})
 
 
 def apply_proposals(proposals):

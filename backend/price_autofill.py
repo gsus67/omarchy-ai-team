@@ -96,7 +96,7 @@ def run(config, snapshot):
     except ValueError as error:
         result['error'] = str(error)
         return result
-    models = [entry['model'] for entry in price_table.rows() if any(entry[field] is None for field in price_table.FIELDS)]
+    models = [entry['model'] for entry in price_table.rows() if price_table.unpriced(entry)]
     if not models:
         return result
     environment = {name: value for name, value in os.environ.items() if not name.startswith('GIT_')}
@@ -121,5 +121,5 @@ def run(config, snapshot):
         result['error'] = tr('La IA jefe no devolvió precios legibles; no se cambió nada.')
         return result
     result['filled'] = price_table.apply_proposals(proposals)
-    result['pending'] = [entry['model'] for entry in price_table.rows() if any(entry[field] is None for field in price_table.FIELDS)]
+    result['pending'] = [entry['model'] for entry in price_table.rows() if price_table.unpriced(entry)]
     return result

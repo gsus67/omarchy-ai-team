@@ -232,6 +232,7 @@ ColumnLayout {
           agent: modelData
           components: root.snapshot.components || []
           pi: root.snapshot.pi || ({})
+          check: ((root.snapshot.aiCheck || {}).results || []).find(item => item.agent === modelData.id) || ({})
           busy: root.busy
           onCommandRequested: arguments => root.commandRequested(arguments)
           onAuthorizationRequested: (arguments, explanation) => root.authorizationRequested(arguments, explanation)
