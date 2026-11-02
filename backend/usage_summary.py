@@ -84,9 +84,18 @@ def money_text(usd):
     return '<$0.01' if usd < 0.01 else '$%.2f' % usd
 
 
+def _label(name):
+    """Placeholder names the breakdown writes in Spanish are translated; real names pass through."""
+    if name == '(sin proyecto)':
+        return tr('(sin proyecto)')
+    if name == '(solo texto)':
+        return tr('(solo texto)')
+    return name
+
+
 def short_path(path):
     if not path.startswith('/'):
-        return tr(path)
+        return _label(path)
     home = str(Path.home())
     prefix, rest = '', path
     if path == home:
@@ -168,11 +177,13 @@ def _spend(agent_id):
         return None
     kinds = data['byKind']
     return {'cost': money_text(data.get('costUsd')),
-            'kinds': [{'name': tr(name), 'tokens': tokens_text(kinds[key])} for name, key in (
-                ('Entrada', 'input'), ('Salida', 'output'), ('Caché leída', 'cacheRead'), ('Caché escrita', 'cacheWrite'))],
+            'kinds': [{'name': tr('Entrada'), 'tokens': tokens_text(kinds['input'])},
+                      {'name': tr('Salida'), 'tokens': tokens_text(kinds['output'])},
+                      {'name': tr('Caché leída'), 'tokens': tokens_text(kinds['cacheRead'])},
+                      {'name': tr('Caché escrita'), 'tokens': tokens_text(kinds['cacheWrite'])}],
             'projects': [{'name': short_path(row['path'])[:60], 'tokens': tokens_text(row['total']), 'cost': money_text(row.get('costUsd'))}
                          for row in data['byProject'][:5]],
-            'tools': [{'name': tr(row['name'])[:60], 'tokens': tokens_text(row['total']), 'cost': money_text(row.get('costUsd'))}
+            'tools': [{'name': _label(row['name'])[:60], 'tokens': tokens_text(row['total']), 'cost': money_text(row.get('costUsd'))}
                       for row in data['byTool'][:5]],
             'unpriced': ', '.join(data['unpricedModels'])[:120]}
 

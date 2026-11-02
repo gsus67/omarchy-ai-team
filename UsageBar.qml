@@ -30,7 +30,7 @@ RowLayout {
     Layout.minimumWidth: Style.space(24)
     Layout.preferredHeight: Style.space(6)
     radius: height / 2
-    color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.14)
+    color: Style.selectedFillFor(Commons.Color.foreground, Commons.Color.accent)
 
     Rectangle {
       width: root.percent === null ? 0 : parent.width * Math.max(0, Math.min(100, root.percent)) / 100

@@ -22,7 +22,7 @@ Item {
   Rectangle {
     anchors.fill: parent
     radius: Style.cornerRadius
-    color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, hover.hovered || root.activeFocus ? 0.10 : 0.05)
+    color: hover.hovered || root.activeFocus ? Style.hoverFillFor(Commons.Color.foreground, Commons.Color.accent) : "transparent"
   }
 
   RowLayout {
