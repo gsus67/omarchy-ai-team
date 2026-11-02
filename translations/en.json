@@ -745,5 +745,22 @@
   "hitos": "milestones",
   "bloqueos": "blockers",
   "Se aplica al lanzar la sesión · el Jefe recibe un índice de memoria (fijo).": "Applied when the session launches · the Chief gets a memory index (fixed).",
-  "Uso 5 h · semana": "Usage 5 h · week"
+  "5 h": "5 h",
+  "Reinicia en {tiempo}": "Resets in {tiempo}",
+  "Entrada": "Input",
+  "Salida": "Output",
+  "Caché leída": "Cache read",
+  "Caché escrita": "Cache write",
+  "(sin proyecto)": "(no project)",
+  "(solo texto)": "(text only)",
+  "Sem": "Wk",
+  "Límites": "Limits",
+  "Tokens por modelo": "Tokens by model",
+  "Dónde se gastan": "Where tokens go",
+  "Coste estimado:": "Estimated cost:",
+  "Por tipo": "By kind",
+  "Por proyecto": "By project",
+  "Por herramienta": "By tool",
+  "Coste estimado a precio de API; entre herramientas el reparto es a partes iguales": "Estimated cost at API prices; across tools the split is equal",
+  "Sin precio:": "No price:"
 }
