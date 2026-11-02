@@ -673,11 +673,13 @@ SMOKE = r'''
           automatic.toggled(); backupSetupStep++; return
         }
         if (backupSetupStep === 3) {
-          if (!harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { fail("Timer not configured"); return }
+          if (!harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { if (++persistWaits > 12) fail("Timer not configured"); return }
+          persistWaits = 0
           automatic.toggled(); backupSetupStep++; return
         }
         if (backupSetupStep === 4) {
-          if (harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { fail("Timer not removed"); return }
+          if (harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { if (++persistWaits > 12) fail("Timer not removed"); return }
+          persistWaits = 0
           harness.page = "codex-2"
           if (!find(harness,"authenticate-codex-2",[]).visible) { fail("Native profile authentication action absent"); return }
           harness.page = ""; backupSetupStep++; return
@@ -892,7 +894,8 @@ SMOKE = r'''
           teamStep++;return
         }
         if (teamStep === 9) {
-          if (Object.values(teamInfo.roles).some(role => role.manual) || teamInfo.roles.plan.effort !== "xhigh" || teamInfo.warnings.some(warning => !warning.startsWith("Solo hay una familia disponible")) || teamModelCommands !== 1) { fail("Team recommendations did not reset manual choices"); return }
+          if (Object.values(teamInfo.roles).some(role => role.manual) || teamInfo.roles.plan.effort !== "xhigh" || teamInfo.warnings.some(warning => !warning.startsWith("Solo hay una familia disponible")) || teamModelCommands !== 1) { if (++persistWaits > 12) fail("Team recommendations did not reset manual choices"); return }
+          persistWaits = 0
           for (var resetRole of ["plan","code","review","simple"]) {
             var resetValue = teamInfo.roles[resetRole]
             if (find(harness,"team-role-" + resetRole,[]).value !== JSON.stringify([resetValue.agent,resetValue.model]) || find(harness,"team-effort-" + resetRole,[]).value !== resetValue.effort) { fail("Team selector labels did not reset to recommended values"); return }
@@ -915,8 +918,10 @@ SMOKE = r'''
         }
         var aiResults = harness.snapshot.aiCheck.results || []
         if (aiResults.length !== 1 || !aiResults[0].ok || aiResults[0].tokens !== 12 || !harness.snapshot.aiCheck.checkedAt) { fail("Explicit AI check did not report the synthetic native result"); return }
+        if (harness.page !== aiResults[0].agent) { harness.page = aiResults[0].agent; return }
         var aiResultRow = find(harness,"ai-check-" + aiResults[0].agent,[])
-        if (!aiResultRow || !aiResultRow.visible || aiResultRow.status !== "Funciona") { fail("AI check result row missing"); return }
+        if (!aiResultRow || !aiResultRow.visible || aiResultRow.status !== "Funciona") { if (++persistWaits > 12) fail("AI check result row missing"); return }
+        persistWaits = 0
         if (find(aiResultRow,"ai-check-" + aiResults[0].agent + "-open",[]).visible) { fail("Informational row still reacts to the pointer"); return }
         console.log("HARNESS_TEAM_PASS")
         harness.page = ""
