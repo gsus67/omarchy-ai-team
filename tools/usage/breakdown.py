@@ -122,10 +122,13 @@ def _recent_files(root, cutoff):
 
 
 def scan_claude(projects_dir, prices, days, now):
-    """Breakdown body for ``<claude dir>/projects`` over the last ``days`` days, or None without messages."""
+    """Breakdown body for ``<claude dir>/projects`` over the last ``days`` days, or None without messages.
+
+    Claude writes each content block of one message as its own line with the same
+    message id: usage is the largest seen and the tool calls of all its lines are merged.
+    """
     cutoff = now - timedelta(days=days)
-    totals = _Totals(prices, days)
-    seen = set()
+    messages = {}
     for path in _recent_files(projects_dir, cutoff):
         for number, entry in enumerate(_lines(path), 1):
             message = entry.get('message')
@@ -135,16 +138,19 @@ def scan_claude(projects_dir, prices, days, now):
             moment = _moment(entry.get('timestamp'))
             if not isinstance(usage, dict) or moment is None or moment < cutoff:
                 continue
-            key = message.get('id') or '%s:%d' % (path, number)
-            if key in seen:
-                continue
-            seen.add(key)
-            kinds = {'input': _number(usage.get('input_tokens')), 'output': _number(usage.get('output_tokens')),
-                     'cacheRead': _number(usage.get('cache_read_input_tokens')),
-                     'cacheWrite': _number(usage.get('cache_creation_input_tokens'))}
+            record = messages.setdefault(message.get('id') or '%s:%d' % (path, number), {
+                'model': str(message.get('model') or 'unknown'), 'project': None,
+                'kinds': dict.fromkeys(KIND_NAMES, 0), 'tools': {}})
+            if isinstance(entry.get('cwd'), str):
+                record['project'] = entry['cwd']
+            for kind, field in (('input', 'input_tokens'), ('output', 'output_tokens'),
+                                ('cacheRead', 'cache_read_input_tokens'), ('cacheWrite', 'cache_creation_input_tokens')):
+                record['kinds'][kind] = max(record['kinds'][kind], _number(usage.get(field)))
             content = message.get('content')
-            tools = [block['name'] for block in content if isinstance(block, dict)
-                     and block.get('type') == 'tool_use' and isinstance(block.get('name'), str)] if isinstance(content, list) else []
-            totals.add(str(message.get('model') or 'unknown'), entry.get('cwd') if isinstance(entry.get('cwd'), str) else None,
-                       tools, kinds)
+            for position, block in enumerate(content if isinstance(content, list) else []):
+                if isinstance(block, dict) and block.get('type') == 'tool_use' and isinstance(block.get('name'), str):
+                    record['tools'][block.get('id') or (block['name'], position)] = block['name']
+    totals = _Totals(prices, days)
+    for record in messages.values():
+        totals.add(record['model'], record['project'], list(record['tools'].values()), record['kinds'])
     return totals.body()

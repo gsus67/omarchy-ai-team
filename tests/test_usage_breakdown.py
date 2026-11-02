@@ -62,6 +62,19 @@ class ClaudeScanTests(unittest.TestCase):
         self.assertAlmostEqual(result['costUsd'], 4.00)
         self.assertAlmostEqual(result['byProject'][0]['costUsd'], 4.00)
 
+    def test_tools_in_later_lines_of_the_same_message_are_attributed(self):
+        # Claude writes each content block of one message as its own line, all with the same id and usage.
+        text_first = claude_line('m1', usage=(100, 100, 50, 50))
+        tool_later = claude_line('m1', tools=['Bash'], usage=(100, 100, 50, 50))
+        self.write(text_first, tool_later)
+        result = self.scan()
+        self.assertEqual({row['name']: row['total'] for row in result['byTool']}, {'Bash': 300})
+        self.assertEqual(result['byKind']['input'], 100)
+
+    def test_the_largest_usage_of_a_repeated_message_wins(self):
+        self.write(claude_line('m1', usage=(10, 5, 0, 0)), claude_line('m1', usage=(10, 20, 0, 0)))
+        self.assertEqual(self.scan()['byKind'], {'input': 10, 'output': 20, 'cacheRead': 0, 'cacheWrite': 0})
+
     def test_tools_share_a_messages_tokens_equally(self):
         self.write(claude_line('m1', tools=['Bash', 'Read'], usage=(100, 100, 50, 50)), claude_line('m2', usage=(1, 1, 1, 1)))
         tools = {row['name']: row['total'] for row in self.scan()['byTool']}
