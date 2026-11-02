@@ -692,7 +692,6 @@
   "Restaurar recomendados": "Restore recommended",
   "Se aplica en sesiones nuevas.": "Applies to new sessions.",
   "Sesiones nuevas": "New sessions",
-  "Todos": "All",
   "Ventana de lectura (líneas)": "Read window (lines)",
   "La política solo se aplica al lanzamiento y usa un índice de memoria.": "The policy only applies at launch and uses a memory index.",
   "Los informes de contexto solo admiten hitos y bloqueos sin duplicados.": "Context reports only allow milestones and blocks without duplicates.",
@@ -785,5 +784,7 @@
   "Guardar precios de tokens (USD por millón)": "Save token prices (USD per million)",
   "Comprobación con IA": "AI check",
   "USD por millón de tokens. Un campo vacío cuenta como 0.": "USD per million tokens. An empty field counts as 0.",
-  "JSON con los cambios de precio": "JSON with the price changes"
+  "JSON con los cambios de precio": "JSON with the price changes",
+  "Valores base. Toca un papel para cambiar solo el suyo.": "Base values. Tap a role to change only its own.",
+  "Editando solo este papel. Tócalo otra vez para volver a los valores base.": "Editing this role only. Tap it again to go back to the base values."
 }
