@@ -22,6 +22,7 @@ import native_plugins
 import shared_memory
 import native_launcher
 import context_policy
+import role_usage
 import usage_summary
 import price_table
 import price_autofill
@@ -643,6 +644,7 @@ def _status(config=None):
     result['team'] = {**team_state(config), **team_component}
     result['context'] = context_policy.snapshot(config)
     result['usage'] = usage_summary.rows(agents)
+    result['roleUsage'] = role_usage.summary(agents)
     result['prices'] = {'rows': price_table.rows(), 'missing': price_table.missing(), 'autofill': config.get('priceAutofill', {})}
     result['goals'] = goals.rows(result, config)
     result['summary'] = goals.summary(result, result['goals'])

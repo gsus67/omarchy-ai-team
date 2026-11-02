@@ -193,6 +193,16 @@ ColumnLayout {
           }
         }
 
+        CompactRow {
+          objectName: "usage-total"
+          Layout.fillWidth: true
+          visible: !!root.snapshot.roleUsage
+          label: root.tr("Total")
+          status: (root.snapshot.roleUsage || {}).total || ""
+          switchVisible: false
+          onOpened: root.page = "roles"
+        }
+
         RowLayout {
           Layout.fillWidth: true
           spacing: Style.space(2)
@@ -322,6 +332,13 @@ ColumnLayout {
         visible: root.page === "usage"
         Layout.fillWidth: true
         account: (root.snapshot.usage || []).find(row => row.id === root.usageAccount) || ({})
+      }
+
+      RolesPage {
+        translations: root.translations
+        visible: root.page === "roles"
+        Layout.fillWidth: true
+        info: root.snapshot.roleUsage || ({})
       }
 
       ContextPage {
