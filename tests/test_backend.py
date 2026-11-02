@@ -209,6 +209,18 @@ class BackendTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertFalse(harness.config_path().parent.exists())
 
+    def test_status_lists_the_usage_windows_of_selected_accounts_from_existing_records(self):
+        records = self.root / ".local/state/omarchy/agents/usage"
+        records.mkdir(parents=True)
+        (records / "claude.json").write_text(json.dumps({"limits": [
+            {"label": "Session (5-hour)", "percent": 0.01}, {"label": "Weekly (7-day)", "percent": 0.98}]}))
+        self.executable("claude", "/bin/true")
+        _, unselected = self.run_cli("status")
+        self.run_cli("set-agents", "claude")
+        _, selected = self.run_cli("status")
+        self.assertEqual(unselected["data"]["usage"], [])
+        self.assertEqual(selected["data"]["usage"], [{"id": "claude", "name": "Claude", "five": 1, "weekly": 98}])
+
     def test_status_reports_goals_without_running_agents(self):
         marker = self.root / "agent-was-executed"
         self.executable("codex", f'/usr/bin/touch "{marker}"')

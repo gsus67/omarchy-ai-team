@@ -110,6 +110,36 @@ ColumnLayout {
     }
   }
 
+  Flow {
+    objectName: "usage-summary"
+    Layout.fillWidth: true
+    visible: root.page === "" && (root.snapshot.usage || []).length > 0
+    spacing: Style.space(10)
+
+    Text {
+      text: root.tr("Uso 5 h · semana")
+      textFormat: Text.PlainText
+      color: Commons.Color.muted
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+    }
+
+    Repeater {
+      model: root.snapshot.usage || []
+      delegate: Text {
+        id: usageItem
+        required property var modelData
+        // Highlighted at the same 90 % the usage guard warns at.
+        readonly property bool high: Math.max(modelData.five === null ? 0 : modelData.five, modelData.weekly === null ? 0 : modelData.weekly) >= 90
+        text: modelData.name + " " + (modelData.five === null ? "—" : modelData.five + "%") + " · " + (modelData.weekly === null ? "—" : modelData.weekly + "%")
+        textFormat: Text.PlainText
+        color: usageItem.high ? Commons.Color.urgent : Commons.Color.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+      }
+    }
+  }
+
   QQC.ScrollView {
     id: scroll
     objectName: "harness-scroll"
