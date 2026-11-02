@@ -32,6 +32,9 @@ ColumnLayout {
     {key: "compact_at_tokens", label: root.tr("Compactar a los (tokens)"), native: true},
     {key: "compact_floor_tokens", label: root.tr("Piso de contexto (tokens)"), native: false},
     {key: "worker_report_max_tokens", label: root.tr("Informe del obrero (tokens)"), native: false}]
+  readonly property var reportEvents: [
+    {key: "milestone", label: root.tr("hitos")},
+    {key: "blocked", label: root.tr("bloqueos")}]
   signal commandRequested(var arguments)
   spacing: Style.space(6)
 
@@ -56,6 +59,62 @@ ColumnLayout {
   Text {
     Layout.fillWidth: true
     text: root.tr("Se aplica en sesiones nuevas.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
+  // Global-only settings: a role row cannot override them, so they only show in "Todos".
+  CompactRow {
+    objectName: "context-enabled"
+    visible: root.scope === ""
+    Layout.fillWidth: true
+    label: root.tr("Política de contexto activa")
+    status: root.modeText(false)
+    navigationEnabled: false
+    checked: root.values.enabled !== false
+    busy: root.busy
+    onToggled: root.command("context-set", "enabled", String(!checked))
+  }
+  CompactRow {
+    objectName: "context-dump_state_before"
+    visible: root.scope === ""
+    Layout.fillWidth: true
+    label: root.tr("Guardar estado antes de compactar")
+    status: root.modeText(true)
+    navigationEnabled: false
+    checked: root.values.dump_state_before !== false
+    busy: root.busy
+    onToggled: root.command("context-set", "dump_state_before", String(!checked))
+  }
+  Repeater {
+    model: root.scope === "" ? root.reportEvents : []
+    delegate: CompactRow {
+      id: report
+      required property var modelData
+      readonly property var current: root.values.worker_report_on || ["milestone", "blocked"]
+      objectName: "context-worker_report_on-" + report.modelData.key
+      Layout.fillWidth: true
+      label: root.tr("Informe del obrero en") + ": " + report.modelData.label
+      status: root.modeText(false)
+      navigationEnabled: false
+      checked: report.current.indexOf(report.modelData.key) >= 0
+      // At least one event must stay on: the backend rejects an empty list.
+      busy: root.busy || (report.checked && report.current.length === 1)
+      onToggled: {
+        var next = report.checked
+          ? report.current.filter(key => key !== report.modelData.key)
+          : root.reportEvents.map(event => event.key).filter(key => key === report.modelData.key || report.current.indexOf(key) >= 0)
+        root.command("context-set", "worker_report_on", JSON.stringify(next))
+      }
+    }
+  }
+  // Fixed by design: shown so the whole policy is visible, not editable.
+  Text {
+    visible: root.scope === ""
+    Layout.fillWidth: true
+    text: root.tr("Se aplica al lanzar la sesión · el Jefe recibe un índice de memoria (fijo).")
     textFormat: Text.PlainText
     color: Commons.Color.muted
     font.family: root.fonts.family
