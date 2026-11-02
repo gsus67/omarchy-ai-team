@@ -120,12 +120,12 @@ def exchange(runtime, agent, store=None, timeout=15):
     except OSError as error:
         raise ValueError(C_CANNOT_START) from error
     seconds = time.monotonic() - started
+    if result.returncode:
+        raise ValueError(C_EXIT_STATUS)
     try:
         replies = {reply["id"]: reply for line in result.stdout.splitlines()
                    if "id" in (reply := json.loads(line))}
-        if result.returncode:
-            raise ValueError(C_EXIT_STATUS)
-        if any(replies[key].get("error") for key in (1, 2, 3)):
+        if any(replies.get(key, {}).get("error") for key in (1, 2, 3)):
             raise ValueError(C_PROTOCOL)
         tools = {tool["name"] for tool in replies[2]["result"]["tools"]}
         doctor = replies[3]["result"]
@@ -405,9 +405,13 @@ def diagnose(agent):
     try:
         config = local_config(agent)
         server = server_config(config, agent)
+        if server is not None and not isinstance(server, dict):
+            raise ValueError()
         runtime = inspect_runtime()
-    except (OSError, ValueError, native_plugins.PluginError):
+    except (OSError, ValueError, AttributeError, TypeError, native_plugins.PluginError):
         report["configured"]["causes"].append("config-unreadable")
+        report["connected"]["causes"].append("skipped-not-configured")
+        report["usable"]["causes"].append("skipped-not-configured")
         return report
     causes = report["configured"]["causes"]
     if server is None:
@@ -424,7 +428,7 @@ def diagnose(agent):
             available = native_tools(agent, server)
         except MemoryError:
             causes.append("tool-filter-unsupported")
-        if runtime["installed"] and server_identity(server) != expected_server(runtime, agent):
+        if runtime["installed"] and runtime["node"] and server_identity(server) != expected_server(runtime, agent):
             causes.append("foreign-or-stale-command")
         if agent == "codex" and server.get("cwd") is not None:
             causes.append("native-cwd-overrides-project")
@@ -444,7 +448,7 @@ def diagnose(agent):
         return report
     report["connected"].update(ok=True, seconds=round(seconds, 2))
     limit = server.get("startup_timeout_sec", CODEX_STARTUP_SECONDS) if agent == "codex" else None
-    if isinstance(limit, (int, float)) and seconds >= limit:
+    if isinstance(limit, (int, float)) and not isinstance(limit, bool) and seconds >= limit:
         report["connected"]["causes"].append("slower-than-startup-timeout")
         report["connected"]["ok"] = False
     missing = TOOLS - tools
