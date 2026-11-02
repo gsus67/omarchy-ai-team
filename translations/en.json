@@ -787,8 +787,11 @@
   "Editando solo este papel. Tócalo otra vez para volver a los valores base.": "Editing this role only. Tap it again to go back to the base values.",
   "TOTAL": "TOTAL",
   "Total": "Total",
-  "{cantidad} tokens en 30 días": "{cantidad} tokens in 30 days",
-  "El Jefe es el consumo de las sesiones. Los obreros (Planificar, Programar, Revisar y Sencillas) se cuentan desde que se registran sus encargos{desde}.": "The Chief is the sessions' consumption. Workers (Plan, Code, Review and Simple) are counted since their tasks started being recorded{desde}.",
+  "{cantidad} tokens": "{cantidad} tokens",
+  "Desconocido": "Unknown",
+  "Medido desde {fecha}": "Measured since {fecha}",
+  "Inicio de medición no disponible": "Measurement start not available",
+  "El Jefe y los obreros (Planificar, Programar, Revisar y Sencillas) se miden desde el mismo inicio y con la misma unidad: entrada más salida. Un valor desconocido no cuenta como cero.": "The Chief and the workers (Plan, Code, Review and Simple) are measured from the same start and in the same unit: input plus output. An unknown value does not count as zero.",
   "Proveedor": "Provider",
   "El argumento nativo de Codex modifica {clave}, gestionada por Contexto. Cambia ese ajuste en Contexto o desactívalo para esta ejecución.": "The native Codex argument changes {clave}, managed by Context. Change that setting in Context or disable it for this invocation."
 }

@@ -377,7 +377,7 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
         _write_snapshots(capsule['id'], after=_snapshot(agent, totals if turns else dict.fromkeys(COUNTERS), turns))
         if turns:
             try:
-                role_usage.record(role, agent, totals)
+                role_usage.record(role, profile or agent, totals)
             except OSError:
                 pass  # the ledger is only a convenience for the usage screen
     if code or fatal:

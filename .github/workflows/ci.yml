@@ -20,6 +20,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Unit tests and security guards
-        run: python3 -m unittest discover -s tests -q
+        run: |
+          python3 -m unittest discover -s tests -q
+          python3 -O -m unittest discover -s tests -p 'test_state_confinement.py' -q
       - name: Plugin manifest
         run: python3 -c "import json; json.load(open('manifest.json'))"
