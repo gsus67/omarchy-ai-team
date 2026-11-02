@@ -352,5 +352,74 @@ class GuardHookTests(unittest.TestCase):
         startup.assert_not_called()
 
 
+class ClaudeAccountGuardTests(unittest.TestCase):
+    """The guard measures the Claude account of the session that runs it, never another one."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.root = Path(temp.name)
+        self.settings = self.root / 'settings.json'
+        self.bin = self.root / 'bin'; self.bin.mkdir()
+        self.calls = self.root / 'calls'
+
+    def run_guard(self, stdin, environment=None):
+        env = {'PATH': f"{self.bin}:{os.environ['PATH']}", 'XDG_STATE_HOME': str(self.root / 'state'), 'HOME': str(self.root),
+               **(environment or {})}
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'backend/usage_guard.py'), '--settings', str(self.settings)],
+                              input=stdin, capture_output=True, text=True, env=env, timeout=20)
+
+    def context(self, result):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)['hookSpecificOutput']['additionalContext'] if result.stdout.strip() else ''
+
+    def usage_by_account(self, main=0.98, second=0.04):
+        """A collector whose reading depends on the Claude directory it is run with."""
+        tool = self.bin / 'omarchy-agent-usage-claude'
+        tool.write_text('#!/bin/sh\necho "dir=$CLAUDE_CONFIG_DIR" >> \'' + str(self.calls) + '\'\n'
+                        'if [ -n "$CLAUDE_CONFIG_DIR" ]; then p=' + str(second) + '; else p=' + str(main) + '; fi\n'
+                        'echo "{\\"limits\\": [{\\"label\\": \\"Weekly (7-day)\\", \\"percent\\": $p}]}"\n')
+        tool.chmod(0o700)
+
+    def event_of(self, profile):
+        folder = self.root / profile / 'projects' / 'p'
+        return json.dumps({'hook_event_name': 'PostToolUse', 'transcript_path': str(folder / 'session.jsonl')})
+
+    def test_a_second_account_session_reads_its_own_limits_not_the_main_ones(self):
+        self.usage_by_account(main=0.98, second=0.04)
+        self.assertEqual(self.context(self.run_guard(self.event_of('.claude-2'))), '')
+        self.assertIn('dir=' + str(self.root / '.claude-2'), self.calls.read_text())
+
+    def test_the_two_claude_accounts_never_share_a_cached_reading(self):
+        self.usage_by_account(main=0.98, second=0.04)
+        self.assertIn('98', self.context(self.run_guard(self.event_of('.claude'))))
+        self.assertEqual(self.context(self.run_guard(self.event_of('.claude-2'))), '')
+        self.assertIn('98', self.context(self.run_guard(self.event_of('.claude'))))
+
+    def test_each_account_gets_its_own_collector_cache(self):
+        # The official collector keeps its limits in $XDG_CACHE_HOME/omarchy/agent-usage and reuses them for a while.
+        tool = self.bin / 'omarchy-agent-usage-claude'
+        tool.write_text('#!/bin/sh\n'
+                        'cache="${XDG_CACHE_HOME:-$HOME/.cache}/shared-limits"\n'
+                        'if [ -f "$cache" ]; then cat "$cache"; exit 0; fi\n'
+                        'mkdir -p "$(dirname "$cache")"\n'
+                        'if [ -n "$CLAUDE_CONFIG_DIR" ]; then p=0.04; else p=0.98; fi\n'
+                        'out="{\\"limits\\": [{\\"label\\": \\"Weekly (7-day)\\", \\"percent\\": $p}]}"\n'
+                        'echo "$out" > "$cache"; echo "$out"\n')
+        tool.chmod(0o700)
+        self.assertIn('98', self.context(self.run_guard(self.event_of('.claude'))))
+        self.assertEqual(self.context(self.run_guard(self.event_of('.claude-2'))), '')
+        cache = self.root / '.cache/omarchy-ai-team/usage'
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+
+    def test_the_main_account_is_read_without_a_config_directory_even_if_the_environment_has_one(self):
+        self.usage_by_account(main=0.98, second=0.04)
+        result = self.run_guard(self.event_of('.claude'), {'CLAUDE_CONFIG_DIR': str(self.root / '.claude-2')})
+        self.assertIn('98', self.context(result))
+
+    def test_without_a_transcript_the_environment_decides_the_account(self):
+        self.usage_by_account(main=0.98, second=0.04)
+        result = self.run_guard(json.dumps({'hook_event_name': 'PostToolUse'}), {'CLAUDE_CONFIG_DIR': str(self.root / '.claude-2')})
+        self.assertEqual(self.context(result), '')
+
+
 if __name__ == '__main__':
     unittest.main()
