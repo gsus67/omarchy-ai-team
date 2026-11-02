@@ -69,7 +69,7 @@ def options(selected, catalog, free_pi, paid_ok):
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]
         for model, efforts in models:
             paid = agent == 'pi' and model not in free_pi
-            display = (model.capitalize() + ' ' + CLAUDE_VERSIONS[model]) if agent == 'claude' else model
+            display = ' '.join((model.capitalize(), CLAUDE_VERSIONS.get(model, ''))).strip() if agent == 'claude' else model
             label = AGENT_NAMES[agent] + ' · ' + display
             if paid: label = tr('{modelo} · de pago', modelo=label)
             result.append(dict(agent=agent, model=model, display=display, efforts=list(efforts), label=label, paid=paid,
