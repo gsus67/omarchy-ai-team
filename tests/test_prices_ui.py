@@ -30,8 +30,11 @@ class PanelBehaviourTests(unittest.TestCase):
         self.assertIn('root.errorDismissed()', (ROOT / 'HarnessContent.qml').read_text())
         self.assertIn('onErrorDismissed: root.errorText = ""', (ROOT / 'Panel.qml').read_text())
 
-    def test_team_models_are_grouped_by_provider_then_alphabetical(self):
-        self.assertIn('root.providerRank(a.agent) - root.providerRank(b.agent) || a.model.localeCompare(b.model', (ROOT / 'TeamPage.qml').read_text())
+    def test_team_picks_the_provider_first_and_lists_only_its_models_alphabetically(self):
+        page = (ROOT / 'TeamPage.qml').read_text()
+        self.assertIn('objectName: "team-provider-"', page)
+        self.assertIn('filter(option => option.agent === role.current.agent).slice()', page)
+        self.assertIn('a.model.localeCompare(b.model', page)
 
     def test_agents_are_listed_by_provider_everywhere(self):
         import sys
