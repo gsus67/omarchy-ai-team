@@ -196,7 +196,8 @@ def effective(config, selected, catalog, free_pi):
                 value = {**value, 'effort': recommended_effort(key, levels)}
         if manual and not any(same_model(row, value) and value['effort'] in row['efforts']
                               and (not row['paid'] or config.get('piPaidApproved', False)) for row in choices):
-            warnings.append(tr('{papel}: el agente ya no está seleccionado o el modelo no está disponible; se usa el recomendado.', papel=LABELS[key]))
+            warnings.append(tr('{papel}: {modelo} ya no está disponible (agente, modelo o esfuerzo); se usa el recomendado y se conserva tu elección.',
+                               papel=LABELS[key], modelo=value['model'] or '-'))
             manual = False; value = recommended
         if value:
             roles[key] = {**value, 'manual': manual, 'recommended': recommended}
@@ -249,19 +250,6 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
     config.setdefault('team', {}).setdefault('enabled', False)
     config['team'].setdefault('roles', {})[role] = {**value, 'manual': True}
     config['team'].pop('notices', None)
-
-
-def reconcile(config, selected, catalog, free_pi):
-    """Persist invalid manual-role fallback at refresh time, never during status."""
-    state = effective(config, selected, catalog, free_pi)
-    settings = config.setdefault('team', {})
-    for key, stored in list(settings.get('roles', {}).items()):
-        if stored.get('manual') and not state['roles'].get(key, {}).get('manual'):
-            del settings['roles'][key]
-            notice = tr('{papel}: el agente, modelo o esfuerzo ya no está disponible; se usa el recomendado.', papel=LABELS[key])
-            notices = settings.setdefault('notices', [])
-            if notice not in notices:
-                notices.append(notice)
 
 
 def reset(config):

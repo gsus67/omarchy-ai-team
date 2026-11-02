@@ -27,23 +27,21 @@ class TeamTests(unittest.TestCase):
         catalog['codex'] = catalog['codex'][:5]
         self.assertEqual(team.recommend({'codex'}, catalog, [])[0]['code']['model'], 'gpt-6.1-sol')
 
-    def test_manual_role_with_vanished_model_falls_back_with_persistent_notice(self):
+    def test_manual_role_with_vanished_model_falls_back_but_is_kept(self):
         for field, value in (('model', 'vanished'), ('effort', 'vanished')):
             with self.subTest(field=field):
                 config = self.config()
-                config['team']['roles']['plan'] = dict(
-                    agent='codex', model='gpt-6.1-sol', effort='high', manual=True)
-                config['team']['roles']['plan'][field] = value
-                team.reconcile(config, {'codex'}, CAT, [])
-                self.assertNotIn('plan', config['team']['roles'])
-                self.assertIn('Planificar', ' '.join(config['team']['notices']))
-                restored = copy.deepcopy(config)
-                state = team.effective(restored, {'codex'}, CAT, [])
+                stored = dict(agent='codex', model='gpt-6.1-sol', effort='high', manual=True)
+                stored[field] = value
+                config['team']['roles']['plan'] = dict(stored)
+                state = team.effective(config, {'codex'}, CAT, [])
                 self.assertFalse(state['roles']['plan']['manual'])
-                self.assertTrue(set(config['team']['notices']).issubset(state['warnings']))
-                team.set_role(restored, 'simple', 'codex', 'gpt-6-luna', 'medium',
-                              selected={'codex'}, catalog=CAT, free_pi=[], paid_ok=False)
-                self.assertFalse(restored['team'].get('notices'))
+                self.assertEqual(config['team']['roles']['plan'], stored)
+                warning = next(w for w in state['warnings'] if 'Planificar' in w)
+                self.assertIn(stored['model'], warning)
+                # The manual choice returns once the catalog offers it again.
+                config['team']['roles']['plan'] = dict(agent='codex', model='gpt-6.1-sol', effort='high', manual=True)
+                self.assertTrue(team.effective(config, {'codex'}, CAT, [])['roles']['plan']['manual'])
                 team.reset(config)
                 self.assertFalse(config['team'].get('notices'))
 
@@ -156,7 +154,7 @@ class TeamTests(unittest.TestCase):
         result = team.effective(config, {'codex-2'}, CAT, [])
         self.assertEqual(result['roles']['plan']['agent'], 'codex')
         self.assertFalse(result['roles']['plan']['manual'])
-        self.assertIn('seleccionado', ' '.join(result['warnings']))
+        self.assertIn('haiku', ' '.join(result['warnings']))
 
     def test_review_equal_code_rejected(self):
         for changed, model in (('review', 'opus'), ('code', 'sonnet')):
