@@ -8,6 +8,7 @@ import qs.Commons as Commons
 RowLayout {
   id: root
   property string label: ""
+  property real labelWidth: Style.space(24)
   property var percent: null
   readonly property var fonts: Style.font
   readonly property bool high: root.percent !== null && root.percent >= 90
@@ -16,7 +17,7 @@ RowLayout {
   spacing: Style.space(4)
 
   Text {
-    Layout.preferredWidth: Style.space(24)
+    Layout.preferredWidth: root.labelWidth
     text: root.label
     textFormat: Text.PlainText
     color: Commons.Color.muted

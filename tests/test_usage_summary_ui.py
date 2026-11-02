@@ -33,6 +33,12 @@ class UsageSummaryUiTests(unittest.TestCase):
         self.assertIn('Commons.Color.urgent', (ROOT / 'UsageBar.qml').read_text())
         self.assertIn('>= 90', (ROOT / 'UsageBar.qml').read_text())
 
+    def test_the_detail_page_gives_window_labels_room_instead_of_clipping_them(self):
+        self.assertIn('property real labelWidth', (ROOT / 'UsageBar.qml').read_text())
+        page = (ROOT / 'UsagePage.qml').read_text()
+        self.assertIn('labelWidth: Style.space(96)', page)
+        self.assertIn('Layout.leftMargin: Style.space(96 + 4)', page)
+
     def test_the_bar_icon_differs_from_the_consumption_panel_icon(self):
         source = (ROOT / 'Panel.qml').read_text()
         icon = re.search(r'objectName: "harness-icon".*?text: "(.)"', source, re.S).group(1)
