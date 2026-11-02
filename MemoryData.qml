@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import "I18n.js" as I18n
 import QtQuick.Layouts
@@ -14,6 +15,16 @@ ColumnLayout {
   property bool busy: false
   readonly property var fonts: Style.font
   readonly property var preview: root.operation.restorePreview || ({})
+  // Archive project key → new folder, sorted so it compares with the folders the preview answered for.
+  property var folders: ({})
+  readonly property var movedFolders: {
+    const moved = {}
+    for (const key of Object.keys(root.folders).sort()) if (root.folders[key]) moved[key] = root.folders[key]
+    return moved
+  }
+  readonly property var mapArguments: Object.keys(root.movedFolders).reduce((list, key) => list.concat(["--project-map", key + "=" + root.movedFolders[key]]), [])
+  readonly property bool previewIsCurrent: root.preview.requestedArchive === archive.text && root.preview.projectPath === project.text
+    && JSON.stringify(root.preview.projectMap || {}) === JSON.stringify(root.movedFolders)
   signal commandRequested(var arguments)
   signal restoreRequested(var arguments, string explanation)
   Layout.fillWidth: true
@@ -80,8 +91,25 @@ ColumnLayout {
   Ui.Button {
     objectName: "memory-preview"
     text: root.tr("Revisar archivo")
-    enabled: !root.busy && archive.text.length > 0 && !!(root.info.runtime || {}).installed
-    onClicked: root.commandRequested(["memory-preview",archive.text,"--project-path",project.text])
+    enabled: !root.busy && archive.text.length > 0
+    onClicked: root.commandRequested(["memory-preview",archive.text,"--project-path",project.text].concat(root.mapArguments))
+  }
+  // Each project can move on its own; `compartido` has no folder, so it never asks for one.
+  Repeater {
+    model: (root.preview.projects || []).length > 1 ? root.preview.projects.filter(row => !row.shared) : []
+    delegate: Ui.TextField {
+      id: folderField
+      required property var modelData
+      objectName: "memory-map-" + folderField.modelData.key.slice(0, 8)
+      Layout.fillWidth: true
+      placeholderText: root.tr("{proyecto} · nueva carpeta", {proyecto: (folderField.modelData.name || root.tr("Proyecto")) + " · " + folderField.modelData.key.slice(0, 8)})
+      enabled: !root.busy
+      Component.onCompleted: folderField.text = root.folders[folderField.modelData.key] || ""
+      onTextChanged: {
+        if ((root.folders[folderField.modelData.key] || "") === folderField.text) return
+        root.folders = Object.assign({}, root.folders, {[folderField.modelData.key]: folderField.text})
+      }
+    }
   }
   CompactRow {
     Layout.fillWidth: true
@@ -104,10 +132,23 @@ ColumnLayout {
     objectName: "memory-restore"
     text: root.tr("Restaurar nuevas…")
     visible: !!root.preview.token
-    enabled: !root.busy && !!root.preview.token && root.preview.conflictCount === 0 && root.preview.newCount > 0 && root.preview.requestedArchive === archive.text && root.preview.projectPath === project.text
-    onClicked: root.restoreRequested(["memory-restore",archive.text,root.preview.token,"--project-path",project.text],
+    enabled: !root.busy && !!root.preview.token && root.preview.conflictCount === 0 && root.preview.newCount > 0 && root.previewIsCurrent
+    onClicked: root.restoreRequested(["memory-restore",archive.text,root.preview.token,"--project-path",project.text].concat(root.mapArguments),
       root.tr("Añadir {cantidad} memorias en {proyectos} proyectos. Se conservarán los documentos existentes.", {cantidad: root.preview.newCount, proyectos: root.preview.projectCount}) +
-      (project.text ? root.tr("\nDestino: {destino}", {destino: project.text}) : root.tr("\nProyectos originales del archivo.")))
+      (project.text ? root.tr("\nDestino: {destino}", {destino: project.text}) :
+       root.mapArguments.length ? Object.keys(root.movedFolders).map(key => root.tr("\nDestino: {destino}", {destino: root.movedFolders[key]})).join("") :
+       root.tr("\nProyectos originales del archivo.")))
+  }
+  Text {
+    objectName: "memory-restore-note"
+    Layout.fillWidth: true
+    visible: !!root.preview.token
+    text: root.tr("Las memorias siguen asociadas a su carpeta original salvo que indiques otra; restaurar no conecta ningún agente.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    wrapMode: Text.WordWrap
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
   }
   Text {
     Layout.fillWidth: true

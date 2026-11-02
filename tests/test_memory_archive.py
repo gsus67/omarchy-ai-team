@@ -88,6 +88,14 @@ class MemoryArchiveTests(unittest.TestCase):
                 self.assertTrue((target/NAME).is_file())
                 self.assertFalse((target/'projects'/KEY/'.ai-team-project.json').exists())
 
+    def test_project_name_read_from_disk_is_bounded_and_without_control_characters(self):
+        directory=self.root/'names';directory.mkdir()
+        for raw,expected in (('Mi proyecto ñ','Mi proyecto ñ'),('  ma\x00l\nvado\x7f\x85  ','malvado'),
+                             ('x'*500,'x'*120),('\x00\n ',None)):
+            with self.subTest(raw=raw):
+                (directory/'.ai-team-project.json').write_text(json.dumps({'schemaVersion':1,'name':raw}))
+                self.assertEqual(memory_archive.project_name(directory),expected)
+
     def test_project_names_follow_reassociation(self):
         self.export();self.set_project_names({KEY:'Migrated project','../outside':'Bad'})
         target_key='b'*64
@@ -95,6 +103,92 @@ class MemoryArchiveTests(unittest.TestCase):
         memory_archive.restore(self.archive,self.target,self.runtime,preview['token'],target_key)
         self.assertEqual(memory_archive.inventory(self.target)[0]['label'],'Migrated project · bbbbbbbb')
         self.assertFalse((self.target/'projects'/KEY).exists())
+
+    def two_projects(self):
+        other='b'*64
+        file=self.store/'projects'/other/'project/decisions/mem_other.md'
+        file.parent.mkdir(parents=True);file.write_bytes(b'other project data\n')
+        memory_archive.audit.return_value={'memoryCount':2}
+        self.export();self.set_project_names({KEY:'app',other:'app'})
+        return other
+
+    def test_several_projects_can_move_to_new_folders(self):
+        other=self.two_projects()
+        moved={KEY:'c'*64,other:'d'*64}
+        preview=memory_archive.preview(self.archive,self.target,self.runtime,key_map=moved)
+        self.assertEqual(preview['projectCount'],2)
+        self.assertEqual({row['key']:row['newKey'] for row in preview['projects']},moved)
+        self.assertFalse(self.target.exists())
+        result=memory_archive.restore(self.archive,self.target,self.runtime,preview['token'],key_map=moved)
+        self.assertEqual(result['restoredCount'],2)
+        self.assertEqual(result['unverifiedProjects'],[])
+        self.assertEqual((self.target/'projects'/('c'*64)/'project/decisions/mem_test.md').read_bytes(),b'synthetic memory data\n')
+        self.assertEqual((self.target/'projects'/('d'*64)/'project/decisions/mem_other.md').read_bytes(),b'other project data\n')
+        self.assertFalse((self.target/'projects'/KEY).exists())
+        self.assertEqual(json.loads((self.target/'projects'/('c'*64)/'.ai-team-project.json').read_text())['name'],'app')
+
+    def test_ambiguous_or_invalid_destinations_are_rejected(self):
+        other=self.two_projects()
+        shared=memory_archive.SHARED_KEY
+        for moved in ({KEY:'c'*64,other:'c'*64},   # Two projects into one folder.
+                      {KEY:other},                 # Into a project that stays in the archive.
+                      {'e'*64:'c'*64},             # A project this archive does not hold.
+                      {KEY:'not-a-key'},
+                      {KEY:shared}):
+            with self.subTest(moved=moved),self.assertRaises(memory_archive.ArchiveError):
+                memory_archive.preview(self.archive,self.target,self.runtime,key_map=moved)
+        self.assertFalse(self.target.exists())
+
+    def test_single_target_and_map_cannot_be_combined(self):
+        self.export()
+        with self.assertRaises(memory_archive.ArchiveError):
+            memory_archive.preview(self.archive,self.target,self.runtime,'c'*64,key_map={KEY:'d'*64})
+
+    def test_shared_memory_keeps_its_identity(self):
+        shared=memory_archive.SHARED_KEY
+        file=self.store/'projects'/shared/'project/decisions/mem_shared.md'
+        file.parent.mkdir(parents=True);file.write_bytes(b'common rules\n')
+        memory_archive.audit.return_value={'memoryCount':2}
+        self.export()
+        with self.assertRaises(memory_archive.ArchiveError):
+            memory_archive.preview(self.archive,self.target,self.runtime,key_map={shared:'c'*64})
+        preview=memory_archive.preview(self.archive,self.target,self.runtime)
+        self.assertEqual({row['key']:row['shared'] for row in preview['projects']},{KEY:False,shared:True})
+
+    def test_shared_key_matches_the_memory_bridge(self):
+        self.assertEqual(memory_archive.SHARED_KEY,hashlib.sha256(b'ai-team-shared-memory').hexdigest())
+        bridge=(Path(memory_archive.__file__).with_name('memory_projects.mjs')).read_text()
+        self.assertIn("storeFor('ai-team-shared-memory')",bridge)
+
+    def test_conflict_at_the_new_location_blocks_and_keeps_existing_memory(self):
+        self.export()
+        existing=self.target/'projects'/('c'*64)/'project/decisions/mem_test.md'
+        existing.parent.mkdir(parents=True);existing.write_bytes(b'already here\n')
+        preview=memory_archive.preview(self.archive,self.target,self.runtime,key_map={KEY:'c'*64})
+        self.assertEqual(preview['conflictCount'],1)
+        with self.assertRaises(memory_archive.ArchiveError):
+            memory_archive.restore(self.archive,self.target,self.runtime,preview['token'],key_map={KEY:'c'*64})
+        self.assertEqual(existing.read_bytes(),b'already here\n')
+
+    def test_token_is_bound_to_the_map_and_to_later_changes(self):
+        self.export()
+        preview=memory_archive.preview(self.archive,self.target,self.runtime,key_map={KEY:'c'*64})
+        with self.assertRaises(memory_archive.ArchiveError):
+            memory_archive.restore(self.archive,self.target,self.runtime,preview['token'],key_map={KEY:'d'*64})
+        with self.assertRaises(memory_archive.ArchiveError):
+            memory_archive.restore(self.archive,self.target,self.runtime,preview['token'])
+        other=self.target/'projects'/('c'*64)/'project/decisions/mem_late.md'
+        other.parent.mkdir(parents=True);other.write_bytes(b'written after the preview\n')
+        # Only the token can stop this one: the late document is valid and conflicts with nothing.
+        with patch.object(memory_archive,'validate_documents'),self.assertRaisesRegex(memory_archive.ArchiveError,'plan cambió'):
+            memory_archive.restore(self.archive,self.target,self.runtime,preview['token'],key_map={KEY:'c'*64})
+        self.assertFalse((self.target/'projects'/('c'*64)/'project/decisions/mem_test.md').exists())
+
+    def test_without_a_map_restored_projects_are_reported_as_not_verified_here(self):
+        self.export();self.set_project_names({KEY:'app'})
+        preview=memory_archive.preview(self.archive,self.target,self.runtime)
+        result=memory_archive.restore(self.archive,self.target,self.runtime,preview['token'])
+        self.assertEqual(result['unverifiedProjects'],['app'])
 
     def test_project_name_change_invalidates_archive_token(self):
         self.export();self.set_project_names({KEY:'Before'})

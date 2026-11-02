@@ -16,10 +16,15 @@ ColumnLayout {
   property var pi: ({})
   property var check: ({})  // result of the last AI check for this agent, if any
   property bool busy: false
+  property bool hookTrustPending: false
   readonly property var fonts: Style.font
   readonly property bool installed: root.agent.installation === "installed"
   readonly property bool cliReady: root.installed || (root.agent.installation === "missing-profile" && !!root.agent.cliInstalled)
   readonly property bool canUninstall: root.installed && root.agent.manager === "mise" && ["claude", "codex", "pi"].indexOf(root.agent.id) !== -1
+  readonly property string setupIssues: (root.agent.setupIssues || []).map(issue => {
+    const component = root.components.find(row => row.id === issue.component) || {}
+    return root.tr("{componente}: {detalle}", {componente: component.name || issue.component, detalle: issue.detail})
+  }).join("\n")
   signal commandRequested(var arguments)
   signal uninstallRequested(var arguments, string explanation)
   signal authorizationRequested(var arguments, string explanation)
@@ -75,6 +80,35 @@ ColumnLayout {
       switchVisible: false
       navigationEnabled: false
     }
+  }
+  Text {
+    objectName: "setup-issues-" + root.agent.id
+    Layout.fillWidth: true
+    visible: text !== ""
+    text: root.setupIssues
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
+  // Codex grants this itself: it is not part of what the plugin can repair.
+  CompactRow {
+    objectName: "hook-trust-" + root.agent.id
+    Layout.fillWidth: true
+    visible: root.hookTrustPending
+    label: root.tr("Aviso de consumo")
+    status: root.tr("Apruébalo con /hooks")
+    switchVisible: false
+    navigationEnabled: false
+  }
+  Ui.Button {
+    objectName: "prepare-agent-" + root.agent.id
+    text: root.tr("Preparar y usar como predeterminado")
+    visible: root.agent.installation !== "missing-profile"
+    focusable: true
+    enabled: !root.busy
+    onClicked: root.commandRequested(["prepare-agent", root.agent.id, "--default"])
   }
   // Several text buttons never fit one line of a 380 px card: they flow onto the next line instead.
   Flow {

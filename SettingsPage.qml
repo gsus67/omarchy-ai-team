@@ -17,7 +17,23 @@ ColumnLayout {
   property var team: ({})
   property var aiCheck: ({})
   property var prices: ({})
+  property var components: []
+  property var lastReconcile: ({})
   property bool busy: false
+  function setupStatus(agent) {
+    if (agent.setupState === "ready") return root.tr("Listo")
+    if (agent.setupState === "error") return root.tr("Con errores")
+    if (agent.setupState === "pending") return root.tr("Pendiente")
+    return agent.installation === "installed" ? agent.version || root.tr("Instalado") : root.tr("No instalado")
+  }
+  function repairedText() {
+    const rows = (root.lastReconcile.repaired || []).map(row => {
+      const agent = root.agents.find(item => item.id === row.agent) || {}
+      const component = root.components.find(item => item.id === row.component) || {}
+      return (agent.name || row.agent) + " · " + (component.name || row.component)
+    })
+    return rows.length ? root.tr("Última reparación: {lista}", {lista: rows.join(", ")}) : ""
+  }
   signal commandRequested(var arguments)
   signal pageRequested(string id)
   spacing: Style.space(6)
@@ -41,7 +57,7 @@ ColumnLayout {
         objectName: "agent-row-" + modelData.id
         readonly property bool installed: modelData.installation === "installed"
         text: (installed ? "" : "○ ") + modelData.name
-        tooltipText: installed ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
+        tooltipText: root.setupStatus(modelData)
         foreground: installed ? Color.foreground : Color.muted
         bordered: true
         focusable: true
@@ -49,6 +65,17 @@ ColumnLayout {
         onClicked: root.pageRequested(modelData.id)
       }
     }
+  }
+  Text {
+    objectName: "last-reconcile"
+    Layout.fillWidth: true
+    visible: text !== ""
+    text: root.repairedText()
+    textFormat: Text.PlainText
+    color: Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
   }
   Ui.PanelSeparator { Layout.fillWidth: true }
   Ui.PanelSectionHeader { text: root.tr("GENERAL") }

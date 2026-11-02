@@ -48,7 +48,7 @@ class TeamTests(unittest.TestCase):
                 self.assertFalse(config['team'].get('notices'))
 
     def test_claude_and_codex(self):
-        expected = dict(plan=role('codex', 'gpt-6.1-sol', 'xhigh'), code=role('claude', 'opus', 'high'),
+        expected = dict(plan=role('claude', 'opus', 'xhigh'), code=role('claude', 'opus', 'high'),
                         review=role('codex', 'gpt-6.1-sol', 'high'), simple=role('codex', 'gpt-6-luna', 'medium'))
         for selected in ({'claude', 'codex-2'}, {'claude', 'codex'}, {'claude', 'codex', 'codex-2', 'pi'}):
             self.assertEqual(team.recommend(selected, CAT, ['nous/x:free'])[0], expected)
@@ -127,10 +127,11 @@ class TeamTests(unittest.TestCase):
         result = team.effective(config, {'codex-2'}, cat, [])
         self.assertEqual(result['roles']['plan']['effort'], 'ultra')
         self.assertTrue(result['roles']['plan']['manual'])
+        one_family = 'Solo hay una familia disponible (Codex): Planificar y Revisar la comparten.'
         self.assertEqual(result['warnings'], [
-            'Ultra hace que Codex reparta el trabajo por su cuenta: rompe el reparto del equipo y gasta tokens por partida doble.'])
+            one_family, 'Ultra hace que Codex reparta el trabajo por su cuenta: rompe el reparto del equipo y gasta tokens por partida doble.'])
         team.reset(config)
-        self.assertEqual(team.effective(config, {'codex-2'}, cat, [])['warnings'], [])
+        self.assertEqual(team.effective(config, {'codex-2'}, cat, [])['warnings'], [one_family])
 
     def config(self):
         return {'team': {'enabled': True, 'roles': {}}, 'foreign': 'keep'}

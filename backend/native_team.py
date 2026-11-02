@@ -39,9 +39,12 @@ def instruction(original,paths,enabled,*,team=None):
         state=team or {};assignments=state.get('roles',{})
         profiles=[profile for profile in ('codex-2','codex','claude-2','claude') if profile in state.get('selected',[paths['profile']])]
         review=assignments.get('review')
-        command=role_commands('review',review,profiles)[0] if review else ''
+        import team as roles
+        only_pi=roles.only_pi(state.get('selected',[paths['profile']]))
+        command=role_commands('review',review,profiles,only_pi=only_pi)[0] if review else ''
         message=('Con política de contexto activa en papel Jefe usa solo índice ECC y delegación nativa; las lecturas/ejecuciones van a obreros. '
                  'Equipo activo: tú diriges y los modelos del equipo trabajan, también dentro de los pasos de Superpowers. '
+                 +('Solo Pi: los modelos de Nous trabajan sin sandbox ni aprobación por herramienta; compruébalo todo en el diff. ' if only_pi else '')+
                  'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva. '
                  'Cualquier otro cambio de código: encarga Programar al modelo de ese papel, salvo que sea tu propio modelo. '
                  'Antes de decir que un cambio de código está terminado, encarga siempre Revisar al modelo de ese papel y corrige lo que encuentre'
@@ -75,19 +78,7 @@ def inspect(agent,receipt=None,*,settings_file=None,team=None):
 
 
 def prepare(paths,settings_file,*,team=None):
-    source=memory_archive.safe_path(paths['source']);marker=source/'.ai-team-managed';file=source/'SKILL.md'
-    if source.exists() and any(source.iterdir()):
-        try:
-            record=json.loads(memory_archive.read_file(marker,4096))
-            if record.get('sha256')!=hashlib.sha256(memory_archive.read_file(file,32*1024)).hexdigest():raise ValueError()
-        except (ValueError,OSError,native_plugins.PluginError) as error:
-            raise native_plugins.PluginError(tr('La skill gestionada está modificada o es ajena; se conserva.')) from error
-    source.mkdir(parents=True,mode=0o700,exist_ok=True)
-    content=text(paths,settings_file,team=team)
-    # Config-owned generated files, never an upstream skill or original project.
-    from atomic_files import atomic_write
-    atomic_write(file,content)
-    atomic_write(marker,json.dumps({'schemaVersion':1,'sha256':hashlib.sha256(content.encode()).hexdigest()}))
+    native_skills.publish(paths['source'],text(paths,settings_file,team=team))
 
 
 def guard_hook_trusted(home):
@@ -192,7 +183,7 @@ def codex_profiles(profiles):
     return [profile for profile in ('codex-2', 'codex') if profile in profiles] or ['codex']
 
 
-def role_commands(key, row, profiles, *, settings_file=None):
+def role_commands(key, row, profiles, *, settings_file=None, only_pi=False):
     # A visible recipe, never a background dispatcher. Resolve current settings at execution.
     def wrapped(profile, arguments):
         command = ['/usr/bin/python3', str(Path(__file__).with_name('context_run.py').resolve()),
@@ -208,7 +199,7 @@ def role_commands(key, row, profiles, *, settings_file=None):
         return [('CLAUDE_CONFIG_DIR='+shlex.quote(str(Path.home()/'.claude-2'))+' ' if profile == 'claude-2' else 'env -u CLAUDE_CONFIG_DIR ')+
                 wrapped(profile, ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
                                    '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits']) for profile in claude_profiles(profiles)]
-    if key in ('review', 'simple'):
+    if only_pi or key in ('review', 'simple'):
         provider, model = row['model'].split('/', 1)
         thinking = ['--thinking', row['effort']] if row.get('effort') else []
         return [wrapped('pi', ['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])]
@@ -221,6 +212,7 @@ def text(paths, settings_file, team=None):
     state = team or {}; assignments = state.get('roles', {})
     selected = state.get('selected', [paths['profile']])
     profiles = [profile for profile in ('codex-2', 'codex', 'claude-2', 'claude') if profile in selected]
+    only_pi = roles.only_pi(selected)
     lines = ['---', 'name: '+ID,
              'description: "Úsala siempre que vayas a cambiar código: encarga programar y revisar a los modelos del equipo, y planificar o tareas sencillas cuando compense."',
              '---', '', '# Equipo por papeles', '']
@@ -251,33 +243,28 @@ def text(paths, settings_file, team=None):
         'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
         'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
         'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '
-        'Una revisión nunca la hace el modelo que escribió el cambio: salta esa alternativa. '
+        'Una revisión nunca la hace el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: salta esa alternativa. '
         'Informa qué modelo hizo cada papel y por qué se cambió. Si no queda alternativa, déjalo pendiente y dilo; no lo des por hecho.',
-        'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas; '
-        'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.',
+        ('Solo Pi: los modelos de Nous cubren todos los papeles y no tienen sandbox ni aprobación por herramienta, así que pueden cambiar archivos o ejecutar comandos sin preguntar. '
+         'Pedir a Revisar que solo lea es una instrucción, no es aislamiento efectivo: trabaja en un worktree Git y comprueba el diff antes de aceptar el resultado. '
+         'Avisa de este límite al informar de cada encargo.' if only_pi else
+         'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas; '
+         'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.'),
         '', 'Sustituye <dir> y <encargo> por valores concretos citados como argumentos de shell. '
         'Los comandos siguientes son recetas para la sesión; el plugin nunca los ejecuta.', ''])
     for key in roles.ROLES:
         row = assignments.get(key)
         if not row: continue
         lines += [roles.LABELS[key]+':', '```sh']
-        lines += role_commands(key, row, profiles, settings_file=settings_file)
+        lines += role_commands(key, row, profiles, settings_file=settings_file, only_pi=only_pi)
         lines += ['```', '']
         options = roles.alternatives(key, assignments, state.get('options', []))
         if options:
             lines += ['Alternativas de '+roles.LABELS[key]+', en orden:', '```sh']
             for number, option in enumerate(options, 1):
                 # One model can take one line per Codex account: the number marks the alternative.
-                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles, settings_file=settings_file)]
+                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles, settings_file=settings_file, only_pi=only_pi)]
             lines += ['```', '']
-    # Native permission recipes remain explicit even when a role uses another family.
-    for agent, writing, reading in (('codex', 'workspace-write', 'read-only'), ('claude', 'acceptEdits', 'plan')):
-        row = next((r for r in assignments.values() if r['agent']==agent), None)
-        if not row: continue
-        lines += ['Permisos nativos de '+agent+' (escritura / revisión):', '```sh']
-        if agent == 'codex':
-            lines += [line for key in ('code', 'review') for line in role_commands(key, row, profiles, settings_file=settings_file)]
-        else:
-            lines += [line for key in ('code', 'review') for line in role_commands(key, row, profiles, settings_file=settings_file)]
-        lines += ['```', '']
+        elif key == 'review':
+            lines += ['Revisar no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', '']
     return '\n'.join(lines)+'\n'

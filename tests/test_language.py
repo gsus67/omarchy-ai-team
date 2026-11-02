@@ -193,7 +193,7 @@ class LanguageTests(unittest.TestCase):
         import harness
         import i18n
         source = 'La configuración no puede ser un enlace simbólico.'
-        def blocked(config, key, action):
+        def blocked(config, key, action, **options):
             if key == 'memory':
                 raise harness.HarnessError(i18n.tr(source))
         with i18n.using('en'), patch.object(harness, 'manage_component', side_effect=blocked), patch.object(harness, 'sync_launcher_menu'):

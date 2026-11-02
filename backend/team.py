@@ -8,11 +8,13 @@ import re
 ROLES = ('plan', 'code', 'review', 'simple')
 LABELS = dict(zip(ROLES, (tr('Planificar'), tr('Programar'), tr('Revisar'), tr('Tareas sencillas'))))
 CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
-CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna')
+CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra')
+AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi'}
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
 STRONG_ORDER = (('claude', 'opus'), ('codex', 'sol'), ('claude', 'sonnet'), ('codex', 'luna'))
-FALLBACK_ORDER = {'plan': STRONG_ORDER, 'code': STRONG_ORDER,
+WRITING_ORDER = (*STRONG_ORDER, ('pi', ''))
+FALLBACK_ORDER = {'plan': WRITING_ORDER, 'code': WRITING_ORDER,
                   'review': (('claude', 'sonnet'), ('claude', 'opus'), ('codex', 'sol'), ('codex', 'luna'), ('pi', '')),
                   'simple': (('pi', ''), ('claude', 'haiku'), ('codex', 'luna'), ('claude', 'sonnet'))}
 ROLE_EFFORTS = dict(zip(ROLES, ('xhigh', 'high', 'high', 'medium')))
@@ -26,6 +28,10 @@ def families(selected):
     return [agent for agent in ('claude', 'codex', 'pi')
             if agent in selected or (agent == 'codex' and 'codex-2' in selected)
             or (agent == 'claude' and 'claude-2' in selected)]
+
+
+def only_pi(selected):
+    return families(selected) == ['pi']
 
 
 def codex_models(catalog):
@@ -61,7 +67,7 @@ def options(selected, catalog, free_pi, paid_ok):
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]
         for model, efforts in models:
             paid = agent == 'pi' and model not in free_pi
-            label = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi'}[agent] + ' · ' + model
+            label = AGENT_NAMES[agent] + ' · ' + model
             if paid: label = tr('{modelo} · de pago', modelo=label)
             result.append(dict(agent=agent, model=model, efforts=list(efforts), label=label, paid=paid,
                                recommendedEfforts={key: recommended_effort(key, efforts) for key in ROLES}))
@@ -97,8 +103,7 @@ def recommend(selected, catalog, free_pi):
     if 'claude' in available:
         roles = {key: choice('claude', model, ROLE_EFFORTS[key]) for key, model in zip(ROLES, ('opus', 'opus', 'sonnet', 'haiku'))}
         if 'codex' in available:
-            roles.update(plan=choice('codex', strong, 'xhigh'),
-                         review=choice('codex', strong, 'high'),
+            roles.update(review=choice('codex', strong, 'high'),
                          simple=choice('codex', cheap, 'medium'))
         elif 'pi' in available and free_pi:
             roles.update(review=choice('pi', free_pi[0], ROLE_EFFORTS['review']), simple=choice('pi', free_pi[0], ROLE_EFFORTS['simple']))
@@ -106,9 +111,12 @@ def recommend(selected, catalog, free_pi):
         roles = {key: choice('codex', model, effort) for key, model, effort in (
             ('plan', strong, 'xhigh'), ('code', strong, 'high'),
             ('review', cheap, 'high'), ('simple', cheap, 'medium'))}
-        if 'pi' in available and free_pi: roles['simple'] = choice('pi', free_pi[0], ROLE_EFFORTS['simple'])
+        if 'pi' in available and free_pi:
+            roles.update(review=choice('pi', free_pi[0], ROLE_EFFORTS['review']), simple=choice('pi', free_pi[0], ROLE_EFFORTS['simple']))
     elif 'pi' in available and free_pi:
+        # Catalog order: the repo holds no quality evidence that could rank these models.
         roles = {key: choice('pi', free_pi[0], ROLE_EFFORTS[key]) for key in ROLES}
+        roles['review'] = choice('pi', free_pi[min(1, len(free_pi) - 1)], ROLE_EFFORTS['review'])
     else:
         roles = {}
         warnings.append(tr('No hay modelos gratuitos comprobados disponibles para el equipo.') if available else tr('Selecciona agentes para el equipo.'))
@@ -121,20 +129,34 @@ def same_model(left, right):
     return bool(left and right and (left['agent'], left['model']) == (right['agent'], right['model']))
 
 
+def same_family(left, right):
+    return bool(left and right and left['agent'] == right['agent'])
+
+
+def other_family(agent, options):
+    """Paid models do not count: they never take a role without consent."""
+    return any(row['agent'] != agent and not row['paid'] for row in options)
+
+
 def codex_version(row):
     match = re.fullmatch(r'gpt-(\d+(?:\.\d+)*)-\w+', row['model'])
     return tuple(map(int, match[1].split('.'))) if match else ()
 
 
 def alternatives(key, roles, options, limit=3):
-    """Ordered free or subscription models for a role; writing roles exclude Pi."""
+    """Ordered free or subscription models for a role; writing roles use Pi only when it works alone."""
     main = roles.get(key)
     if not main:
         return []
     # A reviewer must stay independent of whoever writes, in both directions.
     others = [roles.get(name) for name in {'review': ('code', 'simple'), 'code': ('review',)}.get(key, ())]
+    # Whoever reviews and whoever plans stay in different families while another one exists.
+    counterpart = roles.get({'review': 'plan', 'plan': 'review'}.get(key))
+    pi_alone = all(row['agent'] == 'pi' for row in options)
     allowed = [row for row in options if not row['paid'] and not same_model(row, main)
-               and not any(same_model(row, other) for other in others)]
+               and (row['agent'] != 'pi' or key not in ('plan', 'code') or pi_alone)
+               and not any(same_model(row, other) for other in others)
+               and not (same_family(row, counterpart) and other_family(row['agent'], options))]
     # Free models with levels first: they let the role keep its effort.
     ranked = sorted(options, key=lambda row: row['agent'] == 'pi' and row['efforts'] == [''])
     ordered = []
@@ -178,9 +200,21 @@ def effective(config, selected, catalog, free_pi):
             manual = False; value = recommended
         if value:
             roles[key] = {**value, 'manual': manual, 'recommended': recommended}
+    plan, review = roles.get('plan'), roles.get('review')
+    if same_family(plan, review) and not review['manual'] and other_family(review['agent'], choices):
+        # A recommendation gives way to the plan the user chose; otherwise swapping both would be a deadlock.
+        replacement = next(iter(alternatives('review', roles, choices)), None)
+        if replacement: review = roles['review'] = {**replacement, 'manual': False, 'recommended': review['recommended']}
     if same_model(roles.get('code'), roles.get('review')):
         warning = tr('No hay revisión independiente: Programar y Revisar usan el mismo modelo.')
         if warning not in warnings: warnings.append(warning)
+    if same_family(plan, review):
+        name = AGENT_NAMES[plan['agent']]
+        warnings.append(tr('Planificar y Revisar son de la misma familia ({familia}): Revisar debería ser de otra.', familia=name)
+                        if other_family(plan['agent'], choices) else
+                        tr('Solo hay una familia disponible ({familia}): Planificar y Revisar la comparten.', familia=name))
+    if roles and only_pi(selected):
+        warnings.append(tr('Solo Pi: los modelos de Nous no tienen sandbox ni aprobación por herramienta; pueden cambiar archivos o ejecutar comandos sin preguntar.'))
     if any(row['agent'] == 'codex' and row['effort'] == 'ultra' for row in roles.values()):
         warnings.append(tr('Ultra hace que Codex reparta el trabajo por su cuenta: rompe el reparto del equipo y gasta tokens por partida doble.'))
     return {'enabled': config.get('team', {}).get('enabled', False), 'roles': roles, 'options': choices, 'warnings': warnings}
@@ -208,6 +242,10 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
     if (same_model(state['roles'].get('code'), state['roles'].get('review'))
             and len({(row['agent'], row['model']) for row in choices}) > 1):
         raise TeamError(tr('Revisar debe usar un modelo distinto de Programar.'))
+    # Only these two roles can break the rule: an older configuration must not block the others.
+    if (role in ('plan', 'review') and same_family(state['roles'].get('plan'), state['roles'].get('review'))
+            and other_family(agent, choices)):
+        raise TeamError(tr('Revisar debe ser de otra familia que Planificar ({familia}).', familia=AGENT_NAMES[agent]))
     config.setdefault('team', {}).setdefault('enabled', False)
     config['team'].setdefault('roles', {})[role] = {**value, 'manual': True}
     config['team'].pop('notices', None)

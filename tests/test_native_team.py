@@ -10,6 +10,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from file_snapshot import snapshot
 import harness
 import native_plugins
 import native_team
@@ -132,11 +134,44 @@ class NativeTeamTests(unittest.TestCase):
             native_team.apply('claude', '/bin/claude', 'disable', settings_file=self.settings, team=self.state({'claude'}))
         hook.assert_called_once()
 
-    def test_pi_restricted_to_reading_and_never_promises_sandbox(self):
-        text = self.content({'pi'})
+    def test_pi_next_to_another_cli_stays_restricted_to_reading(self):
+        text = self.content({'claude', 'pi'})
         self.assertIn('Pi no tiene sandbox', text)
         self.assertIn('solo lectura', text)
         self.assertIn('no delegues Planificar ni Programar a Pi', text)
+
+    def only_pi_state(self):
+        return {**team.effective(self.config, {'pi'}, {'nousEffort': ['nous/a:free']}, ['nous/a:free', 'nous/b:free']), 'selected': ['pi']}
+
+    def test_only_pi_skill_warns_that_nous_models_have_no_sandbox(self):
+        text = self.content(state=self.only_pi_state())
+        self.assertIn('los modelos de Nous no tienen sandbox ni aprobación por herramienta', text)
+        self.assertIn('no es aislamiento', text)
+        self.assertNotIn('no delegues Planificar ni Programar a Pi', text)
+        self.assertNotIn('encargo pendiente', text)
+
+    def test_only_pi_recipes_cover_programar_and_revisar(self):
+        text = self.content(state=self.only_pi_state())
+        code = text[text.index('Programar:\n```sh'):]
+        self.assertIn('pi -p --provider nous --model a:free --thinking high', code[:code.index('```', 12)])
+        review = text[text.index('Revisar:\n```sh'):]
+        self.assertIn('pi -p --provider nous --model b:free', review[:review.index('```', 12)])
+
+    def test_only_pi_startup_block_uses_the_review_recipe(self):
+        block = native_team.instruction('', native_team.layout('pi'), True, team=self.only_pi_state())
+        self.assertIn('--model b:free', block)
+        self.assertIn('sin sandbox', block)
+
+    def test_pi_code_role_generates_native_command(self):
+        row = {'agent': 'pi', 'model': 'nous/odd$(touch x) name:free', 'effort': 'high'}
+        command = native_team.role_commands('code', row, [], only_pi=True)[0]
+        self.assertIn("--provider nous --model 'odd$(touch x) name:free' --thinking high", command)
+        self.assertIn("'<encargo>'", command)
+        self.assertTrue(command.endswith('</dev/null'))
+
+    def test_pi_code_role_stays_pending_next_to_another_cli(self):
+        row = {'agent': 'pi', 'model': 'nous/a:free', 'effort': ''}
+        self.assertIn('pendiente', native_team.role_commands('code', row, [])[0])
 
     def test_team_set_round_trip_and_recommend_preserves_foreign(self):
         self.config['foreign'] = 'keep'; harness.save_config(self.config)
@@ -232,6 +267,26 @@ class NativeTeamTests(unittest.TestCase):
         self.assertFalse(paths['target'].is_symlink())
         self.assertEqual(startup.read_text(), 'Instrucción ajena.\n')
         self.assertTrue(paths['source'].exists())
+
+    def test_second_identical_apply_changes_no_file(self):
+        state = self.state()
+        with patch('native_skills.loaded', return_value=True):
+            first = native_team.apply('claude', '/claude', 'enable', settings_file=self.settings, team=state)
+            paths = native_team.layout('claude')
+            self.assertTrue((paths['source'] / '.ai-team-managed').is_file())
+            before = snapshot(self.root)
+            native_team.apply('claude', '/claude', 'enable', first, settings_file=self.settings, team=state)
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_modified_skill_is_still_detected_when_content_would_match(self):
+        state = self.state()
+        with patch('native_skills.loaded', return_value=True):
+            native_team.apply('claude', '/claude', 'enable', settings_file=self.settings, team=state)
+            marker = native_team.layout('claude')['source'] / '.ai-team-managed'
+            marker.write_text('{"sha256":"altered"}')
+            with self.assertRaises(native_plugins.PluginError):
+                native_team.apply('claude', '/claude', 'enable', settings_file=self.settings, team=state)
+        self.assertEqual(marker.read_text(), '{"sha256":"altered"}')
 
     def test_foreign_skill_is_never_overwritten(self):
         paths = native_team.layout('claude'); paths['target'].mkdir(parents=True)
