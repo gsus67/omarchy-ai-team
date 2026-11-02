@@ -109,6 +109,11 @@ def _codex_positionals(rest):
         word = rest[index]
         if word == '--':
             return  # everything after the delimiter is prompt text, never a subcommand
+        if word in ('-i', '--image'):
+            index += 1  # a list option: it also takes every following word that is not an option, as clap does
+            while index < len(rest) and (not rest[index].startswith('-') or rest[index] == '-') and rest[index] != '--':
+                index += 1
+            continue
         if word.startswith('-') and word != '-':
             index += 2 if word in _CODEX_VALUE_OPTIONS else 1
             continue
@@ -129,7 +134,9 @@ def _fresh_command(command, agent):
         subcommands = names[:2] if exec_at is not None else names[:1]
         if any(item in ('resume', 'fork') for item in subcommands):
             raise ValueError(refusal)
-        if exec_at is not None and '--ephemeral' not in rest:
+        # Only an option before the delimiter counts: after `--` the words are prompt text.
+        before_delimiter = rest[:rest.index('--')] if '--' in rest else rest
+        if exec_at is not None and '--ephemeral' not in before_delimiter:
             rest.insert(exec_at + 1, '--ephemeral')
     elif agent == 'claude':
         # For Claude `-c` means --continue, unlike Codex.
