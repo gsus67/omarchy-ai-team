@@ -221,7 +221,7 @@ def effective(config, selected, catalog, free_pi):
     return {'enabled': config.get('team', {}).get('enabled', False), 'roles': roles, 'options': choices, 'warnings': warnings}
 
 
-def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok):
+def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok, check=True):
     if role not in ROLES:
         raise TeamError(tr('El papel de equipo no es válido.'))
     if agent == 'pi' and model not in free_pi and not paid_ok:
@@ -240,6 +240,14 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
     candidate = copy.deepcopy(config)
     candidate.setdefault('team', {}).setdefault('roles', {})[role] = {**value, 'manual': True}
     state = effective(candidate, selected, catalog, free_pi)
+    if check:
+        _check_rules(state, role, agent, choices)
+    config.setdefault('team', {}).setdefault('enabled', False)
+    config['team'].setdefault('roles', {})[role] = {**value, 'manual': True}
+    config['team'].pop('notices', None)
+
+
+def _check_rules(state, role, agent, choices):
     if (same_model(state['roles'].get('code'), state['roles'].get('review'))
             and len({(row['agent'], row['model']) for row in choices}) > 1):
         raise TeamError(tr('Revisar debe usar un modelo distinto de Programar.'))
@@ -247,9 +255,21 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
     if (role in ('plan', 'review') and same_family(state['roles'].get('plan'), state['roles'].get('review'))
             and other_family(agent, choices)):
         raise TeamError(tr('Revisar debe ser de otra familia que Planificar ({familia}).', familia=AGENT_NAMES[agent]))
-    config.setdefault('team', {}).setdefault('enabled', False)
-    config['team'].setdefault('roles', {})[role] = {**value, 'manual': True}
-    config['team'].pop('notices', None)
+
+
+def set_roles(config, assignments, *, selected, catalog, free_pi, paid_ok):
+    """Apply several (role, agent, model, effort) at once; the rules are checked only on the final result."""
+    work = copy.deepcopy(config)
+    for role, agent, model, effort in assignments:
+        set_role(work, role, agent, model, effort, selected=selected, catalog=catalog,
+                 free_pi=free_pi, paid_ok=paid_ok, check=False)
+    choices = [row for row in options(selected, catalog, free_pi, paid_ok) if not row['paid'] or paid_ok]
+    state = effective(work, selected, catalog, free_pi)
+    for role, agent, _model, _effort in assignments:
+        if role in ('plan', 'review', 'code'):
+            _check_rules(state, role, agent, choices)
+    config.clear()
+    config.update(work)
 
 
 def reset(config):

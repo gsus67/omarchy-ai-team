@@ -963,6 +963,11 @@ def _main(argv=None):
     team_set.add_argument('agent', choices=('claude', 'codex', 'pi'))
     team_set.add_argument('model')
     team_set.add_argument('--effort', default='')
+    team_pair = commands.add_parser('team-set-pair', help=tr('Cambiar Planificar y Revisar a la vez'))
+    for name in ('plan', 'review'):
+        team_pair.add_argument(f'{name}_agent', choices=('claude', 'codex', 'pi'))
+        team_pair.add_argument(f'{name}_model')
+        team_pair.add_argument(f'--{name}-effort', default='')
     team_all = commands.add_parser('team-all', help=tr('Conectar el equipo a los perfiles seleccionados'))
     team_all.add_argument('action', choices=('enable', 'disable', 'verify', 'sync'))
     tools = commands.add_parser('local-tools-all', help=tr('Conectar conocimientos locales a los perfiles seleccionados'))
@@ -1181,8 +1186,15 @@ def _main(argv=None):
             save_config(config)
             refresh_usage_window()  # a failure keeps the saved preference: the state stays pending with a retry
             message = tr('Ventana de medición actualizada.')
-        elif args.command in ('team-set', 'team-recommend', 'team-models'):
-            if args.command == 'team-set':
+        elif args.command in ('team-set', 'team-set-pair', 'team-recommend', 'team-models'):
+            if args.command == 'team-set-pair':
+                selected, catalog, free_pi = team_context(config)
+                team.set_roles(config, [('plan', args.plan_agent, args.plan_model, args.plan_effort),
+                                        ('review', args.review_agent, args.review_model, args.review_effort)],
+                               selected=selected, catalog=catalog, free_pi=free_pi,
+                               paid_ok=config.get('piPaidApproved', False))
+                message = tr('Papeles guardados.')
+            elif args.command == 'team-set':
                 selected, catalog, free_pi = team_context(config)
                 team.set_role(config, args.role, args.agent, args.model, args.effort,
                               selected=selected, catalog=catalog, free_pi=free_pi,
