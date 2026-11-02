@@ -46,6 +46,10 @@ class PricesTests(unittest.TestCase):
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
         self.assertEqual(json.loads(self.path.read_text()), prices.DEFAULT_PRICES)
 
+    def test_loading_without_creating_leaves_no_file_behind(self):
+        self.assertEqual(prices.load_prices(self.path, create=False), prices.DEFAULT_PRICES)
+        self.assertFalse(self.path.exists())
+
     def test_load_keeps_a_corrupt_file_untouched_and_falls_back_to_defaults(self):
         self.path.parent.mkdir(parents=True)
         self.path.write_text('{not json')
@@ -60,7 +64,8 @@ class PricesTests(unittest.TestCase):
                              ' "claude-fable-5-1": {"input": true, "output": 1, "cacheRead": 1, "cacheWrite": 1}}')
         loaded = prices.load_prices(self.path)
         for model in ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'):
-            self.assertEqual(loaded[model], prices.DEFAULT_PRICES[model], model)
+            self.assertEqual(loaded[model]['input'], prices.DEFAULT_PRICES[model]['input'], model)  # the bad cell falls back
+            self.assertEqual({loaded[model][kind] for kind in ('output', 'cacheRead', 'cacheWrite')}, {1}, model)  # its neighbours stay
             self.assertIsInstance(prices.cost_usd(loaded, model, KINDS), float)
 
     def test_user_prices_override_defaults(self):

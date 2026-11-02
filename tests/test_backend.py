@@ -223,6 +223,42 @@ class BackendTests(unittest.TestCase):
         self.assertEqual([{key: row[key] for key in ("id", "name", "five", "weekly")} for row in selected["data"]["usage"]],
                          [{"id": "claude", "name": "Claude", "five": 1, "weekly": 98}])
 
+    def prices_file(self):
+        return self.root / ".config/omarchy/agents/prices.json"
+
+    def test_status_lists_the_price_table_without_creating_the_file(self):
+        _, reply = self.run_cli("status")
+        prices = reply["data"]["prices"]
+        self.assertEqual(prices["missing"], 7)
+        self.assertEqual(next(row for row in prices["rows"] if row["model"] == "claude-opus-5-5")["input"], 4.0)
+        self.assertFalse(self.prices_file().exists())
+
+    def test_price_set_saves_one_price_and_rejects_invalid_values(self):
+        result, reply = self.run_cli("price-set", "gpt-6.1-sol", "input", "2.5")
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(json.loads(self.prices_file().read_text())["gpt-6.1-sol"]["input"], 2.5)
+        result, reply = self.run_cli("price-set", "gpt-6.1-sol", "input", "lots")
+        self.assertFalse(reply["ok"])
+        self.assertEqual(json.loads(self.prices_file().read_text())["gpt-6.1-sol"]["input"], 2.5)
+
+    def test_price_autofill_needs_a_chief_and_fills_only_empty_prices_from_the_chief_reply(self):
+        _, reply = self.run_cli("price-autofill")
+        self.assertFalse(reply["ok"])
+        proposal = json.dumps({"models": {"gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cacheRead": None, "cacheWrite": None,
+                                                           "source": "https://developers.openai.com/api/docs/pricing"}}})
+        line = json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": proposal}})
+        self.executable("codex", "cat > /dev/null; printf '%s\\n' '" + line + "'")
+        self.run_cli("set-agents", "codex")
+        self.run_cli("set-default-agent", "codex")
+        _, reply = self.run_cli("price-autofill")
+        self.assertTrue(reply["ok"], reply)
+        saved = json.loads(self.prices_file().read_text())
+        self.assertEqual((saved["gpt-6.1-sol"]["input"], saved["gpt-6.1-sol"]["output"]), (2.0, 10.0))
+        self.assertEqual(saved["claude-opus-5-5"]["input"], 4.0)
+        _, status = self.run_cli("status")
+        self.assertEqual(status["data"]["prices"]["autofill"]["agent"], "codex")
+        self.assertEqual(len(status["data"]["prices"]["autofill"]["filled"]), 2)
+
     def test_status_reports_goals_without_running_agents(self):
         marker = self.root / "agent-was-executed"
         self.executable("codex", f'/usr/bin/touch "{marker}"')

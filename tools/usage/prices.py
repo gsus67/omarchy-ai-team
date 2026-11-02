@@ -26,7 +26,7 @@ DEFAULT_PRICES = {
     'claude-haiku-5-5': _row(0.10, 0.50, 0.01, 0.125),
     'claude-fable-5-1': _row(10.00, 50.00, 0.25, 12.50),
     **{model: _row(None, None, None, None) for model in (
-        'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6.1-terra', 'codex-auto-review')},
+        'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6.1-terra', 'codex-auto-review', 'claude-opus-4-8')},
 }
 
 
@@ -44,20 +44,19 @@ def _write_private(path, data):
         Path(temporary).unlink(missing_ok=True)
 
 
-def _valid_row(row):
-    """Every price must be None or a finite, non-negative number (not a bool)."""
-    return isinstance(row, dict) and all(
-        row.get(kind) is None or (isinstance(row[kind], (int, float)) and not isinstance(row[kind], bool)
-                                  and math.isfinite(row[kind]) and row[kind] >= 0)
-        for kind in KINDS)
+def _valid_price(value):
+    """A price is None or a finite, non-negative number (not a bool)."""
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool)
+                             and math.isfinite(value) and value >= 0)
 
 
-def load_prices(path):
-    """Defaults merged with the user's file; the file is created if missing, never rewritten if broken."""
+def load_prices(path, create=True):
+    """Defaults merged with the user's file; the file is created if missing (unless ``create`` is off), never rewritten if broken."""
     path = Path(path)
     defaults = copy.deepcopy(DEFAULT_PRICES)
     if not path.exists():
-        _write_private(path, defaults)
+        if create:
+            _write_private(path, defaults)
         return defaults
     try:
         user = json.loads(path.read_text())
@@ -66,8 +65,12 @@ def load_prices(path):
     if not isinstance(user, dict):
         return defaults
     for model, row in user.items():
-        if _valid_row(row):
-            defaults[model] = {kind: row.get(kind) for kind in KINDS}
+        if not isinstance(row, dict):
+            continue
+        base = defaults.setdefault(model, dict.fromkeys(KINDS))
+        for kind in KINDS:  # one bad cell never discards the valid ones next to it
+            if kind in row and _valid_price(row[kind]):
+                base[kind] = row[kind]
     return defaults
 
 

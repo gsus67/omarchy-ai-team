@@ -23,6 +23,8 @@ import shared_memory
 import native_launcher
 import context_policy
 import usage_summary
+import price_table
+import price_autofill
 import memory_archive
 import memory_backups
 import memory_mcp
@@ -641,6 +643,7 @@ def _status(config=None):
     result['team'] = {**team_state(config), **team_component}
     result['context'] = context_policy.snapshot(config)
     result['usage'] = usage_summary.rows(agents)
+    result['prices'] = {'rows': price_table.rows(), 'missing': price_table.missing(), 'autofill': config.get('priceAutofill', {})}
     result['goals'] = goals.rows(result, config)
     result['summary'] = goals.summary(result, result['goals'])
     return result
@@ -741,6 +744,11 @@ def _main(argv=None):
     commands.add_parser("status", help=tr('Detectar sin instalar ni ejecutar agentes'))
     commands.add_parser("after-update", help=tr('Reconectar una vez las integraciones habilitadas tras actualizar el plugin'))
     commands.add_parser('ai-check', help=tr('Comprobar las conexiones con IA en proyectos temporales'))
+    price_set = commands.add_parser('price-set', help=tr('Guardar un precio de tokens (USD por millón)'))
+    price_set.add_argument('model')
+    price_set.add_argument('field')
+    price_set.add_argument('value')
+    commands.add_parser('price-autofill', help=tr('Rellenar con la IA jefe los precios vacíos'))
     update = commands.add_parser("runtime-update", help=tr('Actualizar solo componentes instalados, conservando sesiones y preferencias'))
     update.add_argument("component", choices=("memory", "core"))
     agent_update = commands.add_parser("agent-update", help=tr('Actualizar la CLI mediante su gestor nativo sin cerrar sesiones'))
@@ -887,6 +895,19 @@ def _main(argv=None):
             config.update(updated)
             save_config(config)
             message = tr('Ajuste de contexto guardado. Se aplica en sesiones nuevas.')
+        elif args.command == 'price-set':
+            try:
+                price_table.set_value(args.model, args.field, args.value)
+            except ValueError as error:
+                raise HarnessError(str(error)) from None
+            message = tr('Precio guardado.')
+        elif args.command == 'price-autofill':
+            outcome = price_autofill.run(config, status(config))
+            config['priceAutofill'] = outcome
+            save_config(config)
+            if outcome['error']:
+                raise HarnessError(outcome['error'])
+            message = tr('Precios rellenados: {cantidad}.', cantidad=len(outcome['filled']))
         elif args.command == 'ai-check':
             config['aiCheck'] = ai_check.run(config, status(config))
             save_config(config)

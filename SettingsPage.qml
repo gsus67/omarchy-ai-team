@@ -16,6 +16,7 @@ ColumnLayout {
   property var launcher: ({})
   property var team: ({})
   property var aiCheck: ({})
+  property var prices: ({})
   property bool busy: false
   signal commandRequested(var arguments)
   signal pageRequested(string id)
@@ -99,6 +100,14 @@ ColumnLayout {
     status: root.tr("Sesiones nuevas")
     switchVisible: false
     onOpened: root.pageRequested("context")
+  }
+  CompactRow {
+    objectName: "prices-row"
+    Layout.fillWidth: true
+    label: root.tr("Precios")
+    status: (root.prices.missing || 0) > 0 ? root.tr("{cantidad} sin precio", {cantidad: root.prices.missing}) : root.tr("Completos")
+    switchVisible: false
+    onOpened: root.pageRequested("prices")
   }
   CompactRow {
     objectName: "launcher-menu"
