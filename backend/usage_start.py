@@ -11,11 +11,13 @@ import os
 import secrets
 import stat
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 WORKERS = ('plan', 'code', 'review', 'simple')
 MAX_START_BYTES = 4096
+WINDOW_DAYS = (7, 30)
+DEFAULT_WINDOW_DAYS = 7
 
 
 class UsageStartError(Exception):
@@ -177,3 +179,34 @@ def get_or_create_start(*, now=None, state_dir=None):
         return published
     finally:
         os.close(directory)
+
+
+def window_days(value):
+    """The selected rolling window in days: exactly the int 7 or 30 (no bool, float or text); ValueError otherwise."""
+    if type(value) is not int or value not in WINDOW_DAYS:
+        raise ValueError(value)
+    return value
+
+
+def effective_since(start, as_of, days):
+    """The cut of the rolling window, ``max(start, as_of - days)``, as an aware UTC instant.
+
+    ValueError when the inputs are naive, the window is not 7/30, the start is after ``as_of`` (a clock gone back:
+    the start is kept, the interval is unknown) or the arithmetic is not representable."""
+    days = window_days(days)
+    if start.tzinfo is None or as_of.tzinfo is None:
+        raise ValueError
+    try:
+        start, as_of = start.astimezone(timezone.utc), as_of.astimezone(timezone.utc)
+        if start > as_of:
+            raise ValueError
+        return max(start, as_of - timedelta(days=days))
+    except OverflowError as error:
+        raise ValueError from error
+
+
+def managed_engines(since, until, *, path=None):
+    """Engines (the agent id before its first dash, so claude-2 is claude) with managed worker runs in the closed
+    ``[since, until]``. A missing ledger is empty; an unreadable one raises OSError (the caller treats it as every engine)."""
+    path = path or default_state_dir() / 'role-usage.jsonl'
+    return frozenset(entry.agent.split('-')[0] for entry in iter_ledger_entries(path) if since <= entry.at <= until)

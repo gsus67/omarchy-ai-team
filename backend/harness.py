@@ -23,6 +23,7 @@ import shared_memory
 import native_launcher
 import context_policy
 import role_usage
+import usage_start
 import usage_summary
 import price_table
 import price_autofill
@@ -58,6 +59,24 @@ class HarnessError(Exception):
 
 def plugin_version():
     return json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())['version']
+
+
+USAGE_WRITER = Path(__file__).resolve().parents[1] / 'tools/usage/ai_team_usage.py'
+
+
+def usage_window(config):
+    return config.get('usageWindowDays', usage_start.DEFAULT_WINDOW_DAYS)
+
+
+def refresh_usage_window():
+    """One pass of the usage writer that republishes the breakdowns for the selected window; no limits are collected."""
+    try:
+        done = subprocess.run([sys.executable, str(USAGE_WRITER), '--breakdowns-only'], capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=120, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise HarnessError(tr('No se pudo actualizar la medición; la ventana queda guardada. Reintenta.')) from error
+    if done.returncode != 0:
+        raise HarnessError(tr('No se pudo actualizar la medición; la ventana queda guardada. Reintenta.'))
 
 
 def config_path():
@@ -100,6 +119,8 @@ def load_config():
         raise HarnessError(tr('La preferencia del menú debe ser un booleano explícito.'))
     if value.get('language', 'system') not in ('system', 'es', 'en'):
         raise HarnessError(tr('El idioma del panel no es válido; se conserva la configuración.'))
+    if 'usageWindowDays' in value and (type(value['usageWindowDays']) is not int or value['usageWindowDays'] not in usage_start.WINDOW_DAYS):
+        raise HarnessError(tr('Ventana de medición inválida; elige 7 o 30 días.'))
     value.pop('lastSecurityAudit', None)
     installs = value.get('catalogInstalls', {})
     if (not isinstance(installs, dict) or any(
@@ -644,7 +665,7 @@ def _status(config=None):
     result['team'] = {**team_state(config), **team_component}
     result['context'] = context_policy.snapshot(config)
     result['usage'] = usage_summary.rows(agents)
-    result['roleUsage'] = role_usage.summary(agents)
+    result['roleUsage'] = role_usage.summary(agents, window_days=usage_window(config))
     result['prices'] = {'rows': price_table.rows(), 'missing': price_table.missing(), 'autofill': config.get('priceAutofill', {})}
     result['goals'] = goals.rows(result, config)
     result['summary'] = goals.summary(result, result['goals'])
@@ -822,6 +843,8 @@ def _main(argv=None):
     usage_guard = commands.add_parser('usage-guard', help=tr('Guardar y parar al llegar a un porcentaje de consumo'))
     usage_guard.add_argument('enabled', choices=('true', 'false'))
     usage_guard.add_argument('percent', type=int)
+    usage_window_command = commands.add_parser('usage-window', help=tr('Elegir la ventana de medición del consumo'))
+    usage_window_command.add_argument('days', type=int, choices=usage_start.WINDOW_DAYS)
     team_set = commands.add_parser('team-set', help=tr('Elegir el modelo de un papel'))
     team_set.add_argument('role', choices=team.ROLES)
     team_set.add_argument('agent', choices=('claude', 'codex', 'pi'))
@@ -1040,6 +1063,11 @@ def _main(argv=None):
             team.set_usage_guard(config, args.enabled == 'true', args.percent)
             save_config(config)
             message = tr('Límite de consumo guardado.')
+        elif args.command == 'usage-window':
+            config['usageWindowDays'] = args.days
+            save_config(config)
+            refresh_usage_window()  # a failure keeps the saved preference: the state stays pending with a retry
+            message = tr('Ventana de medición actualizada.')
         elif args.command in ('team-set', 'team-recommend', 'team-models'):
             if args.command == 'team-set':
                 selected, catalog, free_pi = team_context(config)

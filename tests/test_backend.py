@@ -240,6 +240,134 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(tree(), before)
         self.assertFalse((self.root / "state/omarchy-ai-team").exists())
 
+    def settings_file(self):
+        return self.root / "config/omarchy-ai-team/settings.json"
+
+    def window_status(self, **extra):
+        self.executable("claude", "/bin/true")
+        self.run_cli("set-agents", "claude")
+        if extra:
+            data = json.loads(self.settings_file().read_text()); data.update(extra)
+            self.settings_file().write_text(json.dumps(data))
+        return self.run_cli("status")
+
+    def snapshot_for_window(self, days=7, start_days_ago=2):
+        from datetime import datetime, timedelta, timezone
+        import usage_start
+        now = datetime.now(timezone.utc)
+        start = usage_start.get_or_create_start(now=now - timedelta(days=start_days_ago))
+        folder = self.root / "state/omarchy/agents/breakdown"
+        folder.mkdir(parents=True)
+        since = usage_start.effective_since(start, now, days)
+        (folder / "claude.json").write_text(json.dumps({
+            "schemaVersion": 1, "id": "claude", "generatedAt": now.isoformat(),
+            "byKind": {"input": 1, "output": 1, "cacheRead": 1, "cacheWrite": 1}, "byProject": [], "byTool": [], "costUsd": None, "unpricedModels": [],
+            "measurement": {"start": start.isoformat(), "since": since.isoformat(), "windowDays": days,
+                            "jefe": {"total_input": 60, "output": 5}, "otros": {"total_input": 0, "output": 0}, "classificationLimited": False}}))
+
+    def test_usage_window_defaults_to_seven_without_rewriting_settings(self):
+        self.window_status()
+        before = self.settings_file().read_bytes()
+        _, reply = self.run_cli("status")
+        self.assertEqual(reply["data"]["roleUsage"]["windowDays"], 7)
+        self.assertEqual(self.settings_file().read_bytes(), before)
+        self.assertNotIn("usageWindowDays", json.loads(before))
+
+    def test_usage_window_preserves_unrelated_settings_and_permissions(self):
+        self.window_status(language="en", defaultAgent="claude")
+        self.settings_file().chmod(0o600)
+        before = json.loads(self.settings_file().read_text())
+        with patch.object(harness, "refresh_usage_window", return_value=None) as refresh:
+            result, reply, _, _ = self.run_patched_cli("usage-window", "30")
+        self.assertEqual(result, 0, reply)
+        saved = json.loads(self.settings_file().read_text())
+        self.assertEqual(saved, {**before, "usageWindowDays": 30})
+        self.assertEqual(stat.S_IMODE(self.settings_file().stat().st_mode), 0o600)
+        self.assertEqual(reply["data"]["roleUsage"]["windowDays"], 30)
+        refresh.assert_called_once_with()
+
+    def test_invalid_usage_window_setting_is_preserved_and_reported(self):
+        self.window_status()
+        for bad in (14, True, "7", 7.0, None, [7]):
+            data = json.loads(self.settings_file().read_text()); data["usageWindowDays"] = bad
+            self.settings_file().write_text(json.dumps(data))
+            before = self.settings_file().read_bytes()
+            result, reply = self.run_cli("status")
+            self.assertNotEqual(result.returncode, 0, repr(bad))
+            self.assertFalse(reply["ok"], repr(bad))
+            self.assertIn("30", reply["error"])
+            self.assertEqual(self.settings_file().read_bytes(), before)
+
+    def test_usage_window_rejects_other_values_at_the_cli(self):
+        self.window_status()
+        before = self.settings_file().read_bytes()
+        for value in ("14", "0", "-7", "abc", "7.5", ""):
+            with patch.object(harness.subprocess, "run") as run, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    harness.main(["usage-window", value])
+            run.assert_not_called()
+        self.assertEqual(self.settings_file().read_bytes(), before)
+
+    def test_usage_window_runs_one_breakdown_pass_without_collecting_limits(self):
+        self.window_status()
+        done = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(harness.subprocess, "run", return_value=done) as run, \
+             patch.object(harness, "manage_component") as manage, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(harness.main(["usage-window", "30"]), 0)
+        runs = [call for call in run.call_args_list if call.args and "--breakdowns-only" in call.args[0]]
+        self.assertEqual(len(runs), 1)
+        argv = runs[0].args[0]
+        self.assertEqual((argv[0], Path(argv[1]).name, argv[2:]), (sys.executable, "ai_team_usage.py", ["--breakdowns-only"]))
+        self.assertFalse(runs[0].kwargs.get("shell"))
+        self.assertIsInstance(runs[0].kwargs.get("timeout"), (int, float))
+        manage.assert_not_called()
+        self.assertFalse(any("systemctl" in str(call.args) for call in run.call_args_list))
+
+    def test_failed_window_pass_keeps_preference_and_reports_pending(self):
+        self.window_status()
+        failed = subprocess.CompletedProcess([], 1, "", "boom")
+        with patch.object(harness.subprocess, "run", return_value=failed), \
+             patch.object(harness, "manage_component"), contextlib.redirect_stdout(io.StringIO()) as out:
+            code = harness.main(["usage-window", "30"])
+        reply = json.loads(out.getvalue())
+        self.assertNotEqual(code, 0)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(json.loads(self.settings_file().read_text())["usageWindowDays"], 30)
+        self.assertEqual((reply["data"]["roleUsage"]["windowDays"], reply["data"]["roleUsage"]["pending"]), (30, True))
+        self.assertNotIn("boom", reply["error"])  # the child's output is never echoed
+
+    def test_a_pass_that_cannot_start_or_times_out_is_a_reported_failure(self):
+        self.window_status()
+        for error in (OSError("no python"), subprocess.TimeoutExpired("x", 1)):
+            with patch.object(harness.subprocess, "run", side_effect=error), \
+                 patch.object(harness, "manage_component"), contextlib.redirect_stdout(io.StringIO()) as out:
+                code = harness.main(["usage-window", "30"])
+            self.assertNotEqual(code, 0)
+            self.assertFalse(json.loads(out.getvalue())["ok"])
+            self.assertEqual(json.loads(self.settings_file().read_text())["usageWindowDays"], 30)
+
+    def test_status_reads_existing_measurement_without_scanning_transcripts(self):
+        self.window_status()
+        self.snapshot_for_window(days=7)
+        tree = lambda: {str(p.relative_to(self.root)): p.read_bytes() for p in sorted(self.root.rglob("*")) if p.is_file()}
+        before = tree()
+        with patch.object(harness.subprocess, "run", side_effect=AssertionError("status must not scan")), \
+             patch.object(harness, "refresh_usage_window", side_effect=AssertionError("status must not scan"), create=True), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(harness.main(["status"]), 0)
+        usage = json.loads(out.getvalue())["data"]["roleUsage"]
+        self.assertEqual((usage["pending"], usage["windowDays"], usage["total"]), (False, 7, "65"))
+        self.assertEqual(tree(), before)
+
+    def test_a_snapshot_of_another_window_is_pending_until_the_pass_runs(self):
+        self.window_status()
+        self.snapshot_for_window(days=7)
+        data = json.loads(self.settings_file().read_text()); data["usageWindowDays"] = 30
+        self.settings_file().write_text(json.dumps(data))
+        _, reply = self.run_cli("status")
+        usage = reply["data"]["roleUsage"]
+        self.assertEqual((usage["pending"], usage["windowDays"], usage["total"]), (True, 30, None))
+
     def prices_file(self):
         return self.root / ".config/omarchy/agents/prices.json"
 

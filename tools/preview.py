@@ -104,12 +104,105 @@ SMOKE = r'''
     })) fail("Could not capture: " + name)
   }
 
+  // Window selection on a real HarnessContent with synthetic snapshots: the figures never mix windows and the choice is immediate.
+  property bool windowProbeDone: false
+  property var windowRequests: []
+  function readyUsage(days) {
+    return {since: "2026-10-26T00:00:00+00:00", asOf: "2026-11-02T00:00:00+00:00", windowDays: days, partialWindow: false,
+            classificationLimited: days === 7, pending: false, total: days + "00 tokens",
+            roles: [{role: "chief", name: "Jefe", share: 1, tokens: days + "00 tokens"}]}
+  }
+  function probeSnapshot(usage) { return {agents: [], components: [], deferred: [], roleUsage: usage} }
+  function probeVisible(name) { var item = find(windowProbe, name, []); return !!item && item.visible }
+  function probeButton(days) {
+    var group = find(windowProbe, "roles-window", [])
+    var buttons = group ? group.children : []
+    for (var i = 0; i < buttons.length; i++) if (buttons[i].text === days + " días") return buttons[i]
+    return null
+  }
+  function probeCheck(label, condition) { if (!condition) { fail("Window selection: " + label); return false } return true }
+  function probeState(label, days, figures) {
+    var group = find(windowProbe, "roles-window", [])
+    var button = probeButton(days)
+    return probeCheck(label + ": value", !!group && group.value === String(days)) && !!button && probeCheck(label + ": selected", button.selected)
+      && probeCheck(label + ": total", probeVisible("roles-total") === figures) && probeCheck(label + ": rows", probeVisible("roles-row") === figures)
+      && probeCheck(label + ": since", probeVisible("roles-since") === figures) && probeCheck(label + ": asof", probeVisible("roles-asof") === figures)
+      && probeCheck(label + ": updating", probeVisible("roles-updating") === !figures)
+  }
+  function probeClick(days, expected) {
+    var button = probeButton(days)
+    if (!probeCheck("button " + days, !!button && button.enabled)) return false
+    button.clicked()
+    return probeCheck("request " + days, windowRequests.length === expected && windowRequests[expected - 1].join() === "usage-window," + days)
+  }
+  function runWindowProbe() {
+    windowProbe.busy = false
+    windowProbe.snapshot = probeSnapshot(readyUsage(7))
+    windowProbe.page = "roles"
+    if (!probeState("ready 7", 7, true) || !probeCheck("limited note", probeVisible("roles-overlap"))) return
+    // 7 -> 30: the choice shows before any answer or busy state, hides the old figures and emits one command.
+    if (!probeClick(30, 1) || !probeState("asked 30", 30, false)) return
+    windowProbe.page = ""
+    var row = find(windowProbe, "usage-total", [])
+    if (!probeCheck("main total", !!row && row.status === "")) return
+    windowProbe.page = "roles"
+    windowProbe.busy = true
+    if (!probeCheck("selector locked", !probeButton(7).enabled && !probeButton(30).enabled)) return
+    windowProbe.snapshot = probeSnapshot(readyUsage(7))
+    windowProbe.busy = false
+    if (!probeState("stale 7", 30, false)) return
+    var late = readyUsage(30); late.pending = true
+    windowProbe.snapshot = probeSnapshot(late)
+    if (!probeState("pending 30", 30, false)) return
+    windowProbe.snapshot = probeSnapshot(readyUsage(30))
+    if (!probeState("ready 30", 30, true) || !probeCheck("limited note hidden", !probeVisible("roles-overlap"))) return
+    // 30 -> 7 and back to the answer.
+    if (!probeClick(7, 2) || !probeState("asked 7", 7, false)) return
+    windowProbe.snapshot = probeSnapshot(readyUsage(7))
+    if (!probeState("ready 7 again", 7, true)) return
+    // A failed request keeps the choice, hides the figures and can be repeated.
+    if (!probeClick(30, 3)) return
+    windowProbe.busy = true
+    windowProbe.errorText = "synthetic failure"
+    windowProbe.busy = false
+    if (!probeState("failed 30", 30, false) || !probeCheck("selector unlocked", probeButton(30).enabled)) return
+    if (!probeClick(30, 4)) return
+    windowProbe.errorText = ""
+    windowProbe.snapshot = probeSnapshot(readyUsage(30))
+    if (!probeState("retry 30", 30, true)) return
+    windowProbeDone = true
+    probeWindow.visible = false
+  }
+  PanelWindow {
+    id: probeWindow
+    implicitWidth: 380
+    implicitHeight: 640
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    anchors { top: true; left: true }
+    Harness.HarnessContent {
+      id: windowProbe
+      anchors.fill: parent
+      onCommandRequested: args => { var seen = windowRequests.slice(); seen.push(args); windowRequests = seen }
+    }
+  }
+  Timer {
+    interval: 250
+    running: !windowProbeDone && probeWindow.visible && windowProbe.width > 0
+    repeat: false
+    onTriggered: runWindowProbe()
+  }
+
   Timer {
     interval: 250
     running: true
     repeat: true
     onTriggered: {
       if (++ticks > 340) { fail("Timeout"); return }
+      if (Quickshell.env("AI_HARNESS_WINDOW_SMOKE") === "1") {  // only the window-selection probe
+        if (windowProbeDone) { console.log("HARNESS_SMOKE_PASS"); Qt.quit() }
+        return
+      }
       if (harness.errorText && messageStep !== 6 && messageStep !== 7) { fail(harness.errorText); return }
       if (step < 15 && !harness.opened) { harness.open(); return }
       if (harness.busy || capturing || !harness.snapshot.agents.length) return
@@ -855,6 +948,7 @@ def main():
     parser.add_argument("--memory-runtime", type=Path, help="Optional existing official ECC package for full GUI recovery test")
     parser.add_argument("--node", type=Path, help="Existing native Node binary, no installer")
     parser.add_argument("--updates", action="store_true", help="Explicit official update check of copied ECC runtime; no model")
+    parser.add_argument("--window-smoke", action="store_true", help="Only the synthetic usage-window selection probe, no CLI or profile flow")
     parser.add_argument("--pi-smoke", action="store_true", help="Explicit synthetic Pi UI flow; deferred while closing the core")
     parser.add_argument("--nous-live-catalog", action="store_true", help="Explicit public Nous catalog GET during graphical acceptance, no authentication/inference")
     args = parser.parse_args()
@@ -1002,6 +1096,8 @@ else:sys.exit(99)
                         "AI_HARNESS_SCREENSHOTS": str(artifacts), "AI_HARNESS_TERMINAL_RECORD": str(launch_record),
                         "AI_HARNESS_BACKUP_FOLDER": str(backup_folder), "AI_HARNESS_SYSTEMCTL_RECORD": str(systemctl_record)})
             env["AI_HARNESS_MISE_ROOT"] = str(mise_root)
+            if args.window_smoke:
+                env["AI_HARNESS_WINDOW_SMOKE"] = "1"
             if args.pi_smoke or args.nous_live_catalog:
                 env["AI_HARNESS_PI_SMOKE"]="1"
             if args.nous_live_catalog:
@@ -1059,11 +1155,13 @@ else:sys.exit(99)
                 return 1
             output = result.stdout + result.stderr
             print(output)
-            if "HARNESS_SMOKE_FAIL:" in output:
+            if "HARNESS_SMOKE_FAIL" in output:
                 return 1
             if result.returncode != 0 or "HARNESS_SMOKE_PASS" not in output:
                 print("HARNESS_SMOKE_FAIL: Quickshell no completó el recorrido; consulta el error de arranque o ejecución anterior.", file=sys.stderr)
                 return 1
+            if args.window_smoke:
+                return 0  # the window probe leaves no install/restart/terminal/timer artifacts to check
             if not all((mise_root/version/'bin/claude').is_file() for version in ('2.1.310','2.1.311')):
                 print("HARNESS_SMOKE_FAIL: CLI install/update did not preserve both versions",file=sys.stderr)
                 return 1

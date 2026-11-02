@@ -376,5 +376,82 @@ class UsageStartTests(unittest.TestCase):
         self.assertEqual(self.open_fds(), before)
 
 
+class WindowContractTests(unittest.TestCase):
+    def test_window_days_rejects_boolean_string_float_and_other_values(self):
+        for good in (7, 30):
+            self.assertEqual(usage_start.window_days(good), good)
+        for bad in (True, False, '7', 7.0, 0, 14, None, -7, 31):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                usage_start.window_days(bad)
+
+    def test_effective_since_uses_later_of_start_and_window(self):
+        as_of = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+        for days in (7, 30):
+            old = as_of - timedelta(days=60)
+            self.assertEqual(usage_start.effective_since(old, as_of, days), as_of - timedelta(days=days))
+            recent = as_of - timedelta(hours=3)
+            self.assertEqual(usage_start.effective_since(recent, as_of, days), recent)
+        middle = as_of - timedelta(days=10)
+        self.assertEqual(usage_start.effective_since(middle, as_of, 7), as_of - timedelta(days=7))
+        self.assertEqual(usage_start.effective_since(middle, as_of, 30), middle)
+        self.assertEqual(usage_start.effective_since(as_of, as_of, 7), as_of)
+
+    def test_effective_since_underflow_is_unknown_without_reset(self):
+        as_of = datetime(1, 1, 3, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            usage_start.effective_since(datetime(1, 1, 1, tzinfo=timezone.utc), as_of, 7)
+
+    def test_effective_since_rejects_naive_and_invalid_window(self):
+        as_of = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            usage_start.effective_since(as_of.replace(tzinfo=None), as_of, 7)
+        with self.assertRaises(ValueError):
+            usage_start.effective_since(as_of, as_of, 14)
+
+    def test_clock_rollback_keeps_start_and_publishes_no_future_interval(self):
+        as_of = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            usage_start.effective_since(as_of + timedelta(microseconds=1), as_of, 7)
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'XDG_STATE_HOME': temp}):
+            future = as_of + timedelta(days=3)
+            usage_start.get_or_create_start(now=future)
+            saved = (Path(temp) / 'omarchy-ai-team/usage-start.json').read_bytes()
+            self.assertEqual(usage_start.get_or_create_start(now=as_of), future)
+            self.assertEqual((Path(temp) / 'omarchy-ai-team/usage-start.json').read_bytes(), saved)
+
+
+class ManagedEnginesTests(unittest.TestCase):
+    """Which engines had managed worker runs in ``[since, until]``; the engine is the agent id before the first dash."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.ledger = self.root / 'omarchy-ai-team/role-usage.jsonl'
+        patcher = patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root)}); patcher.start(); self.addCleanup(patcher.stop)
+
+    def rows(self, *rows):
+        self.ledger.parent.mkdir(parents=True, exist_ok=True)
+        self.ledger.write_text('\n'.join(json.dumps({'at': at, 'role': 'code', 'agent': agent, 'tokens': 1}) for at, agent in rows) + '\n')
+
+    def test_managed_engines_groups_claude_and_claude_2(self):
+        self.rows(('2026-11-02T10:00:00+00:00', 'claude-2'), ('2026-11-02T11:00:00+00:00', 'codex'))
+        self.assertEqual(usage_start.managed_engines(T0 - timedelta(days=1), T0), frozenset(('claude', 'codex')))
+        self.rows(('2026-11-02T10:00:00+00:00', 'claude-2'))
+        self.assertEqual(usage_start.managed_engines(T0 - timedelta(days=1), T0), frozenset(('claude',)))
+
+    def test_managed_engines_ignores_rows_outside_the_window(self):
+        self.rows(('2026-11-01T11:59:59.999999+00:00', 'claude'), ('2026-11-02T12:00:00.000001+00:00', 'codex'),
+                  ('2026-11-01T12:00:00+00:00', 'codex-2'))
+        self.assertEqual(usage_start.managed_engines(T0 - timedelta(days=1), T0), frozenset(('codex',)))  # E is inside, T+1µs is not
+        self.assertEqual(usage_start.managed_engines(T0, T0), frozenset())
+        self.assertEqual(usage_start.managed_engines(T0 - timedelta(days=1), T0, path=self.root / 'missing.jsonl'), frozenset())
+
+    def test_unreadable_ledger_raises_so_the_writer_can_make_every_engine_managed(self):
+        self.ledger.parent.mkdir(parents=True, exist_ok=True)
+        self.ledger.mkdir()
+        with self.assertRaises(OSError):
+            usage_start.managed_engines(T0 - timedelta(days=1), T0)
+
+
 if __name__ == '__main__':
     unittest.main()

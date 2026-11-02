@@ -791,7 +791,20 @@
   "Desconocido": "Unknown",
   "Medido desde {fecha}": "Measured since {fecha}",
   "Inicio de medición no disponible": "Measurement start not available",
-  "El Jefe y los obreros (Planificar, Programar, Revisar y Sencillas) se miden desde el mismo inicio y con la misma unidad: entrada más salida. Un valor desconocido no cuenta como cero.": "The Chief and the workers (Plan, Code, Review and Simple) are measured from the same start and in the same unit: input plus output. An unknown value does not count as zero.",
+  "7 días": "7 days",
+  "30 días": "30 days",
+  "Actualizando medición…": "Updating measurement…",
+  "Medición pendiente de actualizar.": "Measurement pending refresh.",
+  "Aún no hay {dias} días completos de medición. Se mide desde {fecha}.": "There are not yet {dias} full days of measurement. Measured since {fecha}.",
+  "Última medición: {fecha}": "Last measurement: {fecha}",
+  "Todas las filas usan la misma ventana móvil y el mismo inicio común.": "All rows use the same rolling window and the same common start.",
+  "Otros": "Other",
+  "Jefe incluye el consumo cuyo origen no se pudo verificar; algunos encargos pueden contarse también en los roles.": "Chief includes usage whose origin could not be verified; some tasks may also be counted in the roles.",
+  "Otros reúne el consumo de Claude y Codex fuera de los papeles del equipo; el reparto es parcial.": "Other gathers Claude and Codex usage outside the team roles; the split is partial.",
   "Proveedor": "Provider",
-  "El argumento nativo de Codex modifica {clave}, gestionada por Contexto. Cambia ese ajuste en Contexto o desactívalo para esta ejecución.": "The native Codex argument changes {clave}, managed by Context. Change that setting in Context or disable it for this invocation."
+  "El argumento nativo de Codex modifica {clave}, gestionada por Contexto. Cambia ese ajuste en Contexto o desactívalo para esta ejecución.": "The native Codex argument changes {clave}, managed by Context. Change that setting in Context or disable it for this invocation.",
+  "Elegir la ventana de medición del consumo": "Choose the usage measurement window",
+  "No se pudo actualizar la medición; la ventana queda guardada. Reintenta.": "The measurement could not be refreshed; the window is saved. Try again.",
+  "Ventana de medición actualizada.": "Measurement window updated.",
+  "Ventana de medición inválida; elige 7 o 30 días.": "Invalid measurement window; choose 7 or 30 days."
 }

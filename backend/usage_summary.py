@@ -11,6 +11,7 @@ import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
+import usage_start
 from i18n import tr
 
 # Only these accounts have limit windows; the short names fit a 380 px screen.
@@ -203,34 +204,68 @@ def total_tokens(agents):
     return total
 
 
-def _since_start_tokens(data, since):
-    """total_input + output of the ``sinceStart`` block when it is valid and measured from exactly ``since``; else None."""
-    block = data.get('sinceStart') if isinstance(data, dict) and data.get('schemaVersion') == 1 else None
-    if not isinstance(block, dict) or not isinstance(block.get('since'), str):
-        return None
-    counters = (block.get('total_input'), block.get('output'))
-    if any(type(value) is not int or not 0 <= value < 10 ** 15 for value in counters):
+def _instant(value):
+    """An ISO string with a zone as an aware UTC datetime, or None."""
+    if not isinstance(value, str):
         return None
     try:
-        moment = datetime.fromisoformat(block['since'].replace('Z', '+00:00'))
-        if moment.tzinfo is None or moment.astimezone(timezone.utc) != since.astimezone(timezone.utc):
-            return None
+        moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return moment.astimezone(timezone.utc) if moment.tzinfo else None
     except (ValueError, OverflowError):
         return None
-    return sum(counters)
 
 
-def total_tokens_since(agents, since):
-    """Input + output tokens of every selected account since ``since``, or None unless all of them were measured from it."""
-    total = None
+def _counters(block):
+    """total_input + output of a ``{total_input, output}`` block of exact ints in [0, 10**15), else None."""
+    if not isinstance(block, dict):
+        return None
+    values = (block.get('total_input'), block.get('output'))
+    if any(type(value) is not int or not 0 <= value < 10 ** 15 for value in values):
+        return None
+    return sum(values)
+
+
+def _measurement_block(data):
+    """``(start, since, window, generated, jefe, otros, limited)`` of a snapshot's ``measurement`` block, or None."""
+    block = data.get('measurement') if isinstance(data, dict) and data.get('schemaVersion') == 1 else None
+    if not isinstance(block, dict) or type(block.get('classificationLimited')) is not bool:
+        return None
+    start, since, generated = _instant(block.get('start')), _instant(block.get('since')), _instant(data.get('generatedAt'))
+    jefe, otros = _counters(block.get('jefe')), _counters(block.get('otros'))
+    if None in (start, since, generated, jefe, otros):
+        return None
+    return start, since, block.get('windowDays'), generated, jefe, otros, block['classificationLimited']
+
+
+def measurement(agents, *, start, window_days):
+    """``{since, asOf, jefe, otros, limited}`` of the selected accounts' rolling window, or None.
+
+    None unless every selected account published a block measured from the same ``start`` and ``window_days``,
+    cut exactly at ``effective_since(start, T, window_days)`` and generated at the same instant T, with valid
+    counters: a mixed generation or another window is unknown, never a partial or a stale sum."""
+    try:
+        start, window = start.astimezone(timezone.utc), usage_start.window_days(window_days)
+    except (ValueError, AttributeError, OverflowError):
+        return None
+    found = []
     for agent in agents:
         if agent.get('id') not in SHORT_NAMES or not agent.get('enabled'):
             continue
-        tokens = _since_start_tokens(_read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json')), since)
-        if tokens is None:
+        parsed = _measurement_block(_read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json')))
+        if parsed is None:
             return None
-        total = (total or 0) + tokens
-    return total
+        found.append(parsed)
+    if not found or any(item[0] != start or item[2] != window or item[3] != found[0][3] or item[1] != found[0][1] for item in found):
+        return None
+    as_of = found[0][3]
+    try:
+        expected = usage_start.effective_since(start, as_of, window)
+    except ValueError:
+        return None
+    if found[0][1] != expected:
+        return None
+    return {'since': expected, 'asOf': as_of, 'jefe': sum(item[4] for item in found), 'otros': sum(item[5] for item in found),
+            'limited': any(item[6] for item in found)}
 
 
 def rows(agents):
