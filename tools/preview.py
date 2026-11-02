@@ -293,17 +293,20 @@ SMOKE = r'''
           selector.changed([])
         } else if (navigationStep === 2) {
           if (agent.enabled || harness.page !== "") { fail("Selector did not deselect independently"); return }
-          if (second.installation !== "missing-profile" || second.enabled) { fail("Second profile must initially be missing and unselected"); return }
+          // claude-2 has no CLI in the fixture (its launcher is a stub), so it cannot be created by selecting it.
+          // codex-2 may be selected: its CLI is present and selecting it creates the empty profile.
+          var missing = harness.snapshot.agents.find(a => a.id === "claude-2")
+          if (!missing || missing.installation !== "missing-profile" || missing.cliInstalled || missing.enabled) { fail("Profile without CLI must initially be missing and unselected"); return }
           missingSelectionCommands=selectionCommands
           // Match the native widget, which writes values before emitting changed.
-          selector.values=["codex-2"]
-          selector.changed(["codex-2"])
+          selector.values=["claude-2"]
+          selector.changed(["claude-2"])
         } else if (navigationStep === 3) {
-          if (selectionCommands !== missingSelectionCommands || second.enabled || selector.values.length || harness.page !== "") { fail("Missing profile was submitted or kept selected"); return }
+          if (selectionCommands !== missingSelectionCommands || harness.snapshot.agents.find(a => a.id === "claude-2").enabled || selector.values.length || harness.page !== "") { fail("Missing profile was submitted or kept selected"); return }
           click("open-settings")
         } else if (navigationStep === 4) {
           if (harness.page !== "settings") { fail("Settings did not open"); return }
-          click("agent-row-codex-open")
+          click("agent-row-codex")
         } else if (navigationStep === 5) {
           if (harness.page !== "codex" || agent.enabled || !find(harness,"update-agent-codex",[]).visible) { fail("Agent settings changed selection or failed to open"); return }
           // The mouse back button behaves like ‹ Volver.
