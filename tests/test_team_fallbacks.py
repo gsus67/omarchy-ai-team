@@ -1,3 +1,4 @@
+import copy
 import itertools
 from pathlib import Path
 import os
@@ -151,6 +152,23 @@ class ReviewFamilyTests(unittest.TestCase):
         config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), code=('claude', 'sonnet', 'high'))
         with self.assertRaisesRegex(team.TeamError, 'distinto de Programar'):
             set_role(config, 'review', 'claude', 'sonnet', 'high')
+
+    def test_set_roles_swaps_plan_and_review_atomically(self):
+        config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), review=('claude', 'opus', 'high'))
+        with self.assertRaises(team.TeamError):
+            set_role(config, 'plan', 'claude', 'sonnet', 'high')
+        team.set_roles(config, [('plan', 'claude', 'opus', 'high'), ('review', 'codex', 'gpt-6.1-sol', 'high')],
+                       selected=set(SELECTED), catalog=CODEX_CATALOG, free_pi=[], paid_ok=False)
+        roles = config['team']['roles']
+        self.assertEqual((roles['plan']['agent'], roles['review']['agent']), ('claude', 'codex'))
+
+    def test_set_roles_changes_nothing_when_the_result_breaks_the_rule(self):
+        config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), review=('claude', 'opus', 'high'))
+        before = copy.deepcopy(config)
+        with self.assertRaisesRegex(team.TeamError, 'otra familia'):
+            team.set_roles(config, [('plan', 'claude', 'opus', 'high'), ('review', 'claude', 'sonnet', 'high')],
+                           selected=set(SELECTED), catalog=CODEX_CATALOG, free_pi=[], paid_ok=False)
+        self.assertEqual(config, before)
 
     def test_one_family_warns_without_blocking(self):
         for selected, catalog, free, role_row in (

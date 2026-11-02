@@ -183,6 +183,13 @@ class NativeTeamTests(unittest.TestCase):
         self.assertEqual(self.run_main(['team-recommend'])[0], 0)
         self.assertEqual(harness.load_config()['team']['roles'], {})
 
+    def test_team_set_pair_saves_both_roles_in_one_command(self):
+        self.config['agents'] = {'claude': True}; harness.save_config(self.config)
+        code, reply = self.run_main(['team-set-pair', 'claude', 'opus', 'claude', 'sonnet'])
+        self.assertEqual(code, 0, reply)
+        roles = harness.load_config()['team']['roles']
+        self.assertEqual((roles['plan']['model'], roles['review']['model']), ('opus', 'sonnet'))
+
     def test_every_team_edit_resyncs_only_when_enabled(self):
         self.config['team'] = {'enabled': True, 'roles': {}}; harness.save_config(self.config)
         with patch.object(harness, 'manage_component') as manage:
