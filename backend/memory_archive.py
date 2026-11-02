@@ -62,7 +62,7 @@ def read_file(path, limit):
 def unsafe_char(c):
     # Controls, line/paragraph separators and bidi overrides can disguise text in the panel or the manifest.
     n=ord(c)
-    return n<32 or 127<=n<160 or n in (0x2028,0x2029) or 0x202A<=n<=0x202E or 0x2066<=n<=0x2069
+    return n<32 or 127<=n<160 or n in (0x2028,0x2029,0x061C,0xFEFF) or 0x200B<=n<=0x200F or 0x202A<=n<=0x202E or 0x2060<=n<=0x2064 or 0x2066<=n<=0x2069
 
 
 def clean_name(value,limit=120):
