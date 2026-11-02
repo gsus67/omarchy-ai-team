@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from datetime import datetime, timezone
 
@@ -20,6 +21,8 @@ import native_tools as system_tools
 PACKAGE = "ecc-universal"
 VERSION = "2.2.3"
 SERVER = "ai-team-memory"
+C_TIMEOUT, C_CANNOT_START, C_EXIT_STATUS = "timeout", "cannot-start", "exit-status"
+C_PROTOCOL, C_BAD_REPLY = "protocol-error", "bad-reply"
 TOOLS = {"memory_save", "memory_search", "memory_read", "memory_doctor"}
 
 
@@ -96,28 +99,50 @@ def mcp_command(runtime, agent, store=None):
             "--runtime", runtime["path"], "--node", runtime["node"], "--store", str(store or data_root() / "memory")]
 
 
-def probe(runtime, agent, store=None):
-    """Connect to the real official MCP in an empty temporary project, no model."""
+def exchange(runtime, agent, store=None, timeout=15):
+    """Talk to the real official MCP in an empty temporary project, no model.
+
+    Returns (tools, doctor_ok, seconds). Raises ValueError("cause") with a short, secret-free cause code.
+    """
     messages = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "clientInfo": {"name": "ai-team", "version": "1"}, "capabilities": {}}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "memory_doctor", "arguments": {}}}]
+    started = time.monotonic()
     try:
         with tempfile.TemporaryDirectory(prefix="ai-team-memory-probe-") as directory:
             result = subprocess.run(mcp_command(runtime, agent, store), cwd=directory, capture_output=True, text=True,
-                                    input="".join(json.dumps(message) + "\n" for message in messages), timeout=15)
+                                    input="".join(json.dumps(message) + "\n" for message in messages), timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(C_TIMEOUT) from error
+    except OSError as error:
+        raise ValueError(C_CANNOT_START) from error
+    seconds = time.monotonic() - started
+    try:
         replies = {reply["id"]: reply for line in result.stdout.splitlines()
                    if "id" in (reply := json.loads(line))}
-        if result.returncode or any(replies[key].get("error") for key in (1, 2, 3)):
-            raise ValueError()
+        if result.returncode:
+            raise ValueError(C_EXIT_STATUS)
+        if any(replies[key].get("error") for key in (1, 2, 3)):
+            raise ValueError(C_PROTOCOL)
         tools = {tool["name"] for tool in replies[2]["result"]["tools"]}
         doctor = replies[3]["result"]
-        if tools != TOOLS or doctor.get("isError") or not json.loads(doctor["content"][0]["text"])["ok"]:
-            raise ValueError()
-    except (subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as error:
+        ok = not doctor.get("isError") and bool(json.loads(doctor["content"][0]["text"])["ok"])
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError(C_BAD_REPLY) from error
+    return tools, ok, seconds
+
+
+def probe(runtime, agent, store=None):
+    """Connect to the real official MCP in an empty temporary project, no model."""
+    try:
+        tools, ok, _ = exchange(runtime, agent, store)
+    except ValueError as error:
         raise MemoryError(tr('El MCP oficial de memoria no completó la conexión y comprobación local; sigue pendiente.')) from error
+    if tools != TOOLS or not ok:
+        raise MemoryError(tr('El MCP oficial de memoria no completó la conexión y comprobación local; sigue pendiente.'))
 
 
 def instructions(original, enabled=False):
@@ -363,3 +388,70 @@ def apply(agent, binary, action, receipt=None):
     if enabled and not checked["verified"]:
         raise MemoryError(checked["detail"])
     return verified
+
+
+CODEX_STARTUP_SECONDS = 10  # Codex default when mcp_servers.<name>.startup_timeout_sec is absent.
+
+
+def diagnose(agent):
+    """Report configured / connected / usable separately, read-only and with no model.
+
+    Each level lists a cause code (stable, for tests and UI) so a missing tool is never a silent mystery.
+    A session opened before the configuration changed keeps its old tool list: that cannot be detected here.
+    """
+    levels = {"configured": {"ok": False, "causes": []}, "connected": {"ok": False, "causes": []},
+              "usable": {"ok": False, "causes": []}}
+    report = {"agent": agent, "server": SERVER, **levels}
+    try:
+        config = local_config(agent)
+        server = server_config(config, agent)
+        runtime = inspect_runtime()
+    except (OSError, ValueError, native_plugins.PluginError):
+        report["configured"]["causes"].append("config-unreadable")
+        return report
+    causes = report["configured"]["causes"]
+    if server is None:
+        causes.append("not-declared")
+    elif server.get("enabled", True) is False:
+        causes.append("disabled")
+    if not runtime["installed"]:
+        causes.append("runtime-missing")
+    elif not runtime["node"]:
+        causes.append("node-missing")
+    available = set(TOOLS)
+    if server is not None:
+        try:
+            available = native_tools(agent, server)
+        except MemoryError:
+            causes.append("tool-filter-unsupported")
+        if runtime["installed"] and server_identity(server) != expected_server(runtime, agent):
+            causes.append("foreign-or-stale-command")
+        if agent == "codex" and server.get("cwd") is not None:
+            causes.append("native-cwd-overrides-project")
+    if not {"memory_search", "memory_read"}.issubset(available):
+        causes.append("search-or-read-filtered")
+    report["configured"]["ok"] = not causes
+    report["availableTools"] = sorted(available)
+    if not report["configured"]["ok"] or "foreign-or-stale-command" in causes:
+        report["connected"]["causes"].append("skipped-not-configured")
+        report["usable"]["causes"].append("skipped-not-configured")
+        return report
+    try:
+        tools, doctor_ok, seconds = exchange(runtime, agent)
+    except ValueError as error:
+        report["connected"]["causes"].append(str(error))
+        report["usable"]["causes"].append("skipped-not-connected")
+        return report
+    report["connected"].update(ok=True, seconds=round(seconds, 2))
+    limit = server.get("startup_timeout_sec", CODEX_STARTUP_SECONDS) if agent == "codex" else None
+    if isinstance(limit, (int, float)) and seconds >= limit:
+        report["connected"]["causes"].append("slower-than-startup-timeout")
+        report["connected"]["ok"] = False
+    missing = TOOLS - tools
+    if missing:
+        report["usable"]["causes"].append("server-tools-missing")
+    if not doctor_ok:
+        report["usable"]["causes"].append("doctor-failed")
+    report["usable"]["ok"] = not report["usable"]["causes"] and report["connected"]["ok"]
+    report["note"] = "open-new-session-after-changes"
+    return report

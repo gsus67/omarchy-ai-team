@@ -346,5 +346,58 @@ class SharedMemoryTests(unittest.TestCase):
             install.assert_not_called()
 
 
+class DiagnoseTests(unittest.TestCase):
+    RUNTIME = {"installed": True, "path": "/rt", "version": "2.2.3", "node": "/usr/bin/node", "digest": "d"}
+
+    def run_diagnose(self, agent="codex", server="expected", exchange=None, runtime=None):
+        runtime = runtime or self.RUNTIME
+        declared = ({"command": memory.expected_server(runtime, agent)["command"],
+                     "args": memory.expected_server(runtime, agent)["args"]} if server == "expected" else server)
+        config = {"mcp_servers": {memory.SERVER: declared}} if declared is not None else {}
+        exchange = exchange or (lambda *a, **k: (set(memory.TOOLS), True, 0.5))
+        with patch.object(memory, "local_config", return_value=config), \
+             patch.object(memory, "inspect_runtime", return_value=runtime), \
+             patch.object(memory, "exchange", side_effect=exchange):
+            return memory.diagnose(agent)
+
+    def test_all_levels_ok(self):
+        report = self.run_diagnose()
+        self.assertTrue(all(report[key]["ok"] for key in ("configured", "connected", "usable")))
+
+    def test_not_declared_skips_probe_and_names_cause(self):
+        report = self.run_diagnose(server=None, exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertEqual(report["configured"]["causes"], ["not-declared"])
+        self.assertFalse(report["connected"]["ok"])
+
+    def test_disabled_and_foreign_command_never_start_the_server(self):
+        for server, cause in (({"command": "x", "args": [], "enabled": False}, "disabled"),
+                              ({"command": "x", "args": []}, "foreign-or-stale-command")):
+            report = self.run_diagnose(server=server, exchange=lambda *a, **k: self.fail("must not start"))
+            self.assertIn(cause, report["configured"]["causes"])
+            self.assertEqual(report["usable"]["causes"], ["skipped-not-configured"])
+
+    def test_configured_but_server_does_not_answer(self):
+        def broken(*a, **k):
+            raise ValueError("timeout")
+        report = self.run_diagnose(exchange=broken)
+        self.assertTrue(report["configured"]["ok"])
+        self.assertEqual(report["connected"]["causes"], ["timeout"])
+        self.assertFalse(report["usable"]["ok"])
+
+    def test_slow_start_over_codex_timeout_is_connected_but_not_ok(self):
+        report = self.run_diagnose(exchange=lambda *a, **k: (set(memory.TOOLS), True, 11.0))
+        self.assertIn("slower-than-startup-timeout", report["connected"]["causes"])
+        self.assertFalse(report["usable"]["ok"])
+
+    def test_missing_server_tools_and_failed_doctor(self):
+        report = self.run_diagnose(exchange=lambda *a, **k: ({"memory_search"}, False, 0.1))
+        self.assertEqual(report["usable"]["causes"], ["server-tools-missing", "doctor-failed"])
+
+    def test_missing_runtime_is_reported(self):
+        report = self.run_diagnose(runtime={**self.RUNTIME, "installed": False},
+                                   exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertIn("runtime-missing", report["configured"]["causes"])
+
+
 if __name__ == "__main__":
     unittest.main()

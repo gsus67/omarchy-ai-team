@@ -66,6 +66,7 @@
   "Aplicar el temporizador de respaldos": "Apply the backup timer",
   "Aplicar menú": "Apply menu",
   "Archivo ZIP de memoria": "Memory ZIP archive",
+  "Mostrar si la memoria está configurada, conectada y utilizable en un perfil, sin modelo": "Show whether memory is configured, connected and usable in a profile, without a model",
   "Auditar almacén con las funciones oficiales de ECC": "Audit the vault using official ECC features",
   "Autenticación nativa abierta en terminal. Completa el inicio de sesión con tu cuenta; abrirla no acredita autenticación ni activa componentes.": "Native authentication opened in a terminal. Complete sign-in with your account; opening it does not verify authentication or enable components.",
   "Autenticación necesaria en el menú /login de Pi. No se copian claves ni cuentas.": "Authentication required in Pi’s /login menu. No keys or accounts are copied.",
