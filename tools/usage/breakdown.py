@@ -160,16 +160,18 @@ def scan_claude(projects_dir, prices, days, now):
     return totals.body()
 
 
-def scan_codex(sessions_dir, prices, days, now):
+def scan_codex(sessions_dir, prices, days, now, extra_dirs=()):
     """Breakdown body for ``<codex home>/sessions`` over the last ``days`` days, or None without turns.
 
     Only ``token_count`` events carry tokens (``token_usage_record`` repeats them). Codex counts cached
     tokens inside ``input_tokens``, so fresh input is what is left after cached and cache-write tokens.
     The tool calls seen since the previous ``token_count`` share that event's tokens.
+    ``extra_dirs`` are scanned too (Codex moves archived conversations to ``archived_sessions``).
     """
     cutoff = now - timedelta(days=days)
     totals = _Totals(prices, days)
-    for path in _recent_files(sessions_dir, cutoff):
+    paths = [path for root in (sessions_dir, *extra_dirs) for path in _recent_files(root, cutoff)]
+    for path in paths:
         project = model = last_total = None
         pending = []
         for entry in _lines(path):

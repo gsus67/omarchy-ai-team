@@ -234,6 +234,15 @@ class CodexScanTests(unittest.TestCase):
         self.addCleanup(setattr, breakdown, '_recent_files', original)
         self.assertIsNone(self.scan())
 
+    def test_archived_sessions_still_count(self):
+        other = tempfile.TemporaryDirectory(); self.addCleanup(other.cleanup)
+        archived = Path(other.name)
+        (archived / 'old.jsonl').write_text(codex_context('/p/archived') + '\n' + codex_count(input_tokens=77, cached=0, output=0) + '\n')
+        self.write(codex_context('/p/live'), codex_count(input_tokens=23, cached=0, output=0))
+        result = breakdown.scan_codex(self.root, prices.DEFAULT_PRICES, 30, NOW, extra_dirs=(archived,))
+        self.assertEqual(result['byKind']['input'], 100)
+        self.assertEqual({row['path'] for row in result['byProject']}, {'/p/archived', '/p/live'})
+
     def test_codex_corrupt_lines_and_missing_cwd(self):
         self.write('{"type":"event_ms', codex_count(), '', 'garbage')
         result = self.scan()

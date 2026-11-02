@@ -126,8 +126,11 @@ def write_breakdowns(now=None):
     for account, (kind, profile) in BREAKDOWN_ACCOUNTS.items():
         try:
             root = Path.home() / profile
-            scan = breakdown.scan_claude if kind == 'claude' else breakdown.scan_codex
-            body = scan(root / ('projects' if kind == 'claude' else 'sessions'), table, BREAKDOWN_DAYS, now)
+            if kind == 'claude':
+                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now)
+            else:
+                body = breakdown.scan_codex(root / 'sessions', table, BREAKDOWN_DAYS, now,
+                                            extra_dirs=(root / 'archived_sessions',))
             if body is not None:
                 body = {'schemaVersion': 1, 'id': account, 'generatedAt': now.isoformat(), **body}
             write(account, body, folder)
