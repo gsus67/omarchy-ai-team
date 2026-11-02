@@ -48,10 +48,30 @@ def check_version(name, tool):
 
 
 def operate(name, action, inventory, detect, refresh):
-    if name not in ('claude', 'codex', 'pi') or action not in ('install', 'update'):
+    if name not in ('claude', 'codex', 'pi') or action not in ('install', 'update', 'uninstall'):
         raise AgentError(tr('Operación de agente no admitida.'))
     current = detect(name, inventory)
     exists = current['installation'] == 'installed'
+    if action == 'uninstall':
+        if not exists:
+            raise AgentError(tr('El agente no está instalado.'))
+        if not managed(name, current, inventory):
+            raise AgentError(tr('La CLI pertenece a otro gestor. Se conserva su instalación y sus preferencias.'))
+        mise = shutil.which('mise')
+        if not mise:
+            raise AgentError(tr('mise no está disponible; usa primero la instalación oficial de Omarchy.'))
+        try:
+            result = subprocess.run([mise, 'unuse', '--global', name], cwd=Path.home(), capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired as error:
+            raise AgentError(tr('mise no terminó a tiempo. Comprueba el estado antes de reintentar; no se cerraron sesiones.')) from error
+        if result.returncode:
+            raise AgentError(tr('mise no completó la operación oficial; se conserva la selección anterior.'))
+        inventory, warning = refresh()
+        if warning:
+            raise AgentError(warning)
+        if detect(name, inventory)['installation'] == 'installed':
+            raise AgentError(tr('mise no confirmó la desinstalación; sigue pendiente.'))
+        return {'outcome': 'removed', 'changed': True, 'previousVersion': current.get('version', '')}
     if action == 'update' and not exists:
         raise AgentError(tr('El agente no está instalado; Actualizar no instala otro componente.'))
     if exists and action == 'install':

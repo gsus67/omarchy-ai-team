@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'backend'))
 import native_launcher
+import harness
 
 
 class NativeLauncherTests(unittest.TestCase):
@@ -83,6 +84,44 @@ class NativeLauncherTests(unittest.TestCase):
             args=popen.call_args.args[0]
             self.assertEqual(args[-4:],['/native/claude','auth','login','--claudeai'])
             self.assertNotIn('--console',args)
+
+    def test_claude_2_always_passes_its_own_config_dir_and_the_subscription_login(self):
+        home = self.root/'.claude-2'
+        with patch.object(native_launcher.shutil,'which',return_value='/usr/bin/omarchy'), \
+             patch.object(native_launcher.subprocess,'Popen') as popen, \
+             patch.dict(native_launcher.os.environ,{},clear=False):
+            native_launcher.os.environ.pop('CLAUDE_CONFIG_DIR',None)
+            native_launcher.launch('/absolute/claude','claude-2',home)
+            args=popen.call_args.args[0]
+            self.assertEqual(args[-2:],['CLAUDE_CONFIG_DIR='+str(home),'/absolute/claude'])
+            self.assertNotIn('CODEX_HOME='+str(home),args)
+            native_launcher.authenticate('/native/claude','claude-2',home)
+            args=popen.call_args.args[0]
+            self.assertEqual(args[-5:],['CLAUDE_CONFIG_DIR='+str(home),'/native/claude','auth','login','--claudeai'])
+            self.assertNotIn('--console',args)
+            native_launcher.launch('/absolute/claude','claude',self.root/'.claude')
+            self.assertEqual(popen.call_args.args[0][-1:],['/absolute/claude'])
+            self.assertFalse(any(x.startswith(('CLAUDE_CONFIG_DIR=','CODEX_HOME=')) for x in popen.call_args.args[0]))
+
+
+class Claude2ProfileTests(unittest.TestCase):
+    def test_claude_2_opens_under_the_context_policy_and_keeps_its_memory_flag(self):
+        config = {'memoryEnabled': True, 'agents': {'claude-2': True, 'claude': False}}
+        args, env = native_launcher.invocation('claude-2', config=config, cwd=Path.cwd())
+        self.assertTrue(args)
+        self.assertTrue(any(x.startswith('AI_TEAM_CONTEXT=') and '"memory_enabled": true' in x for x in env))
+
+    def test_main_claude_profile_never_inherits_the_second_account_directory(self):
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': '/somewhere/.claude-2'}):
+            with harness.agent_profile('claude'):
+                self.assertNotIn('CLAUDE_CONFIG_DIR', os.environ)
+            self.assertEqual(os.environ['CLAUDE_CONFIG_DIR'], '/somewhere/.claude-2')
+
+    def test_context_run_pins_claude_2_directory_for_the_child(self):
+        import context_run
+        config = {'context': {'enabled': True}}
+        _, environment, _ = context_run.prepare(['claude', '-p', 'x'], 'claude', 'code', config, Path.cwd(), profile='claude-2')
+        self.assertEqual(environment['CLAUDE_CONFIG_DIR'], str(Path.home() / '.claude-2'))
 
 
 if __name__ == '__main__':unittest.main()

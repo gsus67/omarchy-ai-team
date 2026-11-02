@@ -24,7 +24,8 @@ class TeamError(Exception):
 
 def families(selected):
     return [agent for agent in ('claude', 'codex', 'pi')
-            if agent in selected or (agent == 'codex' and 'codex-2' in selected)]
+            if agent in selected or (agent == 'codex' and 'codex-2' in selected)
+            or (agent == 'claude' and 'claude-2' in selected)]
 
 
 def codex_models(catalog):

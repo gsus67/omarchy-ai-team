@@ -23,7 +23,7 @@ ID='ai-team-roles'
 
 def layout(agent):
     home=native_plugins.agent_home(agent)
-    profile='pi' if agent=='pi' else 'claude' if agent=='claude' else 'codex-2' if home.name=='.codex-2' else 'codex'
+    profile='pi' if agent=='pi' else ('claude-2' if home.name=='.claude-2' else 'claude') if agent=='claude' else 'codex-2' if home.name=='.codex-2' else 'codex'
     key=hashlib.sha256(os.fsencode(home)).hexdigest()[:24]
     return {'home':home,'profile':profile,'target':home/'skills'/ID,
             'source':shared_memory.data_root()/'tools/team-skills'/key}
@@ -37,7 +37,7 @@ def instruction(original,paths,enabled,*,team=None):
     message=None
     if enabled:
         state=team or {};assignments=state.get('roles',{})
-        profiles=[profile for profile in ('codex-2','codex') if profile in state.get('selected',[paths['profile']])]
+        profiles=[profile for profile in ('codex-2','codex','claude-2','claude') if profile in state.get('selected',[paths['profile']])]
         review=assignments.get('review')
         command=role_commands('review',review,profiles)[0] if review else ''
         message=('Con política de contexto activa en papel Jefe usa solo índice ECC y delegación nativa; las lecturas/ejecuciones van a obreros. '
@@ -142,7 +142,8 @@ def apply(agent,binary,action,receipt=None,*,settings_file=None,team=None):
             raise native_plugins.PluginError(tr('El destino de skills es ajeno o un enlace; se conserva.'))
         prepare(paths,settings_file,team=team);paths['target'].parent.mkdir(parents=True,mode=0o700,exist_ok=True)
         if not owned(paths):paths['target'].symlink_to(paths['source'],target_is_directory=True)
-    if agent in ('claude','codex'):
+    if agent in ('claude','codex') and paths['profile']!='claude-2':
+        # claude-2 has its own account limits; the shared usage reading would mix them up, so it gets no guard hook.
         # Before anything else changes. A broken file must not stop the team from being turned off.
         try:set_guard_hook(paths['home']/('settings.json' if agent=='claude' else 'hooks.json'),settings_file,enabled,agent=agent,home=paths['home'])
         except native_plugins.PluginError:
@@ -177,8 +178,18 @@ def codex_command(row, profile, sandbox):
     return 'CODEX_HOME='+shlex.quote(str(Path.home()/('.codex-2' if profile=='codex-2' else '.codex')))+' '+shlex.join([*command, '<encargo>'])+' </dev/null'
 
 
-def claude_command(row, mode):
-    return 'cd '+shlex.quote('<dir>')+' && '+shlex.join(['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'], '--permission-mode', mode])+' </dev/null'
+def claude_command(row, mode, profile='claude'):
+    # The main profile clears the variable: a session running in claude-2 would otherwise pass its own account on.
+    env='CLAUDE_CONFIG_DIR='+shlex.quote(str(Path.home()/'.claude-2'))+' ' if profile=='claude-2' else 'env -u CLAUDE_CONFIG_DIR '
+    return 'cd '+shlex.quote('<dir>')+' && '+env+shlex.join(['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'], '--permission-mode', mode])+' </dev/null'
+
+
+def claude_profiles(profiles):
+    return [profile for profile in ('claude-2', 'claude') if profile in profiles] or ['claude']
+
+
+def codex_profiles(profiles):
+    return [profile for profile in ('codex-2', 'codex') if profile in profiles] or ['codex']
 
 
 def role_commands(key, row, profiles, *, settings_file=None):
@@ -191,10 +202,12 @@ def role_commands(key, row, profiles, *, settings_file=None):
         sandbox = 'read-only' if key in ('plan', 'review') else 'workspace-write'
         effort = ['-c', 'model_reasoning_effort='+json.dumps(row['effort'])] if row['effort'] else []
         return ['CODEX_HOME='+shlex.quote(str(Path.home()/('.codex-2' if profile == 'codex-2' else '.codex')))+' '+
-                wrapped(profile, ['codex', 'exec', '-C', '<dir>', '-s', sandbox, '-m', row['model'], *effort, '<encargo>']) for profile in profiles]
+                wrapped(profile, ['codex', 'exec', '-C', '<dir>', '-s', sandbox, '-m', row['model'], *effort, '<encargo>']) for profile in codex_profiles(profiles)]
     if row['agent'] == 'claude':
-        return [wrapped('claude', ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
-                                 '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits'])]
+        # The main profile clears the variable: a session running in claude-2 would otherwise pass its own account on.
+        return [('CLAUDE_CONFIG_DIR='+shlex.quote(str(Path.home()/'.claude-2'))+' ' if profile == 'claude-2' else 'env -u CLAUDE_CONFIG_DIR ')+
+                wrapped(profile, ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
+                                   '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits']) for profile in claude_profiles(profiles)]
     if key in ('review', 'simple'):
         provider, model = row['model'].split('/', 1)
         thinking = ['--thinking', row['effort']] if row.get('effort') else []
@@ -207,7 +220,7 @@ def text(paths, settings_file, team=None):
     import team as roles
     state = team or {}; assignments = state.get('roles', {})
     selected = state.get('selected', [paths['profile']])
-    profiles = [profile for profile in ('codex-2', 'codex') if profile in selected]
+    profiles = [profile for profile in ('codex-2', 'codex', 'claude-2', 'claude') if profile in selected]
     lines = ['---', 'name: '+ID,
              'description: "Úsala siempre que vayas a cambiar código: encarga programar y revisar a los modelos del equipo, y planificar o tareas sencillas cuando compense."',
              '---', '', '# Equipo por papeles', '']
@@ -233,6 +246,8 @@ def text(paths, settings_file, team=None):
         'Codex-2 primero; solo ante un error real de cuota usa Codex si también está seleccionado. '
         'Si ambas cuentas agotan cuota, avisa y usa otro recomendado permitido; si no existe, pide una decisión. '
         'No inventes cuotas ni actives un proveedor de pago.',
+        *(['Claude Code-2 primero; solo ante un error real de cuota usa Claude Code si también está seleccionado. '
+           'Si ambas cuentas agotan cuota, avisa y usa otro recomendado permitido; si no existe, pide una decisión.'] if 'claude-2' in selected else []),
         'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
         'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
         'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '

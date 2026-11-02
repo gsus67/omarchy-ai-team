@@ -17,7 +17,7 @@ Ui.MultiSelect {
   emptyText: root.tr("Sin agentes")
   noSelectionText: root.tr("Sin agentes")
   values: root.selectedIds
-  options: root.agents.map(agent => ({value: agent.id, label: agent.installation === "installed" ? agent.name : root.tr("{nombre} · no instalado", {nombre: agent.name})}))
+  options: root.agents.map(agent => ({value: agent.id, label: agent.installation === "installed" || (agent.installation === "missing-profile" && agent.cliInstalled) ? agent.name : root.tr("{nombre} · no instalado", {nombre: agent.name})}))
   triggerLabel: root.agents.filter(agent => agent.enabled).map(agent => agent.name).join(", ") || root.tr("Sin agentes")
 
   // The native label otherwise includes installation hints or a selection count.
@@ -38,7 +38,7 @@ Ui.MultiSelect {
   }
 
   onChanged: values => {
-    const ids = root.agents.filter(agent => values.indexOf(agent.id) !== -1 && (agent.installation !== "missing-profile" || agent.enabled)).map(agent => agent.id)
+    const ids = root.agents.filter(agent => values.indexOf(agent.id) !== -1 && (agent.installation !== "missing-profile" || agent.enabled || agent.cliInstalled)).map(agent => agent.id)
     // MultiSelect writes values itself; the snapshot remains the authority,
     // including rejected missing profiles and partial backend failures.
     root.values = Qt.binding(() => root.selectedIds)
