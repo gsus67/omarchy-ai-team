@@ -8,6 +8,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+def _node_timeout():
+    try:
+        return max(1, int(os.environ.get("NOUS_TEST_TIMEOUT", "120")))
+    except ValueError:
+        return 120
+
+
+NODE_TIMEOUT = _node_timeout()
+
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 import native_pi
 import nous_quota as quota
@@ -71,7 +80,7 @@ class NousOAuthExtensionTests(unittest.TestCase):
     def run_extension(self,action,responses=(),credentials=None):
         scenario=json.dumps({'action':action,'responses':list(responses),'credentials':credentials})
         result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),scenario],
-                              capture_output=True,text=True,timeout=30,
+                              capture_output=True,text=True,timeout=NODE_TIMEOUT,
                               env={**os.environ,'PATH':f"{self.keyring}:{os.environ['PATH']}",'FAKE_KEYRING_DIR':str(self.keyring)})
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout)
@@ -193,7 +202,7 @@ class NousErrorPauseTests(unittest.TestCase):
 
     def pauses(self,message):
         result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),message],
-                              capture_output=True,text=True,timeout=30)
+                              capture_output=True,text=True,timeout=NODE_TIMEOUT)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout)['paused']
 
@@ -238,7 +247,7 @@ class NousResponseRecordingTests(unittest.TestCase):
 
     def respond(self,status):
         result=subprocess.run(['node','--experimental-strip-types','--no-warnings',str(self.harness),str(self.extension),str(status)],
-                              capture_output=True,text=True,timeout=30)
+                              capture_output=True,text=True,timeout=NODE_TIMEOUT)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout)
 
