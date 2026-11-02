@@ -9,6 +9,9 @@ import qs.Commons as Commons
 ColumnLayout {
   id: root
   readonly property real labelColumn: Style.space(74)
+  readonly property var providers: ({claude: "Claude Code", codex: "Codex", pi: "Pi"})
+  function providerRank(agent) { const i = Object.keys(root.providers).indexOf(agent); return i === -1 ? 99 : i }
+  function providerName(agent) { return root.providers[agent] || agent }
   readonly property real effortColumn: Style.space(98)
   property var translations: ({})
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
@@ -81,12 +84,13 @@ ColumnLayout {
       readonly property var current: (root.info.roles || {})[role.modelData.id] || ({})
       readonly property var recommended: role.current.recommended || ({})
       readonly property var choice: (root.info.options || []).find(option => option.agent === role.current.agent && option.model === role.current.model) || ({})
+      // Grouped by provider, alphabetical inside each one; the provider leads the label so the groups can be seen.
       readonly property var modelOptions: (root.info.options || []).slice()
-        .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}) || a.agent.localeCompare(b.agent))
+        .sort((a, b) => root.providerRank(a.agent) - root.providerRank(b.agent) || a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
         .map(option => ({
-        value: JSON.stringify([option.agent, option.model]),
-        label: option.agent === role.recommended.agent && option.model === role.recommended.model ? root.tr("★ {modelo}", {modelo: option.model}) : option.model
-      }))
+          value: JSON.stringify([option.agent, option.model]),
+          label: (option.agent === role.recommended.agent && option.model === role.recommended.model ? "★ " : "") + root.providerName(option.agent) + " · " + option.model
+        }))
       readonly property var effortOptions: (role.choice.efforts || []).map(effort => ({
         value: effort,
         label: effort === (role.choice.recommendedEfforts || {})[role.modelData.id] ? root.tr("★ {esfuerzo}", {esfuerzo: effort || root.tr("Sin ajuste")}) : effort || root.tr("Sin ajuste")

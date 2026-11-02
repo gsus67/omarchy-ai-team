@@ -30,8 +30,14 @@ class PanelBehaviourTests(unittest.TestCase):
         self.assertIn('root.errorDismissed()', (ROOT / 'HarnessContent.qml').read_text())
         self.assertIn('onErrorDismissed: root.errorText = ""', (ROOT / 'Panel.qml').read_text())
 
-    def test_team_models_are_sorted_alphabetically(self):
-        self.assertIn('.sort((a, b) => a.model.localeCompare(b.model', (ROOT / 'TeamPage.qml').read_text())
+    def test_team_models_are_grouped_by_provider_then_alphabetical(self):
+        self.assertIn('root.providerRank(a.agent) - root.providerRank(b.agent) || a.model.localeCompare(b.model', (ROOT / 'TeamPage.qml').read_text())
+
+    def test_agents_are_listed_by_provider_everywhere(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'backend'))
+        import harness
+        self.assertEqual(list(harness.AGENTS), ['claude', 'claude-2', 'codex', 'codex-2', 'pi'])
 
 
 if __name__ == '__main__':
