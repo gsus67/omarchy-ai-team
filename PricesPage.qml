@@ -21,7 +21,9 @@ ColumnLayout {
     {key: "output", label: root.tr("Salida")},
     {key: "cacheRead", label: root.tr("Caché leída")},
     {key: "cacheWrite", label: root.tr("Caché escrita")}]
-  property var drafts: ({})  // unsaved edits survive the snapshot refresh that follows saving another field
+  property var drafts: ({})  // unsaved edits, "model|kind" -> text; they survive snapshot refreshes
+  readonly property bool dirty: Object.keys(root.drafts).length > 0
+  readonly property bool valid: Object.values(root.drafts).every(text => /^\s*([0-9]+\.?[0-9]*|\.[0-9]+)?\s*$/.test(text))
   spacing: Style.space(6)
 
   component Note: Text {
@@ -33,7 +35,7 @@ ColumnLayout {
     wrapMode: Text.WordWrap
   }
 
-  Note { text: root.tr("USD por millón de tokens. Un campo vacío es un precio desconocido: el coste de ese modelo no se estima.") }
+  Note { text: root.tr("USD por millón de tokens. Un campo vacío cuenta como 0.") }
   Ui.Button {
     objectName: "price-autofill"
     text: root.busy ? root.tr("Procesando…") : root.tr("Autorrellenar con IA jefe")
@@ -41,18 +43,26 @@ ColumnLayout {
     enabled: !root.busy
     onClicked: root.commandRequested(["price-autofill"])
   }
+  Ui.Button {
+    objectName: "price-save"
+    text: root.tr("Guardar")
+    focusable: true
+    enabled: !root.busy && root.dirty && root.valid
+    onClicked: {
+      const changes = {}
+      for (const key of Object.keys(root.drafts)) {
+        const [model, kind] = key.split("|")
+        changes[model] = Object.assign(changes[model] || {}, {[kind]: root.drafts[key]})
+      }
+      root.drafts = ({})
+      root.commandRequested(["price-save", JSON.stringify(changes)])
+    }
+  }
   Note { text: root.tr("Solo rellena los huecos vacíos y nunca cambia los precios que ya tienes. Usa búsqueda web y gasta tokens de la cuenta jefe.") }
   Note {
     visible: !!root.autofill.at
     text: root.autofill.error ? root.tr("Último intento fallido: {error}", {error: root.autofill.error})
       : root.tr("Último autorrelleno: {fecha} · {agente} · {cantidad} rellenados", {fecha: root.autofill.at || "", agente: root.autofill.agent || "", cantidad: (root.autofill.filled || []).length})
-  }
-  Repeater {
-    model: root.autofill.filled || []
-    delegate: Note {
-      required property var modelData
-      text: modelData.model + " · " + modelData.field + " · " + (modelData.source || "")
-    }
   }
   Note {
     visible: (root.autofill.pending || []).length > 0
@@ -109,14 +119,8 @@ ColumnLayout {
                   else next[field.draftKey] = text
                   root.drafts = next
                 }
+                placeholderText: "0"
                 enabled: !root.busy
-              }
-              Ui.Button {
-                objectName: "price-save-" + row.modelData.model + "-" + cell.modelData.key
-                text: root.tr("Guardar")
-                focusable: true
-                enabled: !root.busy && field.text.trim() !== cell.storedText
-                onClicked: root.commandRequested(["price-set", row.modelData.model, cell.modelData.key, field.text.trim()])
               }
             }
           }

@@ -19,7 +19,8 @@ class PricesUiTests(unittest.TestCase):
     def test_page_sends_the_backend_commands_and_wraps(self):
         page = (ROOT / 'PricesPage.qml').read_text()
         self.assertIn('["price-autofill"]', page)
-        self.assertIn('["price-set", row.modelData.model, cell.modelData.key', page)
+        self.assertIn('["price-save", JSON.stringify(changes)]', page)
+        self.assertEqual(page.count('Ui.Button {'), 2)  # autofill + one save for the whole page
         self.assertIn('Flow {', page)
         self.assertIn('Ui.PanelSeparator', page)
 

@@ -233,11 +233,12 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(next(row for row in prices["rows"] if row["model"] == "claude-opus-5-5")["input"], 4.0)
         self.assertFalse(self.prices_file().exists())
 
-    def test_price_set_saves_one_price_and_rejects_invalid_values(self):
-        result, reply = self.run_cli("price-set", "gpt-6.1-sol", "input", "2.5")
+    def test_price_save_writes_all_changes_at_once_and_rejects_invalid_values(self):
+        _, reply = self.run_cli("price-save", json.dumps({"gpt-6.1-sol": {"input": "2.5", "output": ""}}))
         self.assertTrue(reply["ok"], reply)
-        self.assertEqual(json.loads(self.prices_file().read_text())["gpt-6.1-sol"]["input"], 2.5)
-        result, reply = self.run_cli("price-set", "gpt-6.1-sol", "input", "lots")
+        saved = json.loads(self.prices_file().read_text())["gpt-6.1-sol"]
+        self.assertEqual((saved["input"], saved["output"]), (2.5, 0.0))
+        _, reply = self.run_cli("price-save", json.dumps({"gpt-6.1-sol": {"input": "9", "output": "lots"}}))
         self.assertFalse(reply["ok"])
         self.assertEqual(json.loads(self.prices_file().read_text())["gpt-6.1-sol"]["input"], 2.5)
 

@@ -744,10 +744,8 @@ def _main(argv=None):
     commands.add_parser("status", help=tr('Detectar sin instalar ni ejecutar agentes'))
     commands.add_parser("after-update", help=tr('Reconectar una vez las integraciones habilitadas tras actualizar el plugin'))
     commands.add_parser('ai-check', help=tr('Comprobar las conexiones con IA en proyectos temporales'))
-    price_set = commands.add_parser('price-set', help=tr('Guardar un precio de tokens (USD por millón)'))
-    price_set.add_argument('model')
-    price_set.add_argument('field')
-    price_set.add_argument('value')
+    price_save = commands.add_parser('price-save', help=tr('Guardar precios de tokens (USD por millón)'))
+    price_save.add_argument('changes', help=tr('JSON con los cambios de precio'))
     commands.add_parser('price-autofill', help=tr('Rellenar con la IA jefe los precios vacíos'))
     update = commands.add_parser("runtime-update", help=tr('Actualizar solo componentes instalados, conservando sesiones y preferencias'))
     update.add_argument("component", choices=("memory", "core"))
@@ -895,9 +893,9 @@ def _main(argv=None):
             config.update(updated)
             save_config(config)
             message = tr('Ajuste de contexto guardado. Se aplica en sesiones nuevas.')
-        elif args.command == 'price-set':
+        elif args.command == 'price-save':
             try:
-                price_table.set_value(args.model, args.field, args.value)
+                price_table.set_values(json.loads(args.changes))
             except ValueError as error:
                 raise HarnessError(str(error)) from None
             message = tr('Precio guardado.')

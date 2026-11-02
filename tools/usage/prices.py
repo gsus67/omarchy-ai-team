@@ -84,8 +84,5 @@ def cost_usd(prices, model, kinds):
         tokens = kinds.get(kind, 0)
         if not tokens:
             continue
-        price = row.get(kind)
-        if price is None:
-            return None
-        total += tokens * price / 1_000_000
+        total += tokens * (row.get(kind) or 0) / 1_000_000  # an empty cell next to a set one is 0
     return total
