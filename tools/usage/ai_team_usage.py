@@ -7,6 +7,9 @@ accounts, so this runs the very same collectors against ~/.claude-2 and
 ~/.codex-2 and stores the result under the ids claude-2 and codex-2.
 Sessions of pi and opencode stay with the main accounts: the collectors'
 pi/opencode scans are switched off here so nothing is counted twice.
+
+It also writes, for the four accounts, a token breakdown (by kind, project and tool,
+with an estimated API cost) to ~/.local/state/omarchy/agents/breakdown/.
 """
 
 import contextlib
@@ -17,7 +20,11 @@ import json
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+
+import breakdown
+import prices
 
 ACCOUNTS = {
     'claude-2': {'collector': 'omarchy-agent-usage-claude', 'name': 'Claude Code · 2', 'variable': 'CLAUDE_CONFIG_DIR',
@@ -25,6 +32,13 @@ ACCOUNTS = {
     'codex-2': {'collector': 'omarchy-agent-usage-codex', 'name': 'Codex · 2', 'variable': 'CODEX_HOME',
                 'home': '.codex-2', 'silenced': {'scan_pi_sessions': lambda *_: None, 'scan_opencode_sessions': lambda *_: True}},
 }
+
+# Every account whose transcripts get a token breakdown: id -> (scanner, profile folder under HOME).
+BREAKDOWN_ACCOUNTS = {
+    'claude': ('claude', '.claude'), 'claude-2': ('claude', '.claude-2'),
+    'codex': ('codex', '.codex'), 'codex-2': ('codex', '.codex-2'),
+}
+BREAKDOWN_DAYS = 30
 
 
 def state_dir():
@@ -90,6 +104,42 @@ def write(account, record, directory):
         Path(temporary).unlink(missing_ok=True)
 
 
+def breakdown_dir():
+    return state_dir().parent / 'breakdown'
+
+
+def prices_path():
+    return Path.home() / '.config/omarchy/agents/prices.json'
+
+
+def write_breakdowns(now=None):
+    """Write where each account's tokens went (and what they would cost); remove stale files.
+
+    Returns the ids whose scan failed; one broken account never hides the others.
+    """
+    now = now or datetime.now(timezone.utc)
+    table = prices.load_prices(prices_path())
+    folder = breakdown_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    folder.chmod(0o700)
+    failed = []
+    for account, (kind, profile) in BREAKDOWN_ACCOUNTS.items():
+        try:
+            root = Path.home() / profile
+            if kind == 'claude':
+                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now)
+            else:
+                body = breakdown.scan_codex(root / 'sessions', table, BREAKDOWN_DAYS, now,
+                                            extra_dirs=(root / 'archived_sessions',))
+            if body is not None:
+                body = {'schemaVersion': 1, 'id': account, 'generatedAt': now.isoformat(), **body}
+            write(account, body, folder)
+        except Exception as error:
+            print('ai-team-usage: breakdown ' + account + ' failed: ' + type(error).__name__, file=sys.stderr)
+            failed.append(account)
+    return failed
+
+
 def main(argv=None):
     flags = [flag for flag in (argv if argv is not None else sys.argv[1:]) if flag in ('--force', '--limits-only')]
     status = 0
@@ -99,6 +149,8 @@ def main(argv=None):
         except Exception as error:  # one broken account must not hide the other
             print('ai-team-usage: ' + account + ' failed: ' + type(error).__name__, file=sys.stderr)
             status = 1
+    if write_breakdowns():
+        status = 1
     return status
 
 
