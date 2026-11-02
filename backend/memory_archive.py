@@ -59,6 +59,16 @@ def read_file(path, limit):
         raise ArchiveError(tr('No se pudo leer un archivo de memoria.')) from error
 
 
+def unsafe_char(c):
+    # Controls, line/paragraph separators and bidi overrides can disguise text in the panel or the manifest.
+    n=ord(c)
+    return n<32 or 127<=n<160 or n in (0x2028,0x2029) or 0x202A<=n<=0x202E or 0x2066<=n<=0x2069
+
+
+def clean_name(value,limit=120):
+    return ''.join(c for c in value if not unsafe_char(c)).strip()[:limit].strip()
+
+
 def project_name(directory):
     metadata=directory/'.ai-team-project.json'
     if not metadata.is_file() or metadata.is_symlink():return None
@@ -66,7 +76,7 @@ def project_name(directory):
         value=json.loads(read_file(metadata,4096))
         if isinstance(value,dict) and value.get('schemaVersion')==1 and isinstance(value.get('name'),str):
             # Same limits as restore and the MCP bridge: this text reaches the panel and the manifest.
-            name=''.join(c for c in value['name'] if not (ord(c)<32 or 127<=ord(c)<160)).strip()[:120]
+            name=clean_name(value['name'])
             return name or None
     except (OSError,ValueError,ArchiveError):pass
     return None
@@ -309,7 +319,7 @@ def restore(archive, store, runtime, token, target_key=None, *, key_map=None):
                 pass  # Preserve changes or files we can no longer inspect.
         raise ArchiveError(tr('La restauración no pudo completarse; se retiraron solo las altas propias intactas.')) from error
     for key,name in names.items():
-        if not isinstance(name,str) or any(ord(c)<32 or 127<=ord(c)<160 for c in name):continue
+        if not isinstance(name,str) or any(unsafe_char(c) for c in name):continue
         name=name.strip()
         if not name or len(name)>120:continue
         # Optional display metadata: preserve existing files, as the MCP bridge does.

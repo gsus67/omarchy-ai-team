@@ -39,6 +39,15 @@ class MemoryArchiveTests(unittest.TestCase):
         with zipfile.ZipFile(self.archive,'w') as z:
             for name,data in entries.items():z.writestr(name,data)
 
+    def test_project_name_drops_separators_and_bidi_and_trailing_space(self):
+        folder=self.store/'projects'/KEY
+        folder.mkdir(parents=True,exist_ok=True)
+        (folder/'.ai-team-project.json').write_text(json.dumps({'schemaVersion':1,'name':'A\u2028B\u2029C\u202aD\u2067E'+'x'*114+' z'}))
+        name=memory_archive.project_name(self.store/'projects'/KEY)
+        self.assertEqual(name,'ABCDE'+'x'*114)
+        self.assertFalse(name.endswith(' '))
+        self.assertEqual(memory_archive.clean_name('ab \u2066 '+' '*130+'c'),'ab')
+
     def test_export_includes_project_names_only_in_manifest(self):
         metadata=self.store/'projects'/KEY/'.ai-team-project.json'
         metadata.write_text(json.dumps({'schemaVersion':1,'name':'Mi proyecto'}))
