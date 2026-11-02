@@ -19,6 +19,11 @@ class WrappingOptionsTests(unittest.TestCase):
         for member in ('property var options', 'property string value', 'signal changed(string value)', 'Layout.fillWidth: true'):
             self.assertIn(member, source)
 
+    def test_the_agent_selector_summarizes_a_long_selection_instead_of_clipping_the_names(self):
+        source = (ROOT / 'AgentSelector.qml').read_text()
+        self.assertIn('root.tr("{n} agentes", {n: root.selectedIds.length})', source)
+        self.assertIn('root.selectedIds.length > 2', source)
+
     def test_every_scroll_area_reserves_a_gutter_for_an_always_visible_scrollbar(self):
         # Same rule as the RGB plugin: with more to see the bar is always shown, in its own column, never over the values.
         source = (ROOT / 'HarnessContent.qml').read_text()
