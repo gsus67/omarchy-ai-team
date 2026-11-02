@@ -126,6 +126,18 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
         self.assertEqual((folder / 'claude-2.json').stat().st_mode & 0o777, 0o600)
 
+    def test_codex_archived_sessions_are_part_of_the_breakdown(self):
+        archived = self.root / 'home/.codex-2/archived_sessions'
+        archived.mkdir(parents=True)
+        now = datetime.now(timezone.utc).isoformat()
+        usage = {'input_tokens': 500, 'cached_input_tokens': 0, 'cache_write_input_tokens': 0, 'output_tokens': 0}
+        line = {'timestamp': now, 'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {
+            'last_token_usage': usage, 'total_token_usage': usage}}}
+        (archived / 'old.jsonl').write_text(json.dumps(line) + '\n')
+        ai_team_usage.write_breakdowns()
+        written = json.loads((ai_team_usage.breakdown_dir() / 'codex-2.json').read_text())
+        self.assertEqual(written['byKind']['input'], 500)
+
     def test_a_failed_scan_keeps_the_last_good_breakdown(self):
         self.transcript('.claude-2')
         ai_team_usage.write_breakdowns()
