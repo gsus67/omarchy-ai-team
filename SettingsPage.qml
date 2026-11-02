@@ -16,49 +16,37 @@ ColumnLayout {
   property var launcher: ({})
   property var team: ({})
   property var aiCheck: ({})
+  property var prices: ({})
   property bool busy: false
   signal commandRequested(var arguments)
   signal pageRequested(string id)
   spacing: Style.space(6)
 
-  // The agents are listed in one block per family so accounts of the same tool stay together.
-  readonly property var agentGroups: {
-    const titles = {claude: "Claude Code", codex: "Codex", pi: "Pi"}
+  // All the agents in one wrapping block, ordered by family so accounts of the same tool sit together.
+  readonly property var orderedAgents: {
     const order = ["claude", "codex", "pi"]
-    const family = agent => String(agent.id).replace(/-\d+$/, "")
-    const groups = order.map(key => ({title: titles[key], agents: root.agents.filter(agent => family(agent) === key)}))
-    const others = root.agents.filter(agent => order.indexOf(family(agent)) === -1)
-    return groups.concat([{title: root.tr("Otros"), agents: others}]).filter(group => group.agents.length > 0)
+    const rank = agent => { const i = order.indexOf(String(agent.id).replace(/-\d+$/, "")); return i === -1 ? order.length : i }
+    return root.agents.map((agent, index) => ({agent: agent, index: index}))
+      .sort((a, b) => rank(a.agent) - rank(b.agent) || a.index - b.index).map(item => item.agent)
   }
 
   Ui.PanelSectionHeader { text: root.tr("AGENTES") }
-  Repeater {
-    model: root.agentGroups
-    delegate: ColumnLayout {
-      id: group
-      required property var modelData
-      Layout.fillWidth: true
-      spacing: Style.space(2)
-      Text {
-        Layout.topMargin: Style.space(4)
-        text: group.modelData.title
-        textFormat: Text.PlainText
-        color: Color.muted
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.caption
-        font.bold: true
-      }
-      Repeater {
-        model: group.modelData.agents
-        delegate: CompactRow {
-          required property var modelData
-          objectName: "agent-row-" + modelData.id
-          Layout.fillWidth: true
-          label: modelData.name
-          status: modelData.installation === "installed" ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
-          switchVisible: false
-          onOpened: root.pageRequested(modelData.id)
-        }
+  Flow {
+    Layout.fillWidth: true
+    spacing: root.metrics.xxs
+    Repeater {
+      model: root.orderedAgents
+      delegate: Ui.Button {
+        required property var modelData
+        objectName: "agent-row-" + modelData.id
+        readonly property bool installed: modelData.installation === "installed"
+        text: (installed ? "" : "○ ") + modelData.name
+        tooltipText: installed ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
+        foreground: installed ? Color.foreground : Color.muted
+        bordered: true
+        focusable: true
+        fontSize: root.fonts.caption
+        onClicked: root.pageRequested(modelData.id)
       }
     }
   }
@@ -101,6 +89,14 @@ ColumnLayout {
     onOpened: root.pageRequested("context")
   }
   CompactRow {
+    objectName: "prices-row"
+    Layout.fillWidth: true
+    label: root.tr("Precios")
+    status: (root.prices.missing || 0) > 0 ? root.tr("{cantidad} sin precio", {cantidad: root.prices.missing}) : root.tr("Completos")
+    switchVisible: false
+    onOpened: root.pageRequested("prices")
+  }
+  CompactRow {
     objectName: "launcher-menu"
     Layout.fillWidth: true
     navigationEnabled: false
@@ -138,43 +134,5 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
-  }
-  Repeater {
-    model: root.aiCheck.results || []
-    delegate: ColumnLayout {
-      id: result
-      required property var modelData
-      Layout.fillWidth: true
-      spacing: root.metrics.xxs
-      CompactRow {
-        objectName: "ai-check-" + result.modelData.agent
-        Layout.fillWidth: true
-        label: result.modelData.name
-        status: result.modelData.skipped ? root.tr("Omitido") : result.modelData.ok ? root.tr("Funciona") : root.tr("Fallos")
-        switchVisible: false
-        navigationEnabled: false
-      }
-      Text {
-        Layout.fillWidth: true
-        visible: text !== ""
-        text: (result.modelData.failures || []).concat(result.modelData.warnings || []).join("\n")
-        textFormat: Text.PlainText
-        color: Color.muted
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.caption
-        wrapMode: Text.WordWrap
-      }
-      Text {
-        Layout.fillWidth: true
-        visible: text !== ""
-        text: (result.modelData.tokens !== undefined ? [root.tr("Tokens: {cantidad}", {cantidad: result.modelData.tokens})] : [])
-          .concat(result.modelData.cost !== undefined ? [root.tr("Coste (USD): {coste}", {coste: result.modelData.cost})] : []).join(" · ")
-        textFormat: Text.PlainText
-        color: Color.muted
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.caption
-        wrapMode: Text.WordWrap
-      }
-    }
   }
 }

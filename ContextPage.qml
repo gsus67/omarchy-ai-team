@@ -43,18 +43,35 @@ ColumnLayout {
     if (root.scope !== "") args.push("--role", root.scope)
     root.commandRequested(args)
   }
+  readonly property var roleNames: ({jefe: root.tr("Jefe"), plan: root.tr("Planificar"), code: root.tr("Programar"),
+                                     review: root.tr("Revisar"), simple: root.tr("Sencillas")})
+  function roleOverrides(key) {
+    if (root.scope !== "") return ""
+    const roles = (root.info.settings || {}).roles || {}
+    return Object.keys(roles).filter(role => roles[role] && roles[role][key] !== undefined)
+      .map(role => (root.roleNames[role] || role) + ": " + roles[role][key]).join(" · ")
+  }
   function modeText(native) { return native ? root.tr("Nativo") : root.tr("Cooperativo") }
 
   Ui.PanelSectionHeader { text: root.tr("CONTEXTO") }
+  Text {
+    Layout.fillWidth: true
+    text: root.scope === "" ? root.tr("Valores base. Toca un papel para cambiar solo el suyo.") : root.tr("Editando solo este papel. Tócalo otra vez para volver a los valores base.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
   WrapButtonGroup {
     objectName: "context-scope"
     spacing: root.metrics.xxs
     fontSize: root.fonts.caption
-    options: [{value: "", label: root.tr("Todos")}, {value: "jefe", label: root.tr("Jefe")},
+    options: [{value: "jefe", label: root.tr("Jefe")},
               {value: "plan", label: root.tr("Planificar")}, {value: "code", label: root.tr("Programar")},
               {value: "review", label: root.tr("Revisar")}, {value: "simple", label: root.tr("Sencillas")}]
     value: root.scope
-    onChanged: value => root.scope = value
+    onChanged: value => root.scope = value === root.scope ? "" : value
   }
   Text {
     Layout.fillWidth: true
@@ -65,7 +82,82 @@ ColumnLayout {
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
   }
-  // Global-only settings: a role row cannot override them, so they only show in "Todos".
+  Ui.NumberField {
+    objectName: "context-read_window_lines"
+    Layout.fillWidth: true
+    label: root.tr("Ventana de lectura (líneas)")
+    from: 1
+    to: 2000
+    value: root.values.read_window_lines || 120
+    enabled: !root.busy
+    onModified: value => root.command("context-set", "read_window_lines", String(value))
+  }
+  Ui.NumberField {
+    objectName: "context-idle_cache_ttl_minutes"
+    Layout.fillWidth: true
+    label: root.tr("Caché inactiva (minutos)")
+    from: 1
+    to: 1440
+    value: root.values.idle_cache_ttl_minutes || 55
+    enabled: !root.busy
+    onModified: value => root.command("context-set", "idle_cache_ttl_minutes", String(value))
+  }
+  // Token limits can reach 64 bits: the backend snapshot sends them as decimal text and they stay
+  // text here, never JavaScript numbers (which round above 2^53).
+  Repeater {
+    model: root.numbers
+    delegate: ColumnLayout {
+      id: limit
+      required property var modelData
+      Layout.fillWidth: true
+      spacing: root.metrics.xxs
+      // The label wraps instead of being cut; the field and its save button sit on the next line.
+      Text {
+        Layout.fillWidth: true
+        text: limit.modelData.label + " · " + root.modeText(limit.modelData.native)
+        textFormat: Text.PlainText
+        color: Commons.Color.foreground
+        font.family: root.fonts.family
+        font.pixelSize: root.fonts.caption
+        wrapMode: Text.WordWrap
+      }
+      // With the base values shown, the roles that override this limit are listed so no value stays hidden.
+      Text {
+        Layout.fillWidth: true
+        visible: text !== ""
+        text: root.roleOverrides(limit.modelData.key)
+        textFormat: Text.PlainText
+        color: Commons.Color.muted
+        font.family: root.fonts.family
+        font.pixelSize: root.fonts.caption
+        wrapMode: Text.WordWrap
+      }
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: root.metrics.xxs
+        Ui.TextField {
+          id: field
+          objectName: "context-" + limit.modelData.key
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          text: typeof root.values[limit.modelData.key] === "string" ? root.values[limit.modelData.key] : ""
+          enabled: !root.busy
+        }
+        Ui.Button {
+          objectName: "context-save-" + limit.modelData.key
+          text: root.tr("Guardar")
+          focusable: true
+          enabled: !root.busy && /^[0-9]+$/.test(field.text)
+          onClicked: root.command("context-set", limit.modelData.key, field.text)
+        }
+      }
+      Ui.PanelSeparator {
+        Layout.fillWidth: true
+        strength: 0.08
+      }
+    }
+  }
+  // Global-only settings: a role row cannot override them, so they only show with the base values.
   CompactRow {
     objectName: "context-enabled"
     visible: root.scope === ""
@@ -134,60 +226,6 @@ ColumnLayout {
       checked: root.values[flag.modelData.key] !== false
       busy: root.busy
       onToggled: root.command("context-set", flag.modelData.key, String(!flag.checked))
-    }
-  }
-  Ui.NumberField {
-    objectName: "context-read_window_lines"
-    Layout.fillWidth: true
-    label: root.tr("Ventana de lectura (líneas)")
-    from: 1
-    to: 2000
-    value: root.values.read_window_lines || 120
-    enabled: !root.busy
-    onModified: value => root.command("context-set", "read_window_lines", String(value))
-  }
-  Ui.NumberField {
-    objectName: "context-idle_cache_ttl_minutes"
-    Layout.fillWidth: true
-    label: root.tr("Caché inactiva (minutos)")
-    from: 1
-    to: 1440
-    value: root.values.idle_cache_ttl_minutes || 55
-    enabled: !root.busy
-    onModified: value => root.command("context-set", "idle_cache_ttl_minutes", String(value))
-  }
-  // Token limits can reach 64 bits: the backend snapshot sends them as decimal text and they stay
-  // text here, never JavaScript numbers (which round above 2^53).
-  Repeater {
-    model: root.numbers
-    delegate: RowLayout {
-      id: limit
-      required property var modelData
-      Layout.fillWidth: true
-      spacing: root.metrics.xxs
-      Text {
-        Layout.fillWidth: true
-        text: limit.modelData.label + " · " + root.modeText(limit.modelData.native)
-        textFormat: Text.PlainText
-        color: Commons.Color.foreground
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.caption
-        elide: Text.ElideRight
-      }
-      Ui.TextField {
-        id: field
-        objectName: "context-" + limit.modelData.key
-        Layout.preferredWidth: Style.space(70)
-        text: typeof root.values[limit.modelData.key] === "string" ? root.values[limit.modelData.key] : ""
-        enabled: !root.busy
-      }
-      Ui.Button {
-        objectName: "context-save-" + limit.modelData.key
-        text: root.tr("Guardar")
-        focusable: true
-        enabled: !root.busy && /^[0-9]+$/.test(field.text)
-        onClicked: root.command("context-set", limit.modelData.key, field.text)
-      }
     }
   }
   Text {
