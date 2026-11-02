@@ -154,3 +154,43 @@ def scan_claude(projects_dir, prices, days, now):
     for record in messages.values():
         totals.add(record['model'], record['project'], list(record['tools'].values()), record['kinds'])
     return totals.body()
+
+
+def scan_codex(sessions_dir, prices, days, now):
+    """Breakdown body for ``<codex home>/sessions`` over the last ``days`` days, or None without turns.
+
+    Only ``token_count`` events carry tokens (``token_usage_record`` repeats them). Codex counts cached
+    tokens inside ``input_tokens``, so fresh input is what is left after cached and cache-write tokens.
+    The tool calls seen since the previous ``token_count`` share that event's tokens.
+    """
+    cutoff = now - timedelta(days=days)
+    totals = _Totals(prices, days)
+    for path in _recent_files(sessions_dir, cutoff):
+        project = model = None
+        pending = []
+        for entry in _lines(path):
+            payload = entry.get('payload')
+            if not isinstance(payload, dict):
+                continue
+            kind = entry.get('type')
+            if kind == 'turn_context':
+                project = payload['cwd'] if isinstance(payload.get('cwd'), str) else project
+                model = payload['model'] if isinstance(payload.get('model'), str) else model
+            elif kind == 'session_meta':
+                project = project or (payload['cwd'] if isinstance(payload.get('cwd'), str) else None)
+            elif kind == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call'):
+                if isinstance(payload.get('name'), str):
+                    pending.append(payload['name'])
+            elif kind == 'event_msg' and payload.get('type') == 'token_count':
+                names, pending = pending, []
+                info = payload.get('info')
+                usage = info.get('last_token_usage') if isinstance(info, dict) else None
+                moment = _moment(entry.get('timestamp'))
+                if not isinstance(usage, dict) or moment is None or moment < cutoff:
+                    continue
+                cached = _number(usage.get('cached_input_tokens'))
+                written = _number(usage.get('cache_write_input_tokens'))
+                kinds = {'input': max(0, _number(usage.get('input_tokens')) - cached - written),
+                         'output': _number(usage.get('output_tokens')), 'cacheRead': cached, 'cacheWrite': written}
+                totals.add(model or 'unknown', project, names, kinds)
+    return totals.body()
