@@ -32,33 +32,45 @@ class RoleUsageTests(unittest.TestCase):
     def test_without_a_breakdown_there_is_no_total(self):
         self.assertIsNone(role_usage.summary(AGENTS))
 
-    def test_the_chief_is_the_rest_after_the_workers(self):
+    def test_the_total_is_the_chief_plus_the_workers(self):
         self.breakdown('claude', 1000)
-        role_usage.record('review', self.counters(300, 100))
-        role_usage.record('code', self.counters(100, 0))
+        role_usage.record('review', 'claude', self.counters(300, 100))
+        role_usage.record('code', 'claude', self.counters(100, 0))
         result = role_usage.summary(AGENTS)
         shares = {row['role']: row['tokens'] for row in result['roles']}
-        self.assertEqual(shares, {'jefe': '500', 'plan': '0', 'code': '100', 'review': '400', 'simple': '0'})
-        self.assertEqual(result['total'], '1.0K')
+        self.assertEqual(shares, {'jefe': '1.0K', 'plan': '0', 'code': '100', 'review': '400', 'simple': '0'})
+        self.assertEqual(result['total'], '1.5K')
         self.assertEqual(result['since'], datetime.now(timezone.utc).date().isoformat())
 
     def test_unknown_counters_and_the_chief_role_are_not_recorded(self):
-        role_usage.record('review', {'total_input': None, 'output': 5})
-        role_usage.record('jefe', self.counters())
+        role_usage.record('review', 'claude', {'total_input': None, 'output': 5})
+        role_usage.record('jefe', 'claude', self.counters())
         self.assertFalse(role_usage.ledger().exists())
 
-    def test_old_and_malformed_lines_are_ignored_and_the_chief_never_goes_negative(self):
+    def test_old_malformed_and_other_account_lines_are_ignored(self):
         self.breakdown('claude', 50)
+        now = datetime.now(timezone.utc).isoformat()
         old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
         path = role_usage.ledger(); path.parent.mkdir(parents=True)
-        path.write_text('\n'.join([json.dumps({'at': old, 'role': 'code', 'tokens': 999}), 'not json',
-                                   json.dumps({'at': 'x', 'role': 'code', 'tokens': 1}),
-                                   json.dumps({'at': datetime.now(timezone.utc).isoformat(), 'role': 'code', 'tokens': 80})]))
+        path.write_text('\n'.join([json.dumps({'at': old, 'role': 'code', 'agent': 'claude', 'tokens': 999}), 'not json', '[]',
+                                   json.dumps({'at': now}), json.dumps({'at': 'x', 'role': 'code', 'agent': 'claude', 'tokens': 1}),
+                                   json.dumps({'at': now, 'role': 'code', 'agent': 'codex', 'tokens': 700}),
+                                   json.dumps({'at': now, 'role': 'code', 'agent': 'claude', 'tokens': 80})]))
         roles = {row['role']: row['tokens'] for row in role_usage.summary(AGENTS)['roles']}
-        self.assertEqual((roles['code'], roles['jefe']), ('80', '0'))
+        self.assertEqual((roles['code'], roles['jefe']), ('80', '50'))
+
+    def test_a_fifo_in_place_of_the_ledger_never_blocks(self):
+        self.breakdown('claude', 50)
+        path = role_usage.ledger(); path.parent.mkdir(parents=True)
+        os.mkfifo(path)
+        self.assertEqual(role_usage.summary(AGENTS)['roles'][0]['tokens'], '50')
+        with self.assertRaises(OSError):  # no reader: refused at once, not blocked
+            role_usage.record('plan', 'claude', self.counters())
 
     def test_the_ledger_is_private(self):
-        role_usage.record('plan', self.counters())
+        role_usage.record('plan', 'claude', self.counters())
+        role_usage.ledger().chmod(0o666)
+        role_usage.record('plan', 'claude', self.counters())
         self.assertEqual(role_usage.ledger().stat().st_mode & 0o777, 0o600)
         self.assertEqual(role_usage.ledger().parent.stat().st_mode & 0o777, 0o700)
 

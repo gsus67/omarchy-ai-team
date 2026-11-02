@@ -68,5 +68,5 @@ ColumnLayout {
       }
     }
   }
-  Note { text: root.tr("Los obreros se cuentan desde que se registran sus encargos{desde}. El Jefe es el resto de la cuenta, así que incluye lo anterior a ese registro.", {desde: root.info.since ? " (" + root.info.since + ")" : ""}) }
+  Note { text: root.tr("El Jefe es el consumo de las sesiones. Los obreros (Planificar, Programar, Revisar y Sencillas) se cuentan desde que se registran sus encargos{desde}.", {desde: root.info.since ? " (" + root.info.since + ")" : ""}) }
 }

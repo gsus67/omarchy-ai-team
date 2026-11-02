@@ -790,5 +790,5 @@
   "TOTAL": "TOTAL",
   "Total": "Total",
   "{cantidad} tokens en 30 días": "{cantidad} tokens in 30 days",
-  "Los obreros se cuentan desde que se registran sus encargos{desde}. El Jefe es el resto de la cuenta, así que incluye lo anterior a ese registro.": "Workers are counted since their tasks started being recorded{desde}. The Chief is the rest of the account, so it includes anything before that record."
+  "El Jefe es el consumo de las sesiones. Los obreros (Planificar, Programar, Revisar y Sencillas) se cuentan desde que se registran sus encargos{desde}.": "The Chief is the sessions' consumption. Workers (Plan, Code, Review and Simple) are counted since their tasks started being recorded{desde}."
 }
