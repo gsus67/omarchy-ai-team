@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,6 +83,71 @@ class UsageTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 ai_team_usage.write('claude-2', {'id': 'claude-2'}, state)
         self.assertEqual(list(state.iterdir()), [])
+
+    def transcript(self, folder, name='a.jsonl'):
+        directory = self.root / 'home' / folder / 'projects' / 'p'
+        directory.mkdir(parents=True)
+        line = {'type': 'assistant', 'cwd': '/w/a', 'timestamp': datetime.now(timezone.utc).isoformat(), 'message': {
+            'id': 'm1', 'model': 'claude-opus-5-5', 'usage': {'input_tokens': 1_000_000, 'output_tokens': 0,
+                                                              'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0},
+            'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash'}]}}
+        (directory / name).write_text(json.dumps(line) + '\n')
+
+    def test_breakdowns_are_written_per_account_with_schema_id_and_cost(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertEqual((written['schemaVersion'], written['id'], written['windowDays']), (1, 'claude-2', 30))
+        self.assertTrue(written['generatedAt'])
+        self.assertAlmostEqual(written['costUsd'], 4.0)
+        self.assertEqual(written['byTool'][0]['name'], 'Bash')
+        self.assertFalse((ai_team_usage.breakdown_dir() / 'claude.json').exists())
+
+    def test_missing_profile_or_empty_scan_removes_a_stale_breakdown(self):
+        stale = ai_team_usage.breakdown_dir()
+        stale.mkdir(parents=True)
+        (stale / 'claude.json').write_text('{}')
+        (self.root / 'home/.codex-2/sessions').mkdir(parents=True)
+        (stale / 'codex-2.json').write_text('{}')
+        ai_team_usage.write_breakdowns()
+        self.assertEqual(list(stale.glob('*.json')), [])
+
+    def test_main_writes_breakdowns_even_if_a_collector_fails(self):
+        self.transcript('.claude-2')
+        (self.root / 'home/.claude-2').mkdir(exist_ok=True)
+        (self.root / 'bin/omarchy-agent-usage-claude').write_text('raise RuntimeError("boom")')
+        self.assertEqual(ai_team_usage.main([]), 1)
+        self.assertTrue((ai_team_usage.breakdown_dir() / 'claude-2.json').exists())
+
+    def test_breakdown_files_are_private(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        folder = ai_team_usage.breakdown_dir()
+        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((folder / 'claude-2.json').stat().st_mode & 0o777, 0o600)
+
+    def test_a_failed_scan_keeps_the_last_good_breakdown(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        target = ai_team_usage.breakdown_dir() / 'claude-2.json'
+        good = target.read_text()
+        transcript = next((self.root / 'home/.claude-2').rglob('a.jsonl'))
+        transcript.chmod(0)
+        self.addCleanup(transcript.chmod, 0o600)
+        if os.access(transcript, os.R_OK):
+            self.skipTest('running with privileges that ignore file modes')
+        self.assertEqual(ai_team_usage.write_breakdowns(), ['claude-2'])
+        self.assertEqual(target.read_text(), good)
+
+    def test_prices_file_is_created_once_and_user_edits_survive(self):
+        ai_team_usage.write_breakdowns()
+        path = ai_team_usage.prices_path()
+        self.assertTrue(path.exists())
+        edited = json.loads(path.read_text())
+        edited['gpt-6.1-sol'] = {'input': 1.0, 'output': 2.0, 'cacheRead': 0.1, 'cacheWrite': 1.0}
+        path.write_text(json.dumps(edited))
+        ai_team_usage.write_breakdowns()
+        self.assertEqual(json.loads(path.read_text())['gpt-6.1-sol']['input'], 1.0)
 
 
 if __name__ == '__main__':

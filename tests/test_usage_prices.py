@@ -52,6 +52,17 @@ class PricesTests(unittest.TestCase):
         self.assertEqual(prices.load_prices(self.path), prices.DEFAULT_PRICES)
         self.assertEqual(self.path.read_text(), '{not json')
 
+    def test_invalid_user_prices_are_ignored_and_never_crash_the_cost(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text('{"claude-opus-5-5": {"input": "oops", "output": 1, "cacheRead": 1, "cacheWrite": 1},'
+                             ' "claude-sonnet-5-5": {"input": -1, "output": 1, "cacheRead": 1, "cacheWrite": 1},'
+                             ' "claude-haiku-5-5": {"input": NaN, "output": 1, "cacheRead": 1, "cacheWrite": 1},'
+                             ' "claude-fable-5-1": {"input": true, "output": 1, "cacheRead": 1, "cacheWrite": 1}}')
+        loaded = prices.load_prices(self.path)
+        for model in ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'):
+            self.assertEqual(loaded[model], prices.DEFAULT_PRICES[model], model)
+            self.assertIsInstance(prices.cost_usd(loaded, model, KINDS), float)
+
     def test_user_prices_override_defaults(self):
         self.path.parent.mkdir(parents=True)
         self.path.write_text(json.dumps({'gpt-6.1-sol': {'input': 1.0, 'output': 2.0, 'cacheRead': 0.1, 'cacheWrite': 1.0}}))
