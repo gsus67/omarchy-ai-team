@@ -91,7 +91,7 @@ ColumnLayout {
         .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
       readonly property var modelOptions: role.providerModels.map(option => ({
         value: JSON.stringify([option.agent, option.model]),
-        label: (option.agent === role.recommended.agent && option.model === role.recommended.model ? "★ " : "") + option.model
+        label: (option.agent === role.recommended.agent && option.model === role.recommended.model ? "★ " : "") + (option.display || option.model)
       }))
       readonly property var effortOptions: (role.choice.efforts || []).map(effort => ({
         value: effort,

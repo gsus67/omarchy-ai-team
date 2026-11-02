@@ -115,6 +115,13 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(by_model['codex', 'gpt-6.1-sol']['recommendedEfforts'],
                          dict(plan='xhigh', code='high', review='high', simple='medium'))
 
+    def test_claude_models_show_name_and_version(self):
+        options = team.effective({}, {'claude'}, CAT, [])['options']
+        by_model = {row['model']: row for row in options}
+        self.assertEqual({m: by_model[m]['display'] for m in team.CLAUDE_MODELS},
+                         dict(fable='Fable 5.1', opus='Opus 5.5', sonnet='Sonnet 5.5', haiku='Haiku 5.5'))
+        self.assertEqual(by_model['sonnet']['label'], 'Claude · Sonnet 5.5')
+
     def test_manual_ultra_allowed_with_warning(self):
         config = self.config()
         cat = copy.deepcopy(CAT)

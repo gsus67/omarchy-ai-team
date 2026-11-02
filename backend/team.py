@@ -8,6 +8,8 @@ import re
 ROLES = ('plan', 'code', 'review', 'simple')
 LABELS = dict(zip(ROLES, (tr('Planificar'), tr('Programar'), tr('Revisar'), tr('Tareas sencillas'))))
 CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
+# Aliases stay the stored/CLI value; versions only decorate the UI (ids: claude-<alias>-<major>-<minor>).
+CLAUDE_VERSIONS = {'fable': '5.1', 'opus': '5.5', 'sonnet': '5.5', 'haiku': '5.5'}
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra')
 AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi'}
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
@@ -67,9 +69,10 @@ def options(selected, catalog, free_pi, paid_ok):
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]
         for model, efforts in models:
             paid = agent == 'pi' and model not in free_pi
-            label = AGENT_NAMES[agent] + ' · ' + model
+            display = (model.capitalize() + ' ' + CLAUDE_VERSIONS[model]) if agent == 'claude' else model
+            label = AGENT_NAMES[agent] + ' · ' + display
             if paid: label = tr('{modelo} · de pago', modelo=label)
-            result.append(dict(agent=agent, model=model, efforts=list(efforts), label=label, paid=paid,
+            result.append(dict(agent=agent, model=model, display=display, efforts=list(efforts), label=label, paid=paid,
                                recommendedEfforts={key: recommended_effort(key, efforts) for key in ROLES}))
     return result
 
