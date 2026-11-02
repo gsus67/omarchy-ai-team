@@ -39,7 +39,9 @@ import native_team
 import ai_check
 
 
-AGENTS = {"claude": "Claude Code", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi"}
+AGENTS = {"claude": "Claude Code", "codex": "Codex", "codex-2": "Codex-2", "claude-2": "Claude Code-2", "pi": "Pi"}
+CLI_NAME = {"codex-2": "codex", "claude-2": "claude"}
+PROFILE_DIRS = {"codex-2": ".codex-2", "claude-2": ".claude-2"}
 MANAGED = {"superpowers": ("Superpowers", native_plugins),
            "memory": (tr('Memoria compartida · ECC'), shared_memory),
            "local-tools": (tr('Herramientas locales'), native_local_tools),
@@ -212,32 +214,47 @@ def component_options(key: str, config: dict) -> dict:
 
 @contextmanager
 def agent_profile(agent):
-    previous = os.environ.get("CODEX_HOME")
-    if agent not in ("claude", "pi"):
+    previous = {name: os.environ.get(name) for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR")}
+    if agent == "claude-2":
+        os.environ["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-2")
+    elif agent == "claude":
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)  # the main account never inherits claude-2's directory
+    elif agent != "pi":
         os.environ["CODEX_HOME"] = str(Path.home() / (".codex-2" if agent == "codex-2" else ".codex"))
     try:
-        yield agent if agent in ("claude", "pi") else "codex"
+        yield "claude" if agent == "claude-2" else agent if agent in ("claude", "pi") else "codex"
     finally:
-        if previous is None:
-            os.environ.pop("CODEX_HOME", None)
-        else:
-            os.environ["CODEX_HOME"] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def agent_tool(agent, inventory):
-    tool = detect_tool("codex" if agent == "codex-2" else agent, inventory)
-    if agent == "codex-2" and not (Path.home() / ".codex-2").is_dir():
+    tool = detect_tool(CLI_NAME.get(agent, agent), inventory)
+    if agent in PROFILE_DIRS and not (Path.home() / PROFILE_DIRS[agent]).is_dir():
         tool = {**tool, "installation": "missing-profile"}
     return tool
+
+
+def manage_agent_cli(agent, action):
+    # Install/uninstall act on the shared CLI; they never create or touch a profile directory.
+    if action == 'uninstall' and agent in PROFILE_DIRS:
+        raise HarnessError(tr('La CLI se comparte con el perfil principal; desinstálala desde ese perfil.'))
+    inventory, warning = mise_inventory()
+    if warning:
+        raise HarnessError(warning)
+    return agent_runtime.operate(CLI_NAME.get(agent, agent), action, inventory, detect_tool, mise_inventory)
 
 
 def manage_agent_runtime(agent, action):
     inventory, warning = mise_inventory()
     if warning:
         raise HarnessError(warning)
-    if agent == 'codex-2' and not (Path.home() / '.codex-2').is_dir():
-        raise HarnessError(tr('El perfil codex-2 no existe; no se creará ni conectará una cuenta como efecto de instalar la CLI.'))
-    return agent_runtime.operate('codex' if agent == 'codex-2' else agent, action, inventory, detect_tool, mise_inventory)
+    if agent in PROFILE_DIRS and not (Path.home() / PROFILE_DIRS[agent]).is_dir():
+        raise HarnessError(tr('El perfil {profile} no existe; no se creará ni conectará una cuenta como efecto de instalar la CLI.', profile=agent))
+    return agent_runtime.operate(CLI_NAME.get(agent, agent), action, inventory, detect_tool, mise_inventory)
 
 
 def apply_component(config, component, agent, action, tool):
@@ -385,7 +402,7 @@ def update_runtimes(config, choice):
                     errors.append(f"Superpowers · {AGENTS[agent]}: {error}")
         updated_clis = set()
         for agent in current.get('agents', []):
-            name = 'codex' if agent['id'] == 'codex-2' else agent['id']
+            name = CLI_NAME.get(agent['id'], agent['id'])
             if (agent.get('enabled') and agent.get('installation') == 'installed' and agent.get('manager') == 'mise'
                     and name not in updated_clis):
                 updated_clis.add(name)
@@ -477,7 +494,14 @@ def select_agents(config: dict, wanted: set[str], *, reconcile: bool = False) ->
     tools = {agent: agent_tool(agent, inventory) for agent in targets}
     for agent in targets:
         if agent not in previous and tools[agent]["installation"] == "missing-profile":
-            raise HarnessError(tr('Perfil {agent} no disponible.', agent=agent))
+            # Explicitly selecting a second profile in the UI creates its (empty) directory; no account is created or connected.
+            if agent in PROFILE_DIRS and detect_tool(CLI_NAME[agent], inventory)["installation"] == "installed":
+                profile_dir = Path.home() / PROFILE_DIRS[agent]
+                profile_dir.mkdir(mode=0o700, exist_ok=True)
+                profile_dir.chmod(0o700)
+                tools[agent] = agent_tool(agent, inventory)
+            else:
+                raise HarnessError(tr('Perfil {agent} no disponible.', agent=agent))
 
     errors = []
     failed = set()
@@ -565,7 +589,8 @@ def _status(config=None):
     for key, name in AGENTS.items():
         tool = agent_tool(key, inventory)
         agents.append({"id": key, "name": name, **tool,
-                       "manager": "mise" if agent_runtime.managed("codex" if key == "codex-2" else key, tool, inventory) else "external" if tool['installation'] == 'installed' else "mise",
+                       "manager": "mise" if agent_runtime.managed(CLI_NAME.get(key, key), tool, inventory) else "external" if tool['installation'] == 'installed' else "mise",
+                       "cliInstalled": detect_tool(CLI_NAME.get(key, key), inventory)['installation'] == 'installed',
                        "enabled": config.get("agents", {}).get(key, False), "integration": "pending"})
     components = [component_status(key, config, agents) for key in MANAGED]
     omarchy = shutil.which("omarchy")
@@ -718,10 +743,12 @@ def _main(argv=None):
     update.add_argument("component", choices=("memory", "core"))
     agent_update = commands.add_parser("agent-update", help=tr('Actualizar la CLI mediante su gestor nativo sin cerrar sesiones'))
     agent_update.add_argument("agent", choices=AGENTS)
+    commands.add_parser('agent-install', help=tr('Instalar la CLI con el gestor oficial sin crear perfiles ni cuentas')).add_argument('agent', choices=AGENTS)
+    commands.add_parser('agent-uninstall', help=tr('Desinstalar la CLI gestionada por mise conservando cuentas y sesiones')).add_argument('agent', choices=AGENTS)
     catalog = commands.add_parser('agent-models', help=tr('Consultar el catálogo nativo de Pi sin iniciar inferencia'))
     catalog.add_argument('agent', choices=('pi',))
     auth = commands.add_parser('authenticate-profile', help=tr('Abrir autenticación nativa sin seleccionar otra cuenta ni activar componentes'))
-    auth.add_argument('agent', choices=('claude','codex','codex-2'))
+    auth.add_argument('agent', choices=('claude','claude-2','codex','codex-2'))
     setting = commands.add_parser("set-agent", help=tr('Seleccionar los agentes que usarán los componentes del plugin'))
     setting.add_argument("agent", choices=AGENTS)
     setting.add_argument("enabled", choices=("true", "false"))
@@ -1019,6 +1046,10 @@ def _main(argv=None):
             operation = native_pi.model_catalog(tool['binary'], config.get('piNousCatalog'))
             config.setdefault('agentCatalogs', {})[args.agent] = {**operation, 'agentBinary': tool['binary'], 'agentVersion': tool['version']}
             save_config(config); message = operation['detail']
+        elif args.command in ('agent-install', 'agent-uninstall'):
+            verb = args.command.removeprefix('agent-')
+            operation = manage_agent_cli(args.agent, verb)
+            message = tr('CLI instalada y comprobada.') if verb == 'install' else tr('CLI desinstalada. Tus cuentas y sesiones se conservan.')
         elif args.command == "agent-update":
             operation = manage_agent_runtime(args.agent, 'update')
             message = (tr('CLI actualizada y comprobada.') if operation['changed'] else tr('La CLI ya está en la versión que permite su configuración nativa.')) + tr(' Abre sesiones nuevas; las abiertas y su ejecutable anterior se conservan.')
@@ -1100,6 +1131,13 @@ def _main(argv=None):
             message = tr('Accesos del menú aplicados a los perfiles seleccionados.')
         elif args.command == 'authenticate-profile':
             inventory, _ = mise_inventory(); tool = agent_tool(args.agent, inventory)
+            if (args.agent in PROFILE_DIRS and tool['installation'] == 'missing-profile'
+                    and detect_tool(CLI_NAME[args.agent], inventory)['installation'] == 'installed'):
+                # Explicit login click is the only place a profile directory is created.
+                profile_dir = Path.home() / PROFILE_DIRS[args.agent]
+                profile_dir.mkdir(mode=0o700, exist_ok=True)
+                profile_dir.chmod(0o700)
+                tool = agent_tool(args.agent, inventory)
             if tool['installation'] != 'installed':
                 raise HarnessError(tr('Instala la CLI y prepara el perfil antes de autenticarlo.'))
             with agent_profile(args.agent) as cli:

@@ -59,10 +59,15 @@ def prompt_for(wanted, marker):
 
 def command(agent, model, wanted):
     binary, key = agent['binary'], agent['id']
-    if key == 'claude':
+    if key in ('claude', 'claude-2'):
         allowed = ['Bash(rg --version)']
         if wanted['codeModel']:
-            skill = native_team.layout('claude')['source'] / 'SKILL.md'
+            previous = os.environ.get('CLAUDE_CONFIG_DIR')
+            if key == 'claude-2': os.environ['CLAUDE_CONFIG_DIR'] = str(Path.home() / '.claude-2')
+            try: skill = native_team.layout('claude')['source'] / 'SKILL.md'
+            finally:
+                if previous is None: os.environ.pop('CLAUDE_CONFIG_DIR', None)
+                else: os.environ['CLAUDE_CONFIG_DIR'] = previous
             allowed += ['Skill(' + native_team.ID + ')', 'Read(/' + str(skill) + ')']
         if wanted['memory']:
             allowed += ['mcp__ai-team-memory__memory_save', 'mcp__ai-team-memory__memory_search']
@@ -154,12 +159,16 @@ def run(config, snapshot):
                 continue
             row['warnings'].append(tr('Pi no tiene sandbox ni aprobación por herramienta.'))
         else:
-            model = 'haiku' if key == 'claude' else team.newest_codex(config.get('teamModels', {}), 'luna')
+            model = 'haiku' if key in ('claude', 'claude-2') else team.newest_codex(config.get('teamModels', {}), 'luna')
         row['model'] = model
         marker = secrets.token_hex(24)
         environment = {name: value for name, value in os.environ.items() if not name.startswith('GIT_')}
         if key in ('codex', 'codex-2'):
             environment['CODEX_HOME'] = str(Path.home() / ('.codex-2' if key == 'codex-2' else '.codex'))
+        if key == 'claude-2':
+            environment['CLAUDE_CONFIG_DIR'] = str(Path.home() / '.claude-2')
+        elif key == 'claude':
+            environment.pop('CLAUDE_CONFIG_DIR', None)  # the main account never inherits claude-2's directory
         store = None
         try:
             with tempfile.TemporaryDirectory(prefix='ai-team-ai-check-') as directory:
