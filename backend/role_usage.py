@@ -10,7 +10,7 @@ import errno
 import json
 import os
 import stat
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import usage_start
@@ -18,6 +18,7 @@ import usage_summary
 from i18n import tr
 
 ROLES = ('jefe', 'plan', 'code', 'review', 'simple')
+ACCOUNT_ROWS = ROLES + ('otros',)  # Otros is an accounting row, never a role: it has no settings, model, recipe or ledger entry
 WORKERS = usage_start.WORKERS
 
 
@@ -29,12 +30,12 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def _entries(agents, *, since, directory):
-    """Valid ledger entries of the selected accounts at or after ``since``, streamed from the whole file
-    of the already validated state ``directory`` (a descriptor the caller keeps open until it is consumed)."""
+def _entries(agents, *, since, until, directory):
+    """Valid ledger entries of the selected accounts in the closed interval [``since``, ``until``], streamed from
+    the whole file of the already validated state ``directory`` (a descriptor the caller keeps open until consumed)."""
     selected = {agent.get('id') for agent in agents if agent.get('enabled')}
     return (entry for entry in usage_start.iter_ledger_entries(ledger().name, dir_fd=directory)
-            if entry.agent in selected and entry.at >= since)
+            if entry.agent in selected and since <= entry.at <= until)
 
 
 def record(role, agent, counters):
@@ -73,28 +74,33 @@ def _share(amount, total):
     return round(amount / total, 4) if total else 0
 
 
-def summary(agents):
-    """``{since, total, roles: [{role, name, tokens, share}]}``; None only when no supported account is selected.
+def summary(agents, *, window_days=7):
+    """``{since, start, asOf, windowDays, partialWindow, classificationLimited, pending, total, roles}``; None only
+    when no supported account is selected.
 
-    ``since`` is the persisted start (ISO instant). ``total``, ``tokens`` and ``share`` are None when unknown:
-    no (or no valid) start, an account without a block measured from that start, or an unreadable ledger.
-    Only reads: it never creates the start nor the state directory.
+    One rolling window for every row: ``since`` is E = max(start, T - windowDays), ``asOf`` is T, the instant the
+    usage writer published for all selected accounts (the live clock is never read), and the workers are the ledger
+    entries in [E, T]. Without a coherent snapshot of that start and window nothing is measured: every figure is None
+    (``pending``), never a partial sum. ``total``, ``tokens`` and ``share`` are also None when the ledger is
+    unreadable. Only reads: it never creates the start nor the state directory.
     """
     if not any(agent.get('id') in usage_summary.SHORT_NAMES and agent.get('enabled') for agent in agents):
         return None
-    directory, since = None, None
-    amounts = dict.fromkeys(ROLES)
+    directory, start, measured = None, None, None
+    amounts = dict.fromkeys(ACCOUNT_ROWS)
     try:  # read-only: a missing start stays unknown, only the writers (record, snapshots) create it
         try:
             directory = usage_start._open_state_dir(usage_start.default_state_dir(), create=False)
-            since = usage_start._read_start(directory)
+            start = usage_start._read_start(directory)
         except (usage_start.UsageStartError, OSError):
-            since = None
-        if since is not None:
-            amounts['jefe'] = usage_summary.total_tokens_since(agents, since)
+            start = None
+        if start is not None:
+            measured = usage_summary.measurement(agents, start=start, window_days=window_days)
+        if measured is not None:
+            amounts['jefe'], amounts['otros'] = measured['jefe'], measured['otros']
             try:
                 workers = dict.fromkeys(WORKERS, 0)
-                for entry in _entries(agents, since=since, directory=directory):
+                for entry in _entries(agents, since=measured['since'], until=measured['asOf'], directory=directory):
                     workers[entry.role] += entry.tokens
                 amounts.update(workers)
             except OSError:
@@ -103,7 +109,11 @@ def summary(agents):
         if directory is not None:
             os.close(directory)
     total = None if None in amounts.values() else sum(amounts.values())
-    names = {'jefe': tr('Jefe'), 'plan': tr('Planificar'), 'code': tr('Programar'), 'review': tr('Revisar'), 'simple': tr('Sencillas')}
-    return {'since': since.isoformat() if since else None, 'total': None if total is None else usage_summary.tokens_text(total),
+    names = {'jefe': tr('Jefe'), 'plan': tr('Planificar'), 'code': tr('Programar'), 'review': tr('Revisar'), 'simple': tr('Sencillas'), 'otros': tr('Otros')}
+    return {'since': measured['since'].isoformat() if measured else None, 'start': start.isoformat() if start else None,
+            'asOf': measured['asOf'].isoformat() if measured else None, 'windowDays': window_days,
+            'partialWindow': bool(measured) and start > measured['asOf'] - timedelta(days=window_days),
+            'classificationLimited': bool(measured) and measured['limited'], 'pending': measured is None,
+            'total': None if total is None else usage_summary.tokens_text(total),
             'roles': [{'role': role, 'name': names[role], 'share': _share(amounts[role], total),
-                       'tokens': None if amounts[role] is None else usage_summary.tokens_text(amounts[role])} for role in ROLES]}
+                       'tokens': None if amounts[role] is None else usage_summary.tokens_text(amounts[role])} for role in ACCOUNT_ROWS]}

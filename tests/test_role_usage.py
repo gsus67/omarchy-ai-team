@@ -13,7 +13,9 @@ import role_usage
 
 AGENTS = [{'id': 'claude', 'enabled': True}, {'id': 'codex', 'enabled': False}]
 BOTH = [{'id': 'claude', 'enabled': True}, {'id': 'codex', 'enabled': True}]
-START = datetime(2026, 8, 1, 6, 30, tzinfo=timezone.utc)  # long before "now": the 30-day window must not matter
+START = datetime(2026, 8, 1, 6, 30, tzinfo=timezone.utc)  # long before the snapshot: the cut is the selected window
+AS_OF = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)  # T of the snapshots; the live clock never matters to a reader
+CUT = AS_OF - timedelta(days=7)  # E with the default window
 
 
 class RoleUsageTests(unittest.TestCase):
@@ -23,18 +25,23 @@ class RoleUsageTests(unittest.TestCase):
         patcher = patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root)}); patcher.start(); self.addCleanup(patcher.stop)
         self.start_file = self.root / 'omarchy-ai-team/usage-start.json'
         previous = os.umask(0o077); self.addCleanup(os.umask, previous)  # the state is private, as in a real session
+        clock = patch.object(role_usage, '_now', return_value=AS_OF - timedelta(hours=1)); clock.start(); self.addCleanup(clock.stop)
 
     def start(self, moment=START):
         self.start_file.parent.mkdir(parents=True, exist_ok=True)
         self.start_file.write_text(json.dumps({'schemaVersion': 1, 'since': moment.isoformat()}))
 
-    def breakdown(self, agent, tokens, output=0, since=START):
+    def breakdown(self, agent, tokens, output=0, *, start=START, as_of=AS_OF, window=7, otros=(0, 0), measured=True, limited=False):
         folder = self.root / 'omarchy/agents/breakdown'
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / (agent + '.json')).write_text(json.dumps({
-            'schemaVersion': 1, 'byKind': {'input': 7, 'output': 7, 'cacheRead': 7, 'cacheWrite': 7},  # the 30-day detail must not be used
-            'byProject': [], 'byTool': [], 'costUsd': None, 'unpricedModels': [],
-            'sinceStart': {'since': since.isoformat(), 'total_input': tokens, 'output': output}}))
+        data = {'schemaVersion': 1, 'id': agent, 'generatedAt': as_of.isoformat(),
+                'byKind': {'input': 7, 'output': 7, 'cacheRead': 7, 'cacheWrite': 7},  # the 30-day detail must not be used
+                'byProject': [], 'byTool': [], 'costUsd': None, 'unpricedModels': []}
+        if measured:
+            data['measurement'] = {'start': start.isoformat(), 'since': max(start, as_of - timedelta(days=window)).isoformat(),
+                                   'windowDays': window, 'jefe': {'total_input': tokens, 'output': output},
+                                   'otros': {'total_input': otros[0], 'output': otros[1]}, 'classificationLimited': limited}
+        (folder / (agent + '.json')).write_text(json.dumps(data))
 
     def counters(self, inputs=100, output=20):
         return {'total_input': inputs, 'cached_read': 0, 'new_input': inputs, 'cache_creation': 0, 'output': output}
@@ -59,9 +66,9 @@ class RoleUsageTests(unittest.TestCase):
         role_usage.record('review', 'claude', self.counters(300, 100))
         result = role_usage.summary(AGENTS)
         self.assertIsNone(result['total'])
-        self.assertEqual(self.tokens(result), {'jefe': None, 'plan': '0', 'code': '0', 'review': '400', 'simple': '0'})
+        self.assertEqual(set(self.tokens(result).values()), {None})  # no common snapshot generation: no figure of any other window
         self.assertTrue(all(row['share'] is None for row in result['roles']))
-        self.assertEqual(result['since'], START.isoformat())
+        self.assertEqual((result['start'], result['since'], result['asOf'], result['pending']), (START.isoformat(), None, None, True))
 
     def test_the_total_is_the_chief_plus_the_workers_in_the_same_unit(self):
         self.start()
@@ -70,10 +77,12 @@ class RoleUsageTests(unittest.TestCase):
         role_usage.record('review', 'claude', self.counters(300, 100))
         role_usage.record('code', 'codex', self.counters(60, 5))
         result = role_usage.summary(BOTH)
-        self.assertEqual(self.tokens(result), {'jefe': '170', 'plan': '0', 'code': '65', 'review': '400', 'simple': '0'})
+        self.assertEqual(self.tokens(result), {'jefe': '170', 'plan': '0', 'code': '65', 'review': '400', 'simple': '0', 'otros': '0'})
         self.assertEqual(result['total'], '635')
         self.assertEqual({row['role']: row['share'] for row in result['roles']}['review'], round(400 / 635, 4))
-        self.assertEqual(result['since'], START.isoformat())
+        self.assertEqual((result['start'], result['since'], result['asOf'], result['windowDays']),
+                         (START.isoformat(), CUT.isoformat(), AS_OF.isoformat(), 7))
+        self.assertEqual((result['pending'], result['partialWindow'], result['classificationLimited']), (False, False, False))
 
     def test_workers_alone_give_the_total_when_the_chief_is_a_known_zero(self):
         self.start()
@@ -89,26 +98,104 @@ class RoleUsageTests(unittest.TestCase):
         self.assertIsNone(result['total'])
         self.assertIsNone(self.tokens(result)['jefe'])
 
-    def test_workers_include_entries_older_than_30_days_since_start(self):
-        self.start(datetime.now(timezone.utc) - timedelta(days=90))
-        self.breakdown('claude', 0, since=datetime.now(timezone.utc) - timedelta(days=90))
-        self.rows(self.row(datetime.now(timezone.utc) - timedelta(days=60), 40), self.row(datetime.now(timezone.utc) - timedelta(days=100), 999))
-        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '40')
+    def test_workers_follow_the_selected_window_not_the_thirty_day_detail_or_the_old_start(self):
+        old = AS_OF - timedelta(days=90)
+        self.start(old)
+        for days, expected in ((7, '5'), (30, '45')):
+            self.breakdown('claude', 0, start=old, window=days)
+            self.rows(self.row(AS_OF - timedelta(days=60), 999), self.row(AS_OF - timedelta(days=20), 40), self.row(AS_OF - timedelta(days=1), 5))
+            self.assertEqual(self.tokens(role_usage.summary(AGENTS, window_days=days))['code'], expected)
 
-    def test_worker_entry_exactly_at_start_is_included(self):
+    def test_worker_entries_exactly_at_the_cut_and_at_the_snapshot_are_included_and_the_future_is_not(self):
         self.start()
         self.breakdown('claude', 0)
-        self.rows(self.row(START - timedelta(microseconds=1), 1000), self.row(START, 10), self.row(START + timedelta(microseconds=1), 5),
-                  self.row('2026-08-01T03:30:00-03:00', 100))  # the same instant as START in another offset
-        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '115')
+        self.rows(self.row(CUT - timedelta(microseconds=1), 1000), self.row(CUT, 10), self.row(CUT + timedelta(microseconds=1), 5),
+                  self.row('2026-11-13T09:00:00-03:00', 100),  # the same instant as the cut in another offset
+                  self.row(AS_OF, 20), self.row(AS_OF + timedelta(microseconds=1), 2000))
+        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '135')
 
     def test_ledger_larger_than_one_mib_keeps_oldest_totals(self):
         self.start()
         self.breakdown('claude', 0)
-        filler = [self.row(START + timedelta(minutes=minute), 1) for minute in range(1, 14000)]
-        self.rows(self.row(START, 700), *filler, self.row(START + timedelta(days=1), 1100))
+        filler = [self.row(CUT + timedelta(seconds=second), 1) for second in range(1, 14000)]
+        self.rows(self.row(CUT, 700), *filler, self.row(CUT + timedelta(days=1), 1100))
         self.assertGreater(role_usage.ledger().stat().st_size, 1024 * 1024)
         self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '15.8K')
+
+    def test_total_includes_jefe_four_workers_and_otros_once(self):
+        self.start()
+        self.breakdown('claude', 60, 5, otros=(30, 5))
+        for role, size in (('plan', 5), ('code', 10), ('review', 15), ('simple', 20)):
+            role_usage.record(role, 'claude', self.counters(size, size))
+        result = role_usage.summary(AGENTS)
+        self.assertEqual(self.tokens(result), {'jefe': '65', 'plan': '10', 'code': '20', 'review': '30', 'simple': '40', 'otros': '35'})
+        self.assertEqual(result['total'], '200')
+        self.assertEqual([row['role'] for row in result['roles']], ['jefe', 'plan', 'code', 'review', 'simple', 'otros'])
+        shares = {row['role']: row['share'] for row in result['roles']}
+        self.assertEqual((shares['otros'], shares['jefe']), (0.175, round(65 / 200, 4)))
+        otros = result['roles'][-1]
+        self.assertEqual(otros['name'], 'Otros')
+
+    def test_unknown_otros_or_selected_account_keeps_total_and_shares_unknown(self):
+        self.start()
+        self.breakdown('claude', 60, 5, otros=(30, 5))
+        result = role_usage.summary(BOTH)  # codex published nothing
+        self.assertIsNone(result['total'])
+        self.assertEqual(set(self.tokens(result).values()), {None})
+        self.assertTrue(all(row['share'] is None for row in result['roles']))
+        self.breakdown('codex', 10, 1, otros=(1, 1), as_of=AS_OF - timedelta(hours=1))  # another generation: no mixed sum
+        self.assertEqual(set(self.tokens(role_usage.summary(BOTH)).values()), {None})
+        self.assertIsNone(role_usage.summary(BOTH)['roles'][-1]['share'])
+
+    def test_zero_otros_requires_a_complete_valid_scan(self):
+        self.start()
+        self.breakdown('claude', 60, 5)  # a complete scan with no outside usage: a known zero
+        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['otros'], '0')
+        self.breakdown('claude', 60, 5, measured=False)  # no complete measurement of this window: unknown, never zero
+        result = role_usage.summary(AGENTS)
+        self.assertIsNone(self.tokens(result)['otros'])
+        self.assertIsNone(result['total'])
+
+    def test_otros_survives_an_unreadable_ledger_while_the_workers_stay_unknown(self):
+        self.start()
+        self.breakdown('claude', 50, otros=(7, 3))
+        role_usage.ledger().mkdir(parents=True)
+        result = role_usage.summary(AGENTS)
+        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None, 'otros': '10'})
+        self.assertIsNone(result['total'])
+
+    def test_otros_is_an_accounting_row_without_becoming_a_worker_role(self):
+        self.assertNotIn('otros', role_usage.WORKERS)
+        self.assertNotIn('otros', role_usage.ROLES)
+        self.assertEqual(role_usage.ACCOUNT_ROWS, role_usage.ROLES + ('otros',))
+        role_usage.record('otros', 'claude', self.counters())
+        self.assertFalse(role_usage.ledger().exists())
+
+    def test_ambiguous_origins_stay_jefe_and_enable_the_visible_note(self):
+        self.start()
+        self.breakdown('claude', 60, 5, limited=True)
+        result = role_usage.summary(AGENTS)
+        self.assertEqual((self.tokens(result)['jefe'], self.tokens(result)['otros'], result['classificationLimited']), ('65', '0', True))
+        self.breakdown('claude', 60, 5, limited=False)
+        self.assertFalse(role_usage.summary(AGENTS)['classificationLimited'])
+
+    def test_otros_uses_same_start_cutoff_asof_and_selected_accounts(self):
+        self.start()
+        self.breakdown('claude', 0, otros=(10, 5))
+        self.breakdown('codex', 0, otros=(100, 50))
+        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['otros'], '15')  # codex is not selected
+        both = role_usage.summary(BOTH)
+        self.assertEqual((self.tokens(both)['otros'], both['since'], both['asOf']), ('165', CUT.isoformat(), AS_OF.isoformat()))
+        self.breakdown('codex', 0, otros=(100, 50), window=30)  # another window: pending, no figure from either
+        self.assertIsNone(self.tokens(role_usage.summary(BOTH))['otros'])
+        self.assertIsNone(self.tokens(role_usage.summary(BOTH, window_days=30))['otros'])
+
+    def test_otros_does_not_change_role_settings_models_or_recipes(self):
+        import context_policy
+        import team
+        self.assertEqual(team.ROLES, ('plan', 'code', 'review', 'simple'))
+        self.assertEqual(context_policy.ROLES, ('jefe', 'plan', 'code', 'review', 'simple'))
+        self.assertEqual(role_usage.ROLES, ('jefe', 'plan', 'code', 'review', 'simple'))
 
     def test_record_does_not_prune_existing_history(self):
         old = self.row(datetime.now(timezone.utc) - timedelta(days=200), 5)
@@ -133,12 +220,12 @@ class RoleUsageTests(unittest.TestCase):
     def test_malformed_rows_and_other_accounts_are_ignored(self):
         self.start()
         self.breakdown('claude', 50)
-        now = datetime.now(timezone.utc)
+        now = AS_OF - timedelta(hours=1)
         self.rows(self.row(now - timedelta(days=45), 20), 'not json', '[]', json.dumps({'at': now.isoformat()}),
                   self.row('x', 1), self.row(now, 700, agent='codex'), self.row(now, 5, role='jefe'), self.row(now, True),
                   self.row(now, -3), json.dumps({'at': now.isoformat(), 'agent': 'claude', 'tokens': 9}), self.row(now, 80))
         roles = self.tokens(role_usage.summary(AGENTS))
-        self.assertEqual((roles['code'], roles['jefe']), ('100', '50'))
+        self.assertEqual((roles['code'], roles['jefe']), ('80', '50'))  # the 45-day-old run is outside the seven days
 
     def test_worker_tokens_use_total_input_plus_output_once(self):
         self.start()
@@ -152,7 +239,7 @@ class RoleUsageTests(unittest.TestCase):
         path = role_usage.ledger(); path.parent.mkdir(parents=True, exist_ok=True)
         os.mkfifo(path)
         result = role_usage.summary(AGENTS)
-        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None})
+        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None, 'otros': '0'})
         self.assertIsNone(result['total'])
         with self.assertRaises(OSError):  # no reader: refused at once, not blocked
             role_usage.record('plan', 'claude', self.counters())
@@ -162,7 +249,7 @@ class RoleUsageTests(unittest.TestCase):
         self.breakdown('claude', 50)
         role_usage.ledger().mkdir(parents=True)
         result = role_usage.summary(AGENTS)
-        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None})
+        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None, 'otros': '0'})
         self.assertIsNone(result['total'])
         self.assertEqual({row['share'] for row in result['roles']}, {None})
 
@@ -203,18 +290,20 @@ class RoleUsageTests(unittest.TestCase):
         self.assertEqual(role_usage.ledger().stat().st_mode & 0o777, 0o600)
         self.assertEqual(role_usage.ledger().parent.stat().st_mode & 0o777, 0o700)
 
-    def test_entries_before_a_start_in_the_future_are_excluded_and_the_start_does_not_move(self):
-        future = datetime.now(timezone.utc) + timedelta(hours=2)  # a clock that was ahead when the start was written
+    def test_a_start_in_the_future_of_the_snapshot_is_unknown_and_the_start_does_not_move(self):
+        future = AS_OF + timedelta(hours=2)  # a clock that was ahead when the start was written
         self.start(future)
-        self.breakdown('claude', 10, since=future)
+        self.breakdown('claude', 10, start=future, measured=False)  # the writer publishes no measurement for it
         role_usage.record('code', 'claude', self.counters())
         result = role_usage.summary(AGENTS)
-        self.assertEqual((self.tokens(result)['code'], self.tokens(result)['jefe']), ('0', '10'))
+        self.assertEqual(set(self.tokens(result).values()), {None})
+        self.assertEqual((result['start'], result['pending']), (future.isoformat(), True))
         self.assertEqual(json.loads(self.start_file.read_text())['since'], future.isoformat())
+        self.assertEqual(json.loads(role_usage.ledger().read_text())['tokens'], 120)  # the run is recorded, not lost
 
     def test_a_chief_block_from_another_start_is_unknown_without_a_thirty_day_fallback(self):
         self.start()
-        self.breakdown('claude', 50, since=START + timedelta(days=1))
+        self.breakdown('claude', 50, start=START + timedelta(days=1))
         result = role_usage.summary(AGENTS)
         self.assertIsNone(self.tokens(result)['jefe'])
         self.assertIsNone(result['total'])
@@ -276,11 +365,11 @@ class RoleUsageTests(unittest.TestCase):
                 shutil.rmtree(self.root, ignore_errors=True); self.root.mkdir()
                 self.start()
                 self.breakdown('claude', 0, 0)
-                self.rows(self.row(START + timedelta(hours=1), 7))
+                self.rows(self.row(CUT + timedelta(hours=1), 7))
                 outside = self.root / 'outside'
                 outside.mkdir(mode=0o700)
                 if outside_ledger:
-                    (outside / 'role-usage.jsonl').write_text(json.dumps(self.row(START + timedelta(hours=1), 999)) + '\n')
+                    (outside / 'role-usage.jsonl').write_text(json.dumps(self.row(CUT + timedelta(hours=1), 999)) + '\n')
                 before = self.snapshot_of(outside)
                 state, real, swapped = self.start_file.parent, role_usage.usage_start._read_start, []
 
@@ -294,9 +383,59 @@ class RoleUsageTests(unittest.TestCase):
                 with patch.object(role_usage.usage_start, '_read_start', read_then_replace_parent):
                     result = role_usage.summary(AGENTS)
                 self.assertEqual(swapped, [True])
-                self.assertEqual((result['since'], result['total']), (START.isoformat(), '7'))
+                self.assertEqual((result['since'], result['total']), (CUT.isoformat(), '7'))
                 self.assertEqual(self.tokens(result)['code'], '7')
                 self.assertEqual(self.snapshot_of(outside), before)
+
+    def test_summary_uses_snapshot_time_instead_of_live_clock(self):
+        self.start()
+        self.breakdown('claude', 10)
+        self.rows(self.row(CUT + timedelta(hours=1), 3))
+        with patch.object(role_usage, '_now', side_effect=AssertionError('live clock read')):
+            result = role_usage.summary(AGENTS)
+        self.assertEqual((self.tokens(result)['code'], result['asOf'], result['since']), ('3', AS_OF.isoformat(), CUT.isoformat()))
+
+    def test_old_compatible_snapshot_keeps_its_original_asof(self):
+        self.start()
+        old = AS_OF - timedelta(days=3)
+        self.breakdown('claude', 10, as_of=old)
+        self.rows(self.row(old - timedelta(days=6), 3), self.row(old - timedelta(days=8), 900), self.row(old + timedelta(hours=1), 900))
+        result = role_usage.summary(AGENTS)
+        self.assertEqual((result['asOf'], result['since'], self.tokens(result)['code']), (old.isoformat(), (old - timedelta(days=7)).isoformat(), '3'))
+        self.assertFalse(result['pending'])
+
+    def test_all_accounting_rows_use_the_same_closed_interval(self):
+        self.start()
+        self.breakdown('claude', 10)
+        self.breakdown('codex', 20)
+        self.rows(*(self.row(at, 1, role=role, agent=agent) for at in (CUT, AS_OF) for role in role_usage.WORKERS for agent in ('claude', 'codex')))
+        result = role_usage.summary(BOTH)
+        self.assertEqual(self.tokens(result), {'jefe': '30', 'plan': '4', 'code': '4', 'review': '4', 'simple': '4', 'otros': '0'})
+        self.assertEqual((result['since'], result['asOf']), (CUT.isoformat(), AS_OF.isoformat()))
+
+    def test_workers_after_snapshot_time_are_excluded(self):
+        self.start()
+        self.breakdown('claude', 10)
+        self.rows(self.row(AS_OF + timedelta(seconds=1), 500), self.row(AS_OF, 5))
+        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '5')
+
+    def test_missing_selected_account_keeps_total_unknown_and_pending(self):
+        self.start()
+        self.breakdown('claude', 10)
+        self.rows(self.row(CUT, 5))
+        result = role_usage.summary(BOTH)  # codex has no snapshot: neither the chief nor the workers are a partial sum
+        self.assertEqual((result['pending'], result['total']), (True, None))
+        self.assertEqual(set(self.tokens(result).values()), {None})
+
+    def test_a_partial_window_is_flagged_and_the_selected_window_other_than_the_snapshot_is_pending(self):
+        recent = AS_OF - timedelta(days=2)
+        self.start(recent)
+        self.breakdown('claude', 10, start=recent)
+        result = role_usage.summary(AGENTS)
+        self.assertEqual((result['partialWindow'], result['since'], result['pending']), (True, recent.isoformat(), False))
+        pending = role_usage.summary(AGENTS, window_days=30)  # the snapshot was measured for seven days
+        self.assertEqual((pending['pending'], pending['total'], pending['windowDays']), (True, None, 30))
+        self.assertEqual(set(self.tokens(pending).values()), {None})
 
     def snapshot_of(self, folder):
         return {p.name: p.read_bytes() for p in sorted(folder.iterdir())}
@@ -310,7 +449,7 @@ class RoleUsageTests(unittest.TestCase):
         if os.access(role_usage.ledger(), os.R_OK):
             self.skipTest('running with privileges that ignore file modes')
         result = role_usage.summary(AGENTS)
-        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None})
+        self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None, 'otros': '0'})
         self.assertIsNone(result['total'])
 
 
@@ -322,7 +461,7 @@ class RoleUsageTests(unittest.TestCase):
         before, fixture = len(os.listdir('/proc/self/fd')), self.snapshot()
         for _ in range(20):
             result = role_usage.summary(AGENTS)
-            self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None})
+            self.assertEqual(self.tokens(result), {'jefe': '50', 'plan': None, 'code': None, 'review': None, 'simple': None, 'otros': '0'})
             self.assertIsNone(result['total'])
             self.assertTrue(all(row['share'] is None for row in result['roles']))
         self.assertEqual(len(os.listdir('/proc/self/fd')), before)
