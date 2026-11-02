@@ -28,6 +28,24 @@ def claude_line(message_id, *, model='claude-opus-5-5', cwd='/home/u/Work/a', to
     return json.dumps(entry)
 
 
+def codex_context(cwd='/home/u/Work/a', model='gpt-6.1-sol', days_ago=0):
+    return json.dumps({'timestamp': stamp(days_ago), 'type': 'turn_context', 'payload': {'cwd': cwd, 'model': model}})
+
+
+def codex_tool(name='exec', kind='custom_tool_call', days_ago=0):
+    return json.dumps({'timestamp': stamp(days_ago), 'type': 'response_item', 'payload': {'type': kind, 'name': name}})
+
+
+def codex_count(input_tokens=1000, cached=400, written=0, output=100, days_ago=0, record=True):
+    usage = {'input_tokens': input_tokens, 'cached_input_tokens': cached, 'cache_write_input_tokens': written,
+             'output_tokens': output, 'reasoning_output_tokens': 7, 'total_tokens': input_tokens + output}
+    lines = [json.dumps({'timestamp': stamp(days_ago), 'type': 'event_msg',
+                         'payload': {'type': 'token_count', 'info': {'last_token_usage': usage, 'total_token_usage': usage}}})]
+    if record:
+        lines.append(json.dumps({'timestamp': stamp(days_ago), 'type': 'event_msg', 'payload': {'type': 'token_usage_record'}}))
+    return '\n'.join(lines)
+
+
 class ClaudeScanTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
@@ -120,6 +138,73 @@ class ClaudeScanTests(unittest.TestCase):
     def test_no_messages_returns_none(self):
         self.assertIsNone(self.scan())
         self.write('{}', '[1,2]')
+        self.assertIsNone(self.scan())
+
+
+class CodexScanTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def write(self, *lines, name='rollout.jsonl'):
+        folder = self.root / '2026' / '11' / '02'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text('\n'.join(lines) + '\n')
+
+    def scan(self, days=30, price_table=None):
+        return breakdown.scan_codex(self.root, price_table or prices.DEFAULT_PRICES, days, NOW)
+
+    def test_codex_input_includes_cached_tokens(self):
+        self.write(codex_context(), codex_count(input_tokens=17438, cached=12288, output=126))
+        self.assertEqual(self.scan()['byKind'], {'input': 5150, 'output': 126, 'cacheRead': 12288, 'cacheWrite': 0})
+
+    def test_cache_writes_are_not_counted_as_fresh_input(self):
+        self.write(codex_context(), codex_count(input_tokens=1000, cached=300, written=200, output=0))
+        self.assertEqual(self.scan()['byKind'], {'input': 500, 'output': 0, 'cacheRead': 300, 'cacheWrite': 200})
+
+    def test_cwd_and_model_come_from_the_latest_turn_context(self):
+        self.write(codex_context('/p/one', 'gpt-6-sol'), codex_count(), codex_context('/p/two', 'gpt-6.1-sol'), codex_count())
+        result = self.scan()
+        self.assertEqual({row['path'] for row in result['byProject']}, {'/p/one', '/p/two'})
+        self.assertEqual({row['model'] for row in result['byModel']}, {'gpt-6-sol', 'gpt-6.1-sol'})
+
+    def test_tool_calls_between_two_token_counts_get_that_turns_tokens(self):
+        self.write(codex_context(), codex_tool('exec'), codex_tool('exec'), codex_tool('wait', 'function_call'),
+                   codex_count(input_tokens=600, cached=0, output=0, record=False),
+                   codex_count(input_tokens=60, cached=0, output=0, record=False))
+        tools = {row['name']: row['total'] for row in self.scan()['byTool']}
+        self.assertEqual(tools, {'exec': 400, 'wait': 200, '(solo texto)': 60})
+
+    def test_token_usage_record_events_are_not_double_counted(self):
+        self.write(codex_context(), codex_count(input_tokens=100, cached=0, output=0, record=True))
+        self.assertEqual(self.scan()['byKind']['input'], 100)
+
+    def test_codex_models_have_null_cost_and_are_listed_as_unpriced(self):
+        self.write(codex_context(), codex_count())
+        result = self.scan()
+        self.assertIsNone(result['costUsd'])
+        self.assertIsNone(result['byModel'][0]['costUsd'])
+        self.assertEqual(result['unpricedModels'], ['gpt-6.1-sol'])
+
+    def test_a_filled_in_price_is_used(self):
+        table = {**prices.DEFAULT_PRICES, 'gpt-6.1-sol': {'input': 1.0, 'output': 2.0, 'cacheRead': 0.1, 'cacheWrite': 1.0}}
+        self.write(codex_context(), codex_count(input_tokens=2_000_000, cached=1_000_000, output=500_000))
+        self.assertAlmostEqual(self.scan(price_table=table)['costUsd'], 1.0 + 1.0 + 0.1)
+
+    def test_codex_corrupt_lines_and_missing_cwd(self):
+        self.write('{"type":"event_ms', codex_count(), '', 'garbage')
+        result = self.scan()
+        self.assertEqual(result['byProject'][0]['path'], '(sin proyecto)')
+        self.assertEqual(result['byModel'][0]['model'], 'unknown')
+
+    def test_session_meta_cwd_is_the_fallback_project(self):
+        meta = json.dumps({'timestamp': stamp(), 'type': 'session_meta', 'payload': {'cwd': '/p/meta'}})
+        self.write(meta, codex_count())
+        self.assertEqual(self.scan()['byProject'][0]['path'], '/p/meta')
+
+    def test_codex_window_and_empty_return_none(self):
+        self.assertIsNone(self.scan())
+        self.write(codex_context(), codex_count(days_ago=31))
         self.assertIsNone(self.scan())
 
 
