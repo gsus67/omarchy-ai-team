@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,6 +52,33 @@ class UsageSummaryTests(unittest.TestCase):
         (self.records / 'claude.json').write_text(json.dumps({'id': 'claude', 'limits': []}))
         self.record('codex', ('5h window', 'lots'), ('Weekly (7-day)', None))
         self.assertEqual(usage_summary.rows(self.agents('claude', 'codex')), [])
+
+    def test_a_window_that_already_reset_counts_as_zero(self):
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        (self.records / 'claude.json').write_text(json.dumps({'id': 'claude', 'limits': [
+            {'label': 'Session (5-hour)', 'percent': 1.0, 'resetsAt': past},
+            {'label': 'Weekly (7-day)', 'percent': 0.5, 'resetsAt': future}]}))
+        row = usage_summary.rows(self.agents('claude'))[0]
+        self.assertEqual((row['five'], row['weekly']), (0, 50))
+
+    def test_percentages_are_fractions_between_zero_and_one(self):
+        self.record('claude', ('Session (5-hour)', 1.5), ('Weekly (7-day)', 10))
+        self.assertEqual(usage_summary.rows(self.agents('claude')), [])
+        self.record('codex', ('5h window', 1), ('Weekly (7-day)', 0))
+        row = usage_summary.rows(self.agents('codex'))[0]
+        self.assertEqual((row['five'], row['weekly']), (100, 0))
+
+    def test_only_regular_files_are_read_and_links_are_ignored(self):
+        outside = self.root / 'outside.json'
+        outside.write_text(json.dumps({'limits': [{'label': 'Session (5-hour)', 'percent': 0.5}]}))
+        (self.records / 'claude.json').symlink_to(outside)
+        os.mkfifo(self.records / 'codex.json')
+        self.assertEqual(usage_summary.rows(self.agents('claude', 'codex')), [])
+
+    def test_a_deeply_nested_record_is_skipped_instead_of_aborting(self):
+        (self.records / 'claude.json').write_text('{"limits": ' + '[' * 200000 + ']' * 200000 + '}')
+        self.assertEqual(usage_summary.rows(self.agents('claude')), [])
 
     def test_nothing_is_read_outside_the_state_directory(self):
         self.record('claude', ('Session (5-hour)', 0.1))
