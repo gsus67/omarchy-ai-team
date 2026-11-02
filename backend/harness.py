@@ -364,7 +364,6 @@ def refresh_connections(config, keys=MANAGED):
         if team.families(team_context(config)[0]).count('codex'):
             warning = refresh_team_models(config)
             if warning: errors.append(warning)
-        team.reconcile(config, *team_context(config))
         save_config(config)
     current = status(config); inventory, _ = mise_inventory()
     for component in current['components']:
@@ -400,7 +399,6 @@ def refresh_team_models(config):
                        for effort in row.get('supportedReasoningEfforts', [])) for row in rows)):
             raise HarnessError(tr('El catálogo de modelos no es compatible.'))
         config['teamModels'] = {'codex': rows, 'checkedAt': datetime.now(timezone.utc).isoformat()}
-        team.reconcile(config, *team_context(config))
         return ''
     except (HarnessError, native_plugins.PluginError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         warning = tr('Aviso: se conserva el catálogo anterior. {error}', error=str(error))
