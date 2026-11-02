@@ -310,6 +310,12 @@ class CombinationTests(unittest.TestCase):
         state = {**team.effective(config, SELECTED, catalog, []), 'selected': sorted(SELECTED)}
         self.assertIn('Revisar no tiene alternativa permitida', native_team.text(self.paths, self.root / 'settings.json', state))
 
+    def test_skill_says_when_any_role_has_no_alternative(self):
+        state = {**self.state, 'options': []}
+        text = native_team.text(self.paths, self.root / 'settings.json', state)
+        for key in team.ROLES:
+            self.assertIn(f'{team.LABELS[key]} no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', text)
+
 
 class OnlyPiTests(unittest.TestCase):
     A, B, C = 'nous/a:free', 'nous/b:free', 'nous/c:free'
