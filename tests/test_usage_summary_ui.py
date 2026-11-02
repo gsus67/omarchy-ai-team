@@ -10,7 +10,7 @@ OLD_ICON = '\U000f06a9'              # AI Team's former robot, too close to the 
 class UsageSummaryUiTests(unittest.TestCase):
     def test_the_front_page_lists_one_clickable_row_of_bars_per_account_below_the_switches(self):
         source = (ROOT / 'HarnessContent.qml').read_text()
-        block = re.search(r'objectName: "usage-summary".*?(?=\n        Ui\.PanelSeparator)', source, re.S)
+        block = re.search(r'objectName: "usage-summary".*?(?=\n        RowLayout \{\n          Layout\.fillWidth: true\n          spacing: Style\.space\(2\)\n          Ui\.Button \{\n            objectName: "launch-default")', source, re.S)
         self.assertTrue(block, 'the usage summary is missing')
         block = block.group(0)
         self.assertIn('root.snapshot.usage', block)
@@ -40,6 +40,26 @@ class UsageSummaryUiTests(unittest.TestCase):
         page = (ROOT / 'UsagePage.qml').read_text()
         self.assertIn('labelWidth: Style.space(96)', page)
         self.assertIn('Layout.leftMargin: Style.space(96 + 4)', page)
+
+    def test_bars_use_the_same_theme_colors_and_motion_as_the_official_meter(self):
+        source = (ROOT / 'UsageBar.qml').read_text()
+        self.assertIn('root.high ? Commons.Color.urgent : Commons.Color.foreground', source)
+        self.assertIn('Style.selectedFillFor(Commons.Color.foreground, Commons.Color.accent)', source)
+        self.assertIn('Behavior on width', source)
+        self.assertIn('metrics.controlHeight * 0.14', source)
+
+    def test_every_row_and_section_is_closed_by_a_discreet_divider(self):
+        row = (ROOT / 'CompactRow.qml').read_text()
+        self.assertIn('property bool divider: true', row)
+        self.assertIn('Ui.PanelSeparator', row)
+        self.assertIn('strength: 0.08', row)
+        self.assertIn('Ui.PanelSeparator', (ROOT / 'UsageRow.qml').read_text())
+        page = (ROOT / 'UsagePage.qml').read_text()
+        self.assertGreaterEqual(page.count('Ui.PanelSeparator'), 4)
+
+    def test_the_front_page_has_no_doubled_line_before_the_launcher(self):
+        source = (ROOT / 'HarnessContent.qml').read_text()
+        self.assertNotIn('Ui.PanelSeparator { Layout.fillWidth: true }\n\n        RowLayout {\n          Layout.fillWidth: true\n          spacing: Style.space(2)\n          Ui.Button {\n            objectName: "launch-default"', source)
 
     def test_the_bar_icon_differs_from_the_consumption_panel_icon(self):
         source = (ROOT / 'Panel.qml').read_text()

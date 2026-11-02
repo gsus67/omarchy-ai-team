@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
+import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 
@@ -56,6 +57,11 @@ Item {
       label: root.weeklyLabel
       percent: root.row.weekly === undefined ? null : root.row.weekly
     }
+  }
+
+  Ui.PanelSeparator {
+    anchors.bottom: parent.bottom
+    strength: 0.08
   }
 
   HoverHandler { id: hover }
