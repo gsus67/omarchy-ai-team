@@ -190,9 +190,10 @@ class ReviewFamilyTests(unittest.TestCase):
     def test_manual_configuration_that_breaks_the_rule_warns_and_is_kept(self):
         config = manual_config(plan=('claude', 'opus', 'high'), review=('claude', 'sonnet', 'high'))
         state = team.effective(config, SELECTED, CODEX_CATALOG, [])
-        self.assertEqual(state['roles']['review']['model'], 'sonnet')
-        self.assertTrue(state['roles']['review']['manual'])
-        self.assertIn('misma familia (Claude)', ' '.join(state['warnings']))
+        self.assertFalse(state['roles']['review']['manual'])
+        self.assertNotEqual(state['roles']['review']['agent'], 'claude')
+        self.assertIn('misma familia que Planificar', ' '.join(state['warnings']))
+        self.assertEqual(config['team']['roles']['review']['model'], 'sonnet')
 
     def test_a_broken_configuration_does_not_block_other_roles(self):
         config = manual_config(plan=('claude', 'opus', 'high'), review=('claude', 'sonnet', 'high'))

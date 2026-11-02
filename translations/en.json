@@ -660,6 +660,7 @@
   "{nombre}: sin instalar": "{nombre}: not installed",
   "{nombre}: {error}": "{nombre}: {error}",
   "{nombre}: {estado}": "{nombre}: {estado}",
+  "{papel}: {modelo} es de la misma familia que Planificar; se usa el recomendado y se conserva tu elección.": "{papel}: {modelo} is in the same family as Plan; the recommended one is used and your choice is kept.",
   "{papel}: {modelo} ya no está disponible (agente, modelo o esfuerzo); se usa el recomendado y se conserva tu elección.": "{papel}: {modelo} is no longer available (agent, model, or effort); the recommended setting is used and your choice is kept.",
   "{proyectos} proyectos · {nuevas} nuevas": "{proyectos} projects · {nuevas} new",
   "{proyecto} · {cantidad} memoria": "{proyecto} · {cantidad} memory",
