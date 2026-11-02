@@ -1,4 +1,6 @@
+import itertools
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -36,11 +38,15 @@ def codex_tool(name='exec', kind='custom_tool_call', days_ago=0):
     return json.dumps({'timestamp': stamp(days_ago), 'type': 'response_item', 'payload': {'type': kind, 'name': name}})
 
 
+_COUNTER = itertools.count(1)
+
+
 def codex_count(input_tokens=1000, cached=400, written=0, output=100, days_ago=0, record=True):
     usage = {'input_tokens': input_tokens, 'cached_input_tokens': cached, 'cache_write_input_tokens': written,
              'output_tokens': output, 'reasoning_output_tokens': 7, 'total_tokens': input_tokens + output}
+    total = dict(usage, total_tokens=next(_COUNTER))  # cumulative totals only repeat when Codex repeats the event
     lines = [json.dumps({'timestamp': stamp(days_ago), 'type': 'event_msg',
-                         'payload': {'type': 'token_count', 'info': {'last_token_usage': usage, 'total_token_usage': usage}}})]
+                         'payload': {'type': 'token_count', 'info': {'last_token_usage': usage, 'total_token_usage': total}}})]
     if record:
         lines.append(json.dumps({'timestamp': stamp(days_ago), 'type': 'event_msg', 'payload': {'type': 'token_usage_record'}}))
     return '\n'.join(lines)
@@ -190,6 +196,43 @@ class CodexScanTests(unittest.TestCase):
         table = {**prices.DEFAULT_PRICES, 'gpt-6.1-sol': {'input': 1.0, 'output': 2.0, 'cacheRead': 0.1, 'cacheWrite': 1.0}}
         self.write(codex_context(), codex_count(input_tokens=2_000_000, cached=1_000_000, output=500_000))
         self.assertAlmostEqual(self.scan(price_table=table)['costUsd'], 1.0 + 1.0 + 0.1)
+
+    def test_a_repeated_token_count_with_unchanged_totals_is_counted_once(self):
+        # Codex re-emits token_count when only the rate limits change; the cumulative totals do not move.
+        repeated = codex_count(input_tokens=100, cached=0, output=0, record=False)
+        self.write(codex_context(), repeated, repeated, codex_count(input_tokens=50, cached=0, output=0, record=False))
+        self.assertEqual(self.scan()['byKind']['input'], 150)
+
+    def test_symlinked_transcripts_are_not_followed(self):
+        outside = self.root.parent / ('outside-%d.jsonl' % os.getpid())
+        outside.write_text(codex_context() + '\n' + codex_count(input_tokens=999, cached=0, output=0) + '\n')
+        self.addCleanup(outside.unlink)
+        folder = self.root / 'x'
+        folder.mkdir()
+        (folder / 'alias.jsonl').symlink_to(outside)
+        self.assertIsNone(self.scan())
+
+    def test_an_unreadable_transcript_fails_the_scan_instead_of_hiding_it(self):
+        self.write(codex_context(), codex_count())
+        target = next(self.root.rglob('rollout.jsonl'))
+        target.chmod(0)
+        self.addCleanup(target.chmod, 0o600)
+        if os.access(target, os.R_OK):
+            self.skipTest('running with privileges that ignore file modes')
+        with self.assertRaises(PermissionError):
+            self.scan()
+
+    def test_a_file_that_disappears_during_the_scan_is_tolerated(self):
+        self.write(codex_context(), codex_count())
+        original = breakdown._recent_files
+
+        def vanishing(root, cutoff):
+            for path in original(root, cutoff):
+                path.unlink()
+                yield path
+        breakdown._recent_files = vanishing
+        self.addCleanup(setattr, breakdown, '_recent_files', original)
+        self.assertIsNone(self.scan())
 
     def test_codex_corrupt_lines_and_missing_cwd(self):
         self.write('{"type":"event_ms', codex_count(), '', 'garbage')

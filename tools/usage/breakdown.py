@@ -99,25 +99,29 @@ class _Totals:
 
 
 def _lines(path):
+    """JSON objects of a JSONL file; unreadable files raise (a partial scan must not look complete)."""
     try:
-        with path.open('r', encoding='utf-8', errors='replace') as handle:
-            for line in handle:
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(entry, dict):
-                    yield entry
-    except OSError:
-        return
+        handle = path.open('r', encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        return  # rotated away while scanning
+    with handle:
+        for line in handle:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                yield entry
 
 
 def _recent_files(root, cutoff):
     for path in sorted(root.rglob('*.jsonl')) if root.is_dir() else []:
+        if path.is_symlink():
+            continue  # an alias could pull in (or duplicate) files from outside the profile
         try:
             if datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) >= cutoff:
                 yield path
-        except OSError:
+        except FileNotFoundError:
             continue
 
 
@@ -166,7 +170,7 @@ def scan_codex(sessions_dir, prices, days, now):
     cutoff = now - timedelta(days=days)
     totals = _Totals(prices, days)
     for path in _recent_files(sessions_dir, cutoff):
-        project = model = None
+        project = model = last_total = None
         pending = []
         for entry in _lines(path):
             payload = entry.get('payload')
@@ -188,6 +192,11 @@ def scan_codex(sessions_dir, prices, days, now):
                 moment = _moment(entry.get('timestamp'))
                 if not isinstance(usage, dict) or moment is None or moment < cutoff:
                     continue
+                total = info.get('total_token_usage')
+                if isinstance(total, dict):
+                    if total == last_total:
+                        continue  # Codex repeats the event when only the rate limits changed
+                    last_total = total
                 cached = _number(usage.get('cached_input_tokens'))
                 written = _number(usage.get('cache_write_input_tokens'))
                 kinds = {'input': max(0, _number(usage.get('input_tokens')) - cached - written),

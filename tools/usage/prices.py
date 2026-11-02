@@ -8,6 +8,7 @@ The user edits ~/.config/omarchy/agents/prices.json to fill them in.
 
 import copy
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -43,6 +44,14 @@ def _write_private(path, data):
         Path(temporary).unlink(missing_ok=True)
 
 
+def _valid_row(row):
+    """Every price must be None or a finite, non-negative number (not a bool)."""
+    return isinstance(row, dict) and all(
+        row.get(kind) is None or (isinstance(row[kind], (int, float)) and not isinstance(row[kind], bool)
+                                  and math.isfinite(row[kind]) and row[kind] >= 0)
+        for kind in KINDS)
+
+
 def load_prices(path):
     """Defaults merged with the user's file; the file is created if missing, never rewritten if broken."""
     path = Path(path)
@@ -57,7 +66,7 @@ def load_prices(path):
     if not isinstance(user, dict):
         return defaults
     for model, row in user.items():
-        if isinstance(row, dict):
+        if _valid_row(row):
             defaults[model] = {kind: row.get(kind) for kind in KINDS}
     return defaults
 
