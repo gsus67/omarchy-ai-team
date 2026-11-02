@@ -29,8 +29,10 @@ ColumnLayout {
   signal restoreRequested(var arguments, string explanation)
   signal authorizationRequested(var arguments, string explanation)
   signal uninstallRequested(var arguments, string explanation)
+  signal errorDismissed()
   spacing: Style.space(6)
   onPageChanged: {
+    if (root.errorText !== "") root.errorDismissed()  // an error belongs to the page where it happened
     root.scrollTop()
     root.teamModelsPending = root.page === "team"
     root.refreshTeamModels()
@@ -45,7 +47,7 @@ ColumnLayout {
 
   function goBack() {
     if (root.page === "") return
-    root.page = root.page === "team" || root.page === "context" || (root.snapshot.agents || []).some(agent => agent.id === root.page) ? "settings" : ""
+    root.page = root.page === "team" || root.page === "context" || root.page === "prices" || (root.snapshot.agents || []).some(agent => agent.id === root.page) ? "settings" : ""
   }
 
   function scrollTop() {
@@ -193,6 +195,16 @@ ColumnLayout {
           }
         }
 
+        CompactRow {
+          objectName: "usage-total"
+          Layout.fillWidth: true
+          visible: !!root.snapshot.roleUsage
+          label: root.tr("Total")
+          status: (root.snapshot.roleUsage || {}).total || ""
+          switchVisible: false
+          onOpened: root.page = "roles"
+        }
+
         RowLayout {
           Layout.fillWidth: true
           spacing: Style.space(2)
@@ -232,6 +244,7 @@ ColumnLayout {
           agent: modelData
           components: root.snapshot.components || []
           pi: root.snapshot.pi || ({})
+          check: ((root.snapshot.aiCheck || {}).results || []).find(item => item.agent === modelData.id) || ({})
           busy: root.busy
           onCommandRequested: arguments => root.commandRequested(arguments)
           onAuthorizationRequested: (arguments, explanation) => root.authorizationRequested(arguments, explanation)
@@ -323,6 +336,13 @@ ColumnLayout {
         account: (root.snapshot.usage || []).find(row => row.id === root.usageAccount) || ({})
       }
 
+      RolesPage {
+        translations: root.translations
+        visible: root.page === "roles"
+        Layout.fillWidth: true
+        info: root.snapshot.roleUsage || ({})
+      }
+
       ContextPage {
         translations: root.translations
         visible: root.page === "context"
@@ -332,7 +352,17 @@ ColumnLayout {
         onCommandRequested: arguments => root.commandRequested(arguments)
       }
 
+      PricesPage {
+        translations: root.translations
+        visible: root.page === "prices"
+        Layout.fillWidth: true
+        info: root.snapshot.prices || ({})
+        busy: root.busy
+        onCommandRequested: arguments => root.commandRequested(arguments)
+      }
+
       SettingsPage {
+        prices: root.snapshot.prices || ({})
         languagePreference: root.snapshot.languagePreference || "system"
         translations: root.translations
         visible: root.page === "settings"

@@ -22,13 +22,16 @@ class SettingsLayoutTests(unittest.TestCase):
             for block in re.finditer(r'\n( *)RowLayout \{\n((?:\1  .*\n)+)', path.read_text()):
                 self.assertLess(len(re.findall(r'Ui\.Button \{', block.group(2))), 2, page)
 
-    def test_settings_groups_the_agents_by_family_in_separate_blocks(self):
+    def test_settings_lists_all_the_agents_in_one_wrapping_block(self):
         source = (ROOT / 'SettingsPage.qml').read_text()
-        self.assertIn('readonly property var agentGroups', source)
-        for family in ('Claude Code', 'Codex', 'Pi'):
-            self.assertIn('"' + family + '"', source)
-        self.assertNotRegex(source, r'Repeater \{\n    model: root\.agents\n')
-        self.assertIn('model: root.agentGroups', source)
+        self.assertIn('model: root.orderedAgents', source)
+        self.assertRegex(source, r'Flow \{[^}]*?Repeater \{\n      model: root\.orderedAgents')
+        self.assertNotIn('agentGroups', source)
+
+    def test_ai_check_results_live_in_each_agent_page(self):
+        self.assertNotIn('aiCheck.results', (ROOT / 'SettingsPage.qml').read_text())
+        self.assertIn('"ai-check-" + root.agent.id', (ROOT / 'AgentPage.qml').read_text())
+        self.assertIn('check: ((root.snapshot.aiCheck || {}).results || [])', (ROOT / 'HarnessContent.qml').read_text())
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@ ColumnLayout {
   property var agent: ({})
   property var components: []
   property var pi: ({})
+  property var check: ({})  // result of the last AI check for this agent, if any
   property bool busy: false
   readonly property var fonts: Style.font
   readonly property bool installed: root.agent.installation === "installed"
@@ -31,6 +32,36 @@ ColumnLayout {
     status: root.agent.installation === "missing-profile" ? root.tr("Perfil sin crear · inicia sesión para crearlo") : root.installed ? root.agent.version || root.tr("Instalado") : root.tr("No instalado")
     switchVisible: false
     navigationEnabled: false
+  }
+  CompactRow {
+    objectName: "ai-check-" + root.agent.id
+    Layout.fillWidth: true
+    visible: !!root.check.agent
+    label: root.tr("Comprobación con IA")
+    status: root.check.skipped ? root.tr("Omitido") : root.check.ok ? root.tr("Funciona") : root.tr("Fallos")
+    switchVisible: false
+    navigationEnabled: false
+  }
+  Text {
+    Layout.fillWidth: true
+    visible: text !== ""
+    text: (root.check.failures || []).concat(root.check.warnings || []).join("\n")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
+  Text {
+    Layout.fillWidth: true
+    visible: text !== ""
+    text: (root.check.tokens !== undefined ? [root.tr("Tokens: {cantidad}", {cantidad: root.check.tokens})] : [])
+      .concat(root.check.cost !== undefined ? [root.tr("Coste (USD): {coste}", {coste: root.check.cost})] : []).join(" · ")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
   }
   Repeater {
     model: root.components.filter(component => component.integration === "native")
