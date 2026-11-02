@@ -1,0 +1,47 @@
+import re
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class PricesUiTests(unittest.TestCase):
+    def test_page_is_mounted_and_goes_back_to_settings(self):
+        source = (ROOT / 'HarnessContent.qml').read_text()
+        self.assertRegex(source, re.compile(r'PricesPage \{.*?visible: root\.page === "prices".*?root\.snapshot\.prices', re.S))
+        self.assertIn('root.page === "prices"', re.search(r'function goBack\(\) \{.*?\n  \}', source, re.S)[0])
+
+    def test_settings_row_shows_how_many_prices_are_missing(self):
+        source = (ROOT / 'SettingsPage.qml').read_text()
+        self.assertIn('pageRequested("prices")', source)
+        self.assertIn('root.prices.missing', source)
+
+    def test_page_sends_the_backend_commands_and_wraps(self):
+        page = (ROOT / 'PricesPage.qml').read_text()
+        self.assertIn('["price-autofill"]', page)
+        self.assertIn('["price-save", JSON.stringify(changes)]', page)
+        self.assertEqual(page.count('Ui.Button {'), 2)  # autofill + one save for the whole page
+        self.assertIn('Flow {', page)
+        self.assertIn('Ui.PanelSeparator', page)
+
+
+class PanelBehaviourTests(unittest.TestCase):
+    def test_an_error_is_dropped_when_the_page_changes(self):
+        self.assertIn('root.errorDismissed()', (ROOT / 'HarnessContent.qml').read_text())
+        self.assertIn('onErrorDismissed: root.errorText = ""', (ROOT / 'Panel.qml').read_text())
+
+    def test_team_picks_the_provider_first_and_lists_only_its_models_alphabetically(self):
+        page = (ROOT / 'TeamPage.qml').read_text()
+        self.assertIn('objectName: "team-provider-"', page)
+        self.assertIn('filter(option => option.agent === role.current.agent).slice()', page)
+        self.assertIn('a.model.localeCompare(b.model', page)
+
+    def test_agents_are_listed_by_provider_everywhere(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'backend'))
+        import harness
+        self.assertEqual(list(harness.AGENTS), ['claude', 'claude-2', 'codex', 'codex-2', 'pi'])
+
+
+if __name__ == '__main__':
+    unittest.main()

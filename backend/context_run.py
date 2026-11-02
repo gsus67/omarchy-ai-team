@@ -13,6 +13,7 @@ import context_state
 from i18n import tr
 import atomic_files
 import native_launcher
+import role_usage
 
 REPORT_FIELDS = ('status', 'references', 'tests', 'error', 'pending')
 SCHEMA = {'type': 'object', 'properties': {k: {'type': 'string'} for k in REPORT_FIELDS},
@@ -320,6 +321,11 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
     if measure:
         # Without a single counted event the totals are unknown, never an invented zero.
         _write_snapshots(capsule['id'], after=_snapshot(agent, totals if turns else dict.fromkeys(COUNTERS), turns))
+        if turns:
+            try:
+                role_usage.record(role, agent, totals)
+            except OSError:
+                pass  # the ledger is only a convenience for the usage screen
     if code or fatal:
         final = _failure(fatal or str(tr('La CLI nativa terminó con código {code}; stderr descartado.', code=code)))
     elif final is None:
