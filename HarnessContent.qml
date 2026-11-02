@@ -193,8 +193,6 @@ ColumnLayout {
           }
         }
 
-        Ui.PanelSeparator { Layout.fillWidth: true }
-
         RowLayout {
           Layout.fillWidth: true
           spacing: Style.space(2)

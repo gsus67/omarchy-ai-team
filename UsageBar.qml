@@ -11,8 +11,9 @@ RowLayout {
   property real labelWidth: Style.space(24)
   property var percent: null
   readonly property var fonts: Style.font
+  readonly property var metrics: Style.spacing
   readonly property bool high: root.percent !== null && root.percent >= 90
-  readonly property color fill: root.high ? Commons.Color.urgent : Commons.Color.accent
+  readonly property color fill: root.high ? Commons.Color.urgent : Commons.Color.foreground
   Layout.minimumWidth: 0
   spacing: Style.space(4)
 
@@ -29,7 +30,7 @@ RowLayout {
   Rectangle {
     Layout.fillWidth: true
     Layout.minimumWidth: Style.space(24)
-    Layout.preferredHeight: Style.space(6)
+    Layout.preferredHeight: Math.max(Style.space(4), Math.round(root.metrics.controlHeight * 0.14))
     radius: height / 2
     color: Style.selectedFillFor(Commons.Color.foreground, Commons.Color.accent)
 
@@ -38,6 +39,10 @@ RowLayout {
       height: parent.height
       radius: parent.radius
       color: root.fill
+
+      Behavior on width {
+        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+      }
     }
   }
 

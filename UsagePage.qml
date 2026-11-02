@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import "I18n.js" as I18n
 import QtQuick.Layouts
+import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 
@@ -88,6 +89,7 @@ ColumnLayout {
     }
   }
 
+  Ui.PanelSeparator { visible: (root.account.models || []).length > 0; Layout.fillWidth: true; strength: 0.08 }
   Heading {
     visible: (root.account.models || []).length > 0
     text: root.tr("Tokens por modelo")
@@ -101,6 +103,7 @@ ColumnLayout {
     }
   }
 
+  Ui.PanelSeparator { visible: root.spend !== null; Layout.fillWidth: true; strength: 0.08 }
   Heading {
     visible: root.spend !== null
     text: root.tr("Dónde se gastan") + (root.spend ? " · " + root.tr("Coste estimado:") + " " + root.spend.cost : "")
@@ -114,6 +117,7 @@ ColumnLayout {
       value: modelData.tokens
     }
   }
+  Ui.PanelSeparator { visible: root.spend !== null && root.spend.projects.length > 0; Layout.fillWidth: true; strength: 0.08 }
   Heading { visible: root.spend !== null && root.spend.projects.length > 0; text: root.tr("Por proyecto") }
   Repeater {
     model: root.spend ? root.spend.projects : []
@@ -123,6 +127,7 @@ ColumnLayout {
       value: modelData.tokens + " · " + modelData.cost
     }
   }
+  Ui.PanelSeparator { visible: root.spend !== null && root.spend.tools.length > 0; Layout.fillWidth: true; strength: 0.08 }
   Heading { visible: root.spend !== null && root.spend.tools.length > 0; text: root.tr("Por herramienta") }
   Repeater {
     model: root.spend ? root.spend.tools : []
