@@ -11,6 +11,8 @@ import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
+from i18n import tr
+
 # Only these accounts have limit windows; the short names fit a 380 px screen.
 SHORT_NAMES = {'claude': 'Claude', 'claude-2': 'Claude 2', 'codex': 'Codex', 'codex-2': 'Codex 2'}
 MAX_BYTES = 1024 * 1024
@@ -45,18 +47,65 @@ def _read_record(path):
     return record if isinstance(record, dict) else None
 
 
+def _seconds_left(limit):
+    reset = limit.get('resetsAt')
+    if not isinstance(reset, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return ((moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)) - datetime.now(timezone.utc)).total_seconds()
+
+
+def duration_text(seconds):
+    if seconds < 60:
+        return '<1 min'
+    minutes = int(seconds // 60)
+    if minutes >= 24 * 60:
+        return '%d d %d h' % (minutes // (24 * 60), minutes % (24 * 60) // 60)
+    if minutes >= 60:
+        return '%d h %d min' % (minutes // 60, minutes % 60)
+    return '%d min' % minutes
+
+
+def tokens_text(count):
+    for size, suffix in ((1_000_000_000, 'B'), (1_000_000, 'M'), (1_000, 'K')):
+        if count >= size:
+            return '%.1f%s' % (count / size, suffix)
+    return str(int(count))
+
+
+def money_text(usd):
+    if usd is None:
+        return '—'
+    if usd == 0:
+        return '$0.00'
+    return '<$0.01' if usd < 0.01 else '$%.2f' % usd
+
+
+def short_path(path):
+    if not path.startswith('/'):
+        return tr(path)
+    home = str(Path.home())
+    prefix, rest = '', path
+    if path == home:
+        return '~'
+    if path.startswith(home + '/'):
+        prefix, rest = '~/', path[len(home) + 1:]
+    parts = [part for part in rest.split('/') if part]
+    if len(parts) > 3:
+        return '…/' + '/'.join(parts[-2:])
+    return prefix + '/'.join(parts) if prefix else '/' + '/'.join(parts)
+
+
 def _percent(limit):
     value = limit.get('percent')
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         return None
-    reset = limit.get('resetsAt')
-    if isinstance(reset, str):
-        try:
-            moment = datetime.fromisoformat(reset.replace('Z', '+00:00'))
-        except ValueError:
-            moment = None
-        if moment is not None and (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc):
-            return 0  # the window already reset; the record just has not been rewritten yet
+    left = _seconds_left(limit)
+    if left is not None and left <= 0:
+        return 0  # the window already reset; the record just has not been rewritten yet
     return round(value * 100)
 
 
@@ -67,8 +116,69 @@ def _window(limits, pattern):
     return None
 
 
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _windows(limits):
+    result = []
+    for limit in limits:
+        if not isinstance(limit, dict) or not isinstance(limit.get('label'), str):
+            continue
+        percent = _percent(limit)
+        if percent is None:
+            continue
+        label = limit['label']
+        if re.search(r'^(Session \(5|5h)', label):
+            label = tr('5 h')
+        elif re.search(r'^Weekly \(7-day\)$', label):
+            label = tr('Semanal')
+        left = _seconds_left(limit)
+        result.append({'label': label[:40], 'percent': percent,
+                       'reset': tr('Reinicia en {tiempo}', tiempo=duration_text(left)) if left is not None and left > 0 else ''})
+    return result
+
+
+def _models(record):
+    usage = record.get('modelUsage')
+    rows_ = []
+    for name, bucket in (usage.items() if isinstance(usage, dict) else []):
+        if isinstance(bucket, dict):
+            total = sum(value for key, value in bucket.items() if _number(value) and key.endswith('Tokens'))
+            rows_.append((total, str(name)[:40]))
+    rows_.sort(key=lambda item: (-item[0], item[1]))
+    return [{'name': name, 'tokens': tokens_text(total)} for total, name in rows_[:4]]
+
+
+def _valid_breakdown(data):
+    def rows_ok(rows_, key):
+        return isinstance(rows_, list) and all(isinstance(row, dict) and isinstance(row.get(key), str) and _number(row.get('total'))
+                                              and (row.get('costUsd') is None or _number(row.get('costUsd'))) for row in rows_)
+    kinds = data.get('byKind') if isinstance(data, dict) else None
+    return (isinstance(data, dict) and data.get('schemaVersion') == 1 and isinstance(kinds, dict)
+            and all(_number(kinds.get(kind)) for kind in ('input', 'output', 'cacheRead', 'cacheWrite'))
+            and rows_ok(data.get('byProject'), 'path') and rows_ok(data.get('byTool'), 'name')
+            and (data.get('costUsd') is None or _number(data.get('costUsd')))
+            and isinstance(data.get('unpricedModels'), list) and all(isinstance(model, str) for model in data['unpricedModels']))
+
+
+def _spend(agent_id):
+    data = _read_record(_directory().parent / 'breakdown' / (agent_id + '.json'))
+    if not _valid_breakdown(data):
+        return None
+    kinds = data['byKind']
+    return {'cost': money_text(data.get('costUsd')),
+            'kinds': [{'name': tr(name), 'tokens': tokens_text(kinds[key])} for name, key in (
+                ('Entrada', 'input'), ('Salida', 'output'), ('Caché leída', 'cacheRead'), ('Caché escrita', 'cacheWrite'))],
+            'projects': [{'name': short_path(row['path'])[:60], 'tokens': tokens_text(row['total']), 'cost': money_text(row.get('costUsd'))}
+                         for row in data['byProject'][:5]],
+            'tools': [{'name': tr(row['name'])[:60], 'tokens': tokens_text(row['total']), 'cost': money_text(row.get('costUsd'))}
+                      for row in data['byTool'][:5]],
+            'unpriced': ', '.join(data['unpricedModels'])[:120]}
+
+
 def rows(agents):
-    """[{id, name, five, weekly}] for selected accounts that have a readable record with usable windows."""
+    """One row per selected account with a readable record: bar percentages plus the detail shown on click."""
     result = []
     for agent in agents:
         agent_id = agent.get('id')
@@ -82,5 +192,8 @@ def rows(agents):
         weekly = _window(limits, r'^Weekly \(7-day\)$')
         if five is None and weekly is None:
             continue
-        result.append({'id': agent_id, 'name': SHORT_NAMES[agent_id], 'five': five, 'weekly': weekly})
+        tier = record.get('tierLabel')
+        result.append({'id': agent_id, 'name': SHORT_NAMES[agent_id], 'tier': tier[:30] if isinstance(tier, str) else '',
+                       'five': five, 'weekly': weekly, 'windows': _windows(limits), 'models': _models(record),
+                       'spend': _spend(agent_id)})
     return result
