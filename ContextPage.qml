@@ -46,7 +46,7 @@ ColumnLayout {
   function modeText(native) { return native ? root.tr("Nativo") : root.tr("Cooperativo") }
 
   Ui.PanelSectionHeader { text: root.tr("CONTEXTO") }
-  Ui.ButtonGroup {
+  WrapButtonGroup {
     objectName: "context-scope"
     spacing: root.metrics.xxs
     fontSize: root.fonts.caption

@@ -15,6 +15,7 @@ ColumnLayout {
   property bool busy: false
   property var operation: ({})
   property string page: ""
+  property string usageAccount: ""
   property string errorText: ""
   property string message: ""
   property bool teamModelsPending: false
@@ -119,18 +120,28 @@ ColumnLayout {
     implicitHeight: pageColumn.implicitHeight
     clip: true
     QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
-    QQC.ScrollBar.vertical.policy: pageColumn.implicitHeight > height ? QQC.ScrollBar.AsNeeded : QQC.ScrollBar.AlwaysOff
+    // With more to see the bar is always shown, in its own column at the right edge, so it never
+    // covers the values (same rule as the RGB plugin).
+    readonly property bool overflowing: pageColumn.implicitHeight > height
+    QQC.ScrollBar.vertical: QQC.ScrollBar {
+      id: verticalBar
+      parent: scroll
+      anchors.top: scroll.top
+      anchors.right: scroll.right
+      anchors.bottom: scroll.bottom
+      policy: scroll.overflowing ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff
+    }
     contentWidth: availableWidth
 
     ColumnLayout {
       id: pageColumn
-      width: scroll.availableWidth
+      width: scroll.availableWidth - (scroll.overflowing ? verticalBar.width + Style.space(8) : 0)
       spacing: Style.space(6)
 
       Text {
         objectName: "error-detail"
         Layout.fillWidth: true
-        visible: statusLine.truncated && (root.errorText || root.snapshot.warning)
+        visible: !!(statusLine.truncated && (root.errorText || root.snapshot.warning))
         text: root.errorText || root.snapshot.warning || ""
         textFormat: Text.PlainText
         color: Commons.Color.urgent
@@ -163,7 +174,24 @@ ColumnLayout {
           }
         }
 
-        Ui.PanelSeparator { Layout.fillWidth: true }
+        ColumnLayout {
+          objectName: "usage-summary"
+          Layout.fillWidth: true
+          visible: (root.snapshot.usage || []).length > 0
+          spacing: Style.space(4)
+
+          Repeater {
+            model: root.snapshot.usage || []
+            delegate: UsageRow {
+              required property var modelData
+              Layout.fillWidth: true
+              row: modelData
+              fiveLabel: root.tr("5 h")
+              weeklyLabel: root.tr("Sem")
+              onOpened: { root.usageAccount = modelData.id; root.page = "usage" }
+            }
+          }
+        }
 
         RowLayout {
           Layout.fillWidth: true
@@ -286,6 +314,13 @@ ColumnLayout {
         defaultAgent: root.launcher.defaultAgent || ""
         busy: root.busy
         onCommandRequested: arguments => root.commandRequested(arguments)
+      }
+
+      UsagePage {
+        translations: root.translations
+        visible: root.page === "usage"
+        Layout.fillWidth: true
+        account: (root.snapshot.usage || []).find(row => row.id === root.usageAccount) || ({})
       }
 
       ContextPage {

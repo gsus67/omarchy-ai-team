@@ -25,7 +25,7 @@ ColumnLayout {
   spacing: Style.space(6)
 
   Ui.PanelSectionHeader { text: root.tr("EQUIPO") }
-  RowLayout {
+  Flow {
     Layout.fillWidth: true
     spacing: root.metrics.xxs
     Ui.Button {
@@ -143,7 +143,7 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.body
   }
-  Ui.ButtonGroup {
+  WrapButtonGroup {
     objectName: "default-agent"
     spacing: root.metrics.xxs
     fontSize: root.fonts.caption

@@ -18,7 +18,9 @@ Ui.MultiSelect {
   noSelectionText: root.tr("Sin agentes")
   values: root.selectedIds
   options: root.agents.map(agent => ({value: agent.id, label: agent.installation === "installed" || (agent.installation === "missing-profile" && agent.cliInstalled) ? agent.name : root.tr("{nombre} · no instalado", {nombre: agent.name})}))
-  triggerLabel: root.agents.filter(agent => agent.enabled).map(agent => agent.name).join(", ") || root.tr("Sin agentes")
+  // Up to two names fit the trigger; a longer selection is summarized instead of being clipped.
+  triggerLabel: root.selectedIds.length > 2 ? root.tr("{n} agentes", {n: root.selectedIds.length})
+                : root.agents.filter(agent => agent.enabled).map(agent => agent.name).join(", ") || root.tr("Sin agentes")
 
   // The native label otherwise includes installation hints or a selection count.
   function selectionLabel() { return root.triggerLabel }

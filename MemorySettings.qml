@@ -55,7 +55,7 @@ ColumnLayout {
     placeholderText: root.tr("Destino · carpeta local, externa o SMB")
     enabled: !root.busy
   }
-  Ui.ButtonGroup {
+  WrapButtonGroup {
     id: frequency
     objectName: "memory-backup-frequency"
     spacing: root.metrics.xxs
