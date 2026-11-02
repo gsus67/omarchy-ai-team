@@ -453,5 +453,139 @@ class ManagedEnginesTests(unittest.TestCase):
             usage_start.managed_engines(T0 - timedelta(days=1), T0)
 
 
+class ResetStartTests(unittest.TestCase):
+    """B8: the explicit reset replaces a valid start atomically; everything else in the state is left alone."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.folder = self.root / 'omarchy-ai-team'
+        patcher = patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root)}); patcher.start(); self.addCleanup(patcher.stop)
+        self.start = self.folder / 'usage-start.json'
+        previous = os.umask(0o077); self.addCleanup(os.umask, previous)
+        usage_start.get_or_create_start(now=T0)
+
+    def tree(self):
+        return {path.name: (path.stat().st_mode, path.read_bytes()) for path in sorted(self.folder.iterdir())}
+
+    def test_reset_replaces_start_atomically_and_keeps_private_permissions(self):
+        later = T0 + timedelta(days=3)
+        before_inode = self.start.stat().st_ino
+        calls = []
+        real_replace, real_fsync = os.replace, os.fsync
+
+        def replace(*args, **kwargs):
+            calls.append('replace')
+            return real_replace(*args, **kwargs)
+
+        def fsync(descriptor):
+            calls.append('fsync')
+            return real_fsync(descriptor)
+        with patch.object(usage_start.os, 'replace', replace), patch.object(usage_start.os, 'fsync', fsync):
+            self.assertEqual(usage_start.reset_start(now=later), later)
+        self.assertEqual(calls, ['fsync', 'replace', 'fsync'])  # data, then the swap, then the directory entry
+        self.assertEqual(json.loads(self.start.read_text()), {'schemaVersion': 1, 'since': later.isoformat()})
+        self.assertEqual((self.start.stat().st_mode & 0o777, self.folder.stat().st_mode & 0o777), (0o600, 0o700))
+        self.assertNotEqual(self.start.stat().st_ino, before_inode)  # a new file took the name; no in-place rewrite
+        self.assertEqual([path.name for path in self.folder.iterdir()], ['usage-start.json'])
+        self.assertEqual(usage_start.get_or_create_start(now=later + timedelta(days=1)), later)
+
+    def test_reset_normalises_now_to_utc(self):
+        local = (T0 + timedelta(days=1)).astimezone(timezone(timedelta(hours=-3)))
+        self.assertEqual(usage_start.reset_start(now=local), T0 + timedelta(days=1))
+        self.assertEqual(json.loads(self.start.read_text())['since'], (T0 + timedelta(days=1)).isoformat())
+
+    def test_reset_uses_the_clock_when_no_instant_is_given(self):
+        before = datetime.now(timezone.utc)
+        moment = usage_start.reset_start()
+        self.assertTrue(before <= moment <= datetime.now(timezone.utc))
+
+    def test_reset_rejects_symlink_fifo_and_unsafe_destination(self):
+        later = T0 + timedelta(days=1)
+        keep = self.root / 'elsewhere.json'
+        keep.write_text('keep')
+        self.start.unlink(); self.start.symlink_to(keep)
+        with self.assertRaises(usage_start.UsageStartError):
+            usage_start.reset_start(now=later)
+        self.assertTrue(self.start.is_symlink()); self.assertEqual(keep.read_text(), 'keep')
+        self.start.unlink(); os.mkfifo(self.start)
+        with self.assertRaises(usage_start.UsageStartError):
+            usage_start.reset_start(now=later)
+        self.start.unlink(); self.start.mkdir()
+        with self.assertRaises(usage_start.UsageStartError):
+            usage_start.reset_start(now=later)
+        self.start.rmdir()
+        usage_start.reset_start(now=later)  # a clean state works again
+        for mode in (0o644, 0o666):  # a public start is not repaired by a reset
+            self.start.chmod(mode)
+            with self.assertRaises(usage_start.UsageStartError):
+                usage_start.reset_start(now=later + timedelta(days=1))
+            self.assertEqual(self.start.stat().st_mode & 0o777, mode)
+        self.start.chmod(0o600)
+        for mode in (0o755, 0o777):  # nor a public state directory
+            self.folder.chmod(mode)
+            with self.assertRaises(usage_start.UsageStartError):
+                usage_start.reset_start(now=later + timedelta(days=1))
+            self.assertEqual((self.folder.stat().st_mode & 0o777, sorted(path.name for path in self.folder.iterdir())), (mode, ['usage-start.json']))
+        self.folder.chmod(0o700)
+        moved = self.root / 'real'; self.folder.rename(moved); self.folder.symlink_to(moved)  # a symlinked directory
+        with self.assertRaises(usage_start.UsageStartError):
+            usage_start.reset_start(now=later + timedelta(days=1))
+        self.assertEqual(sorted(path.name for path in moved.iterdir()), ['usage-start.json'])
+
+    def test_reset_does_not_repair_a_corrupt_or_unsupported_start(self):
+        for content in ('not json', '{"schemaVersion": 2, "since": "2026-11-02T12:00:00+00:00"}', '{"schemaVersion": 1, "since": "2026-11-02T12:00:00"}'):
+            self.start.write_text(content)
+            with self.assertRaises(usage_start.UsageStartError):
+                usage_start.reset_start(now=T0 + timedelta(days=1))
+            self.assertEqual(self.start.read_text(), content)
+
+    def test_failed_reset_preserves_previous_start_and_cleans_temporary(self):
+        before = self.tree()
+        for target in ('replace', 'fsync'):
+            with self.subTest(target=target), patch.object(usage_start.os, target, side_effect=OSError('boom')):
+                with self.assertRaises(OSError):
+                    usage_start.reset_start(now=T0 + timedelta(days=1))
+            self.assertEqual(self.tree(), before)  # the old start and no stray temporary
+        real_fsync, count = os.fsync, []
+
+        def late_failure(descriptor):  # the directory fsync fails after the swap: the new value is complete, no temporary left
+            count.append(1)
+            if len(count) == 2:
+                raise OSError('dir')
+            return real_fsync(descriptor)
+        with patch.object(usage_start.os, 'fsync', late_failure), self.assertRaises(OSError):
+            usage_start.reset_start(now=T0 + timedelta(days=1))
+        self.assertEqual([path.name for path in self.folder.iterdir()], ['usage-start.json'])
+        self.assertEqual(json.loads(self.start.read_text())['since'], (T0 + timedelta(days=1)).isoformat())
+
+    def test_reset_preserves_ledger_transcripts_and_unrelated_settings(self):
+        ledger = self.folder / 'role-usage.jsonl'
+        ledger.write_text(json.dumps({'at': '2026-11-01T10:00:00+00:00', 'role': 'code', 'agent': 'claude', 'tokens': 5}) + '\n')
+        transcript = self.root / 'home/.claude/projects/p/s.jsonl'
+        transcript.parent.mkdir(parents=True); transcript.write_text('{}\n')
+        settings = self.root / 'config/omarchy-ai-team/settings.json'
+        settings.parent.mkdir(parents=True); settings.write_text('{"usageWindowDays": 30, "agents": {"claude": true}}')
+        files = lambda: {str(p.relative_to(self.root)): p.read_bytes() for p in sorted(self.root.rglob('*')) if p.is_file() and p != self.start}
+        before = files()
+        usage_start.reset_start(now=T0 + timedelta(days=1))
+        self.assertEqual(files(), before)
+
+    def test_reset_rejects_invalid_now_without_writing(self):
+        before = self.tree()
+        for bad in (False, 0, '', datetime(2026, 11, 3, 12, 0), '2026-11-03T12:00:00+00:00'):
+            with self.subTest(now=bad), self.assertRaises(ValueError):
+                usage_start.reset_start(now=bad)
+            self.assertEqual(self.tree(), before)
+
+    def test_reset_start_is_global_and_has_no_per_account_field(self):
+        # one global instant, repeated reads agree; account selection is not modelled here
+        later = T0 + timedelta(days=2)
+        usage_start.reset_start(now=later)
+        for _ in range(3):
+            self.assertEqual(usage_start.get_or_create_start(now=later + timedelta(days=9)), later)
+        self.assertEqual(sorted(json.loads(self.start.read_text())), ['schemaVersion', 'since'])  # no per-account field
+
+
 if __name__ == '__main__':
     unittest.main()
