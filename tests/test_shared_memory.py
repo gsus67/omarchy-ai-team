@@ -398,6 +398,50 @@ class DiagnoseTests(unittest.TestCase):
                                    exchange=lambda *a, **k: self.fail("must not start"))
         self.assertIn("runtime-missing", report["configured"]["causes"])
 
+    def test_malformed_config_is_reported_not_raised(self):
+        for config in ({"mcp_servers": None}, {"mcp_servers": {memory.SERVER: "x"}}, {"mcp_servers": []}):
+            with patch.object(memory, "local_config", return_value=config), \
+                 patch.object(memory, "inspect_runtime", return_value=self.RUNTIME):
+                report = memory.diagnose("codex")
+            self.assertEqual(report["configured"]["causes"], ["config-unreadable"])
+            self.assertEqual(report["usable"]["causes"], ["skipped-not-configured"])
+
+    def test_node_missing_is_not_also_foreign(self):
+        report = self.run_diagnose(runtime={**self.RUNTIME, "node": ""}, server={"command": "x", "args": []},
+                                   exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertEqual(report["configured"]["causes"], ["node-missing"])
+
+    def exchange_with(self, **run):
+        with patch.object(memory.subprocess, "run", **run):
+            return memory.exchange(self.RUNTIME, "codex")
+
+    def completed(self, stdout="", code=0):
+        return subprocess.CompletedProcess([], code, stdout, "")
+
+    def test_exchange_cause_codes(self):
+        good = "".join(json.dumps(x) + "\n" for x in (
+            {"id": 1, "result": {}}, {"id": 2, "result": {"tools": [{"name": n} for n in memory.TOOLS]}},
+            {"id": 3, "result": {"content": [{"text": json.dumps({"ok": True})}]}}))
+        tools, ok, _ = self.exchange_with(return_value=self.completed(good))
+        self.assertEqual((tools, ok), (memory.TOOLS, True))
+        cases = ((dict(side_effect=subprocess.TimeoutExpired("x", 1)), "timeout"),
+                 (dict(side_effect=FileNotFoundError()), "cannot-start"),
+                 (dict(return_value=self.completed("not json", 1)), "exit-status"),
+                 (dict(return_value=self.completed("not json")), "bad-reply"),
+                 (dict(return_value=self.completed(json.dumps({"id": 1, "error": {"code": -1}}))), "protocol-error"))
+        for run, cause in cases:
+            with self.assertRaises(ValueError) as caught:
+                self.exchange_with(**run)
+            self.assertEqual(str(caught.exception), cause)
+
+    def test_probe_still_raises_memory_error(self):
+        with patch.object(memory, "exchange", side_effect=ValueError("timeout")), self.assertRaises(memory.MemoryError):
+            memory.probe(self.RUNTIME, "codex")
+        with patch.object(memory, "exchange", return_value=({"memory_search"}, True, 0.1)), self.assertRaises(memory.MemoryError):
+            memory.probe(self.RUNTIME, "codex")
+        with patch.object(memory, "exchange", return_value=(set(memory.TOOLS), True, 0.1)):
+            memory.probe(self.RUNTIME, "codex")
+
 
 if __name__ == "__main__":
     unittest.main()
