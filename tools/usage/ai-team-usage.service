@@ -1,0 +1,7 @@
+[Unit]
+Description=Usage records for the second Claude and Codex accounts
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/gsus67.ai-team/tools/usage/ai_team_usage.py
+Nice=10

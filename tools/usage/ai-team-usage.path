@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the second accounts when the panel refreshes the main ones
+
+[Path]
+PathChanged=%S/omarchy/agents/usage/claude.json
+PathChanged=%S/omarchy/agents/usage/codex.json
+Unit=ai-team-usage.service
+
+[Install]
+WantedBy=default.target
