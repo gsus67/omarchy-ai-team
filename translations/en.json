@@ -786,5 +786,9 @@
   "USD por millón de tokens. Un campo vacío cuenta como 0.": "USD per million tokens. An empty field counts as 0.",
   "JSON con los cambios de precio": "JSON with the price changes",
   "Valores base. Toca un papel para cambiar solo el suyo.": "Base values. Tap a role to change only its own.",
-  "Editando solo este papel. Tócalo otra vez para volver a los valores base.": "Editing this role only. Tap it again to go back to the base values."
+  "Editando solo este papel. Tócalo otra vez para volver a los valores base.": "Editing this role only. Tap it again to go back to the base values.",
+  "TOTAL": "TOTAL",
+  "Total": "Total",
+  "{cantidad} tokens en 30 días": "{cantidad} tokens in 30 days",
+  "Los obreros se cuentan desde que se registran sus encargos{desde}. El Jefe es el resto de la cuenta, así que incluye lo anterior a ese registro.": "Workers are counted since their tasks started being recorded{desde}. The Chief is the rest of the account, so it includes anything before that record."
 }
