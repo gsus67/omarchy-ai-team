@@ -11,15 +11,29 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 import native_team
+import state_confinement
 
 REPORT = {'status': 'pending review', 'references': 'backend/a.py:1', 'tests': '1 passed', 'error': '', 'pending': 'review'}
 
 
 class ContextRunTests(unittest.TestCase):
     def setUp(self):
-        self.run = importlib.import_module('context_run')
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        state_confinement.guard_writes(self, self.root)
+        state_confinement.isolate_env(self, self.root)
+        self.run = importlib.import_module('context_run')
+
+    def test_fixture_state_snapshots_are_confined(self):
+        capsule = '6f1c5a52-1c1e-4f0e-9a58-0a4f3c2b9d10'
+        self.run._write_snapshots(capsule, usage={'input': 1})
+        written = self.root/'state/omarchy-ai-team/context-usage'/capsule/'usage.json'
+        self.assertEqual(json.loads(written.read_text()), {'input': 1})
+        with patch.dict(os.environ):
+            os.environ.pop('XDG_STATE_HOME')
+            self.run._write_snapshots(capsule, usage={'input': 2})
+        fallback = self.root/'home/.local/state/omarchy-ai-team/context-usage'/capsule/'usage.json'
+        self.assertEqual(json.loads(fallback.read_text()), {'input': 2})
 
     def fake(self, text):
         path = self.root/'native'
@@ -34,7 +48,8 @@ class ContextRunTests(unittest.TestCase):
         backend = Path(__file__).resolve().parents[1]/'backend'
         capsule = context_state.instance('codex', 'review', self.root, context_policy.resolve({}, 'review'))
         env = {**os.environ, 'HOME': str(self.root), 'LC_ALL': 'en_US.UTF-8', 'PATH': '',
-               'XDG_DATA_HOME': str(self.root/'data'), 'XDG_CONFIG_HOME': str(self.root/'config')}
+               'XDG_DATA_HOME': str(self.root/'data'), 'XDG_CONFIG_HOME': str(self.root/'config'),
+               'XDG_STATE_HOME': str(self.root/'state')}
         for script, args, fragment in [
             ('context_run.py', ['--agent', 'codex', '--role', 'review', '--cwd', str(self.root)], 'native worker command'),
             ('context_state.py', ['checkpoint', '--instance', json.dumps(capsule)], 'ECC is unavailable')]:
@@ -170,6 +185,19 @@ class ContextRunTests(unittest.TestCase):
             with self.subTest(command=command):
                 prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
                 self.assertEqual(prepared[-len(command) + 2:], command[2:])
+
+    def test_main_preserves_secondary_profile_while_normalizing_claude_transport(self):
+        settings = self.root/'settings.json'
+        settings.write_text('{}')
+        previous = Path.cwd()
+        self.addCleanup(os.chdir, previous)
+        for chosen, transport in (('claude', 'claude'), ('claude-2', 'claude'), ('codex-2', 'codex-2')):
+            with self.subTest(agent=chosen), patch.object(self.run, 'run', return_value=0) as run:
+                code = self.run.main(['--settings', str(settings), '--agent', chosen, '--role', 'review',
+                                      '--cwd', str(self.root), '--', 'native', 'task'])
+            self.assertEqual(code, 0)
+            self.assertEqual(run.call_args.args[1], transport)
+            self.assertEqual(run.call_args.kwargs['profile'], chosen)
 
     def test_codex_parent_conflict_is_localized_before_child(self):
         import i18n

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -8,7 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/usage'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_team_usage
+from test_usage_breakdown import codex_context, codex_count, denied, entry_type_denied
 
 CLAUDE = '''
 import os, json
@@ -103,14 +106,61 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(written['byTool'][0]['name'], 'Bash')
         self.assertFalse((ai_team_usage.breakdown_dir() / 'claude.json').exists())
 
-    def test_missing_profile_or_empty_scan_removes_a_stale_breakdown(self):
+    def start_file(self):
+        return self.root / 'state/omarchy-ai-team/usage-start.json'
+
+    def persist_start(self, since='2020-01-01T00:00:00+00:00'):
+        self.start_file().parent.mkdir(parents=True, mode=0o700)
+        self.start_file().parent.chmod(0o700)
+        self.start_file().write_text(json.dumps({'schemaVersion': 1, 'since': since}))
+        self.start_file().chmod(0o600)
+
+    def test_breakdowns_carry_the_persisted_start_and_its_totals(self):
+        self.persist_start()
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertEqual(written['sinceStart'], {'since': '2020-01-01T00:00:00+00:00', 'total_input': 1_000_000, 'output': 0})
+        self.assertEqual(written['windowDays'], 30)
+
+    def test_one_start_is_resolved_once_and_shared_by_the_four_scans(self):
+        seen = []
+
+        def scan(*args, since=None, **kwargs):
+            seen.append(since)
+        with patch.object(ai_team_usage.breakdown, 'scan_claude', scan), patch.object(ai_team_usage.breakdown, 'scan_codex', scan):
+            ai_team_usage.write_breakdowns()
+            first = self.start_file().read_text()
+            ai_team_usage.write_breakdowns()
+        self.assertEqual(len(seen), 8)
+        self.assertEqual(len(set(seen)), 1)
+        self.assertEqual(seen[0].isoformat(), json.loads(first)['since'])
+        self.assertEqual(self.start_file().read_text(), first)
+
+    def test_a_failed_start_keeps_every_breakdown_and_scans_nothing(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        folder = ai_team_usage.breakdown_dir()
+        before = {path.name: path.read_text() for path in folder.glob('*.json')}
+        self.start_file().write_text('{broken')
+        with patch.object(ai_team_usage.breakdown, 'scan_claude') as claude, patch.object(ai_team_usage.breakdown, 'scan_codex') as codex:
+            failed = ai_team_usage.write_breakdowns()
+        self.assertEqual(sorted(failed), sorted(ai_team_usage.BREAKDOWN_ACCOUNTS))
+        self.assertEqual((claude.called, codex.called), (False, False))
+        self.assertEqual({path.name: path.read_text() for path in folder.glob('*.json')}, before)
+        self.assertEqual(self.start_file().read_text(), '{broken')
+
+    def test_missing_profile_removes_a_stale_breakdown_and_an_empty_readable_one_is_a_known_zero(self):
         stale = ai_team_usage.breakdown_dir()
         stale.mkdir(parents=True)
         (stale / 'claude.json').write_text('{}')
         (self.root / 'home/.codex-2/sessions').mkdir(parents=True)
         (stale / 'codex-2.json').write_text('{}')
         ai_team_usage.write_breakdowns()
-        self.assertEqual(list(stale.glob('*.json')), [])
+        self.assertEqual([path.name for path in stale.glob('*.json')], ['codex-2.json'])
+        written = json.loads((stale / 'codex-2.json').read_text())
+        self.assertEqual((written['sinceStart']['total_input'], written['sinceStart']['output']), (0, 0))
+        self.assertEqual(written['byKind'], dict.fromkeys(('input', 'output', 'cacheRead', 'cacheWrite'), 0))
 
     def test_main_writes_breakdowns_even_if_a_collector_fails(self):
         self.transcript('.claude-2')
@@ -150,6 +200,80 @@ class UsageTests(unittest.TestCase):
             self.skipTest('running with privileges that ignore file modes')
         self.assertEqual(ai_team_usage.write_breakdowns(), ['claude-2'])
         self.assertEqual(target.read_text(), good)
+
+    def test_enumeration_failure_keeps_snapshot_bytes_and_generated_at(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns(now=datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc))
+        target = ai_team_usage.breakdown_dir() / 'claude-2.json'
+        good = target.read_bytes()
+        hidden = self.root / 'home/.claude-2/projects/secret'
+        hidden.mkdir()
+        with denied(hidden):
+            failed = ai_team_usage.write_breakdowns(now=datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc))
+        self.assertEqual(failed, ['claude-2'])
+        self.assertEqual(target.read_bytes(), good)
+        self.assertEqual(json.loads(good)['generatedAt'], '2026-11-02T09:00:00+00:00')
+
+    def test_entry_type_permission_error_preserves_snapshot(self):
+        t0, t1 = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc), datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+        for account in ('claude-2', 'codex-2'):
+            for previous in (False, True):
+                with self.subTest(account=account, previous=previous):
+                    shutil.rmtree(self.root / 'home', ignore_errors=True)
+                    shutil.rmtree(self.root / 'state', ignore_errors=True)
+                    (self.root / 'home').mkdir()
+                    if account == 'claude-2':
+                        self.transcript('.claude-2')
+                        tree = self.root / 'home/.claude-2/projects'
+                    else:
+                        folder = self.root / 'home/.codex-2/sessions/2026/11/02'
+                        folder.mkdir(parents=True)
+                        (folder / 'r.jsonl').write_text('\n'.join((codex_context(), codex_count(at=t0))) + '\n')
+                        tree = self.root / 'home/.codex-2/sessions'
+                    (tree / 'unreadable-subtree').mkdir()
+                    target = ai_team_usage.breakdown_dir() / (account + '.json')
+                    if previous:
+                        self.assertEqual(ai_team_usage.write_breakdowns(now=t0), [])
+                        good = target.read_bytes()
+                    with entry_type_denied():
+                        self.assertEqual(ai_team_usage.write_breakdowns(now=t1), [account])
+                    if previous:
+                        self.assertEqual(target.read_bytes(), good)
+                        self.assertEqual(json.loads(good)['generatedAt'], t0.isoformat())
+                    else:
+                        self.assertFalse(target.exists())
+
+    def test_inaccessible_source_does_not_delete_last_good_snapshot(self):
+        (self.root / 'home/.codex-2/sessions').mkdir(parents=True)
+        ai_team_usage.write_breakdowns()
+        target = ai_team_usage.breakdown_dir() / 'codex-2.json'
+        good = target.read_bytes()
+        with denied(self.root / 'home/.codex-2/sessions', 'stat'):
+            failed = ai_team_usage.write_breakdowns()
+        self.assertEqual(failed, ['codex-2'])
+        self.assertEqual(target.read_bytes(), good)
+
+    def test_readable_empty_source_has_known_zero(self):
+        (self.root / 'home/.claude-2/projects').mkdir(parents=True)
+        self.assertEqual(ai_team_usage.write_breakdowns(), [])
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertEqual((written['sinceStart']['total_input'], written['sinceStart']['output']), (0, 0))
+
+    def test_source_disappearing_mid_scan_does_not_publish_partial_total(self):
+        self.transcript('.claude-2')
+        ai_team_usage.write_breakdowns()
+        target = ai_team_usage.breakdown_dir() / 'claude-2.json'
+        good = target.read_bytes()
+        folder = self.root / 'home/.claude-2/projects/p'
+        real = os.scandir
+
+        def vanishing(path, *args, **kwargs):
+            if os.fspath(path) == str(folder):
+                raise FileNotFoundError(2, 'gone', str(folder))
+            return real(path, *args, **kwargs)
+        with patch.object(os, 'scandir', vanishing):
+            self.assertEqual(ai_team_usage.write_breakdowns(), ['claude-2'])
+        self.assertEqual(target.read_bytes(), good)
 
     def test_prices_file_is_created_once_and_user_edits_survive(self):
         ai_team_usage.write_breakdowns()

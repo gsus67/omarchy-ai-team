@@ -41,6 +41,15 @@ BREAKDOWN_ACCOUNTS = {
 BREAKDOWN_DAYS = 30
 
 
+def usage_start():
+    """The shared start module of the plugin (``backend/usage_start.py``), loaded by path like the price table."""
+    path = Path(__file__).resolve().parents[2] / 'backend/usage_start.py'
+    spec = importlib.util.spec_from_file_location('ai_team_usage_start', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def state_dir():
     return Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'omarchy/agents/usage'
 
@@ -115,9 +124,15 @@ def prices_path():
 def write_breakdowns(now=None):
     """Write where each account's tokens went (and what they would cost); remove stale files.
 
-    Returns the ids whose scan failed; one broken account never hides the others.
+    Returns the ids whose scan failed; one broken account never hides the others. The common start is
+    resolved once for the four scans; if it cannot be, nothing is scanned and every snapshot is kept.
     """
     now = now or datetime.now(timezone.utc)
+    try:
+        since = usage_start().get_or_create_start(now=now)
+    except Exception as error:  # an invalid start is never replaced: the previous snapshots stay as they are
+        print('ai-team-usage: usage start failed: ' + type(error).__name__, file=sys.stderr)
+        return list(BREAKDOWN_ACCOUNTS)
     table = prices.load_prices(prices_path())
     folder = breakdown_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -127,10 +142,10 @@ def write_breakdowns(now=None):
         try:
             root = Path.home() / profile
             if kind == 'claude':
-                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now)
+                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now, since=since)
             else:
                 body = breakdown.scan_codex(root / 'sessions', table, BREAKDOWN_DAYS, now,
-                                            extra_dirs=(root / 'archived_sessions',))
+                                            extra_dirs=(root / 'archived_sessions',), since=since)
             if body is not None:
                 body = {'schemaVersion': 1, 'id': account, 'generatedAt': now.isoformat(), **body}
             write(account, body, folder)

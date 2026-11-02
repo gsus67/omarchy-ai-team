@@ -1,63 +1,40 @@
-"""Tokens spent by each team role, for the main screen's Total page.
+"""Tokens spent by each team role since the shared measurement start, for the main screen's Total page.
 
 Every worker run (context_run.py) appends its counted tokens to a small private ledger. Worker runs
-are ephemeral (no session file), so the breakdown the usage writer keeps from the session transcripts
-is the Chief's own consumption; the total is the Chief plus the workers.
+are ephemeral (no session file), so the Chief's consumption is what the usage writer measured from the
+session transcripts since the same persisted start (usage_start.py). Everything is in one unit
+(total input + output); what cannot be measured is unknown (None), never zero.
 """
 
+import errno
 import json
 import os
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
+import usage_start
 import usage_summary
 from i18n import tr
 
-DAYS = 30
 ROLES = ('jefe', 'plan', 'code', 'review', 'simple')
-WORKERS = ROLES[1:]
-MAX_READ = 1024 * 1024
+WORKERS = usage_start.WORKERS
 
 
 def ledger():
-    return Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'omarchy-ai-team' / 'role-usage.jsonl'
+    return usage_start.default_state_dir() / 'role-usage.jsonl'
 
 
 def _now():
     return datetime.now(timezone.utc)
 
 
-def _entries(agents):
-    """Valid entries of the last DAYS days from the selected accounts (the newest MAX_READ bytes); anything else is ignored."""
+def _entries(agents, *, since, directory):
+    """Valid ledger entries of the selected accounts at or after ``since``, streamed from the whole file
+    of the already validated state ``directory`` (a descriptor the caller keeps open until it is consumed)."""
     selected = {agent.get('id') for agent in agents if agent.get('enabled')}
-    try:
-        descriptor = os.open(ledger(), os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)  # a FIFO must never block the panel
-    except OSError:
-        return []
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            return []
-        os.lseek(descriptor, max(0, info.st_size - MAX_READ), os.SEEK_SET)
-        data = os.read(descriptor, MAX_READ)
-    except OSError:
-        return []
-    finally:
-        os.close(descriptor)
-    cutoff = _now() - timedelta(days=DAYS)
-    result = []
-    for line in data.decode('utf-8', errors='replace').splitlines():
-        try:
-            entry = json.loads(line)
-            moment = datetime.fromisoformat(entry['at'])
-            role, tokens = entry['role'], entry['tokens']
-        except (ValueError, TypeError, KeyError):
-            continue
-        if (role in WORKERS and entry.get('agent') in selected and type(tokens) is int and 0 <= tokens < 10 ** 15
-                and moment.tzinfo and moment >= cutoff):
-            result.append({'at': entry['at'], 'role': role, 'tokens': tokens})
-    return result
+    return (entry for entry in usage_start.iter_ledger_entries(ledger().name, dir_fd=directory)
+            if entry.agent in selected and entry.at >= since)
 
 
 def record(role, agent, counters):
@@ -65,31 +42,68 @@ def record(role, agent, counters):
     inputs, output = counters.get('total_input'), counters.get('output')
     if role not in WORKERS or type(inputs) is not int or type(output) is not int:
         return
-    path = ledger()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
-    line = json.dumps({'at': _now().isoformat(), 'role': role, 'agent': agent, 'tokens': inputs + output}) + '\n'
-    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return
-        os.fchmod(descriptor, 0o600)
-        os.write(descriptor, line.encode())
+        usage_start.get_or_create_start()  # the start exists before the first managed entry; a failure never loses the run
+    except (usage_start.UsageStartError, OSError):
+        pass
+    path = ledger()
+    try:
+        directory = usage_start._open_state_dir(path.parent, create=True)  # validated here too: a corrupt start must not excuse an unsafe folder
+    except usage_start.UsageStartError as error:
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES)) from error
+    try:
+        line = json.dumps({'at': _now().isoformat(), 'role': role, 'agent': agent, 'tokens': inputs + output}) + '\n'
+        descriptor = os.open(path.name, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                return
+            if info.st_mode & 0o077:
+                os.fchmod(descriptor, stat.S_IMODE(info.st_mode) & 0o600)  # only ever narrows: group/other bits go, nothing is added
+            os.write(descriptor, line.encode())
+        finally:
+            os.close(descriptor)
     finally:
-        os.close(descriptor)
+        os.close(directory)
+
+
+def _share(amount, total):
+    if amount is None or total is None:
+        return None
+    return round(amount / total, 4) if total else 0
 
 
 def summary(agents):
-    """``{since, total, roles: [{role, name, tokens, share}]}`` or None when no account has a breakdown."""
-    chief = usage_summary.total_tokens(agents)
-    if chief is None:
+    """``{since, total, roles: [{role, name, tokens, share}]}``; None only when no supported account is selected.
+
+    ``since`` is the persisted start (ISO instant). ``total``, ``tokens`` and ``share`` are None when unknown:
+    no (or no valid) start, an account without a block measured from that start, or an unreadable ledger.
+    Only reads: it never creates the start nor the state directory.
+    """
+    if not any(agent.get('id') in usage_summary.SHORT_NAMES and agent.get('enabled') for agent in agents):
         return None
-    entries = _entries(agents)
-    amounts = {'jefe': chief, **dict.fromkeys(WORKERS, 0)}
-    for entry in entries:
-        amounts[entry['role']] += entry['tokens']
-    total = sum(amounts.values())
+    directory, since = None, None
+    amounts = dict.fromkeys(ROLES)
+    try:  # read-only: a missing start stays unknown, only the writers (record, snapshots) create it
+        try:
+            directory = usage_start._open_state_dir(usage_start.default_state_dir(), create=False)
+            since = usage_start._read_start(directory)
+        except (usage_start.UsageStartError, OSError):
+            since = None
+        if since is not None:
+            amounts['jefe'] = usage_summary.total_tokens_since(agents, since)
+            try:
+                workers = dict.fromkeys(WORKERS, 0)
+                for entry in _entries(agents, since=since, directory=directory):
+                    workers[entry.role] += entry.tokens
+                amounts.update(workers)
+            except OSError:
+                pass
+    finally:
+        if directory is not None:
+            os.close(directory)
+    total = None if None in amounts.values() else sum(amounts.values())
     names = {'jefe': tr('Jefe'), 'plan': tr('Planificar'), 'code': tr('Programar'), 'review': tr('Revisar'), 'simple': tr('Sencillas')}
-    return {'since': min((entry['at'] for entry in entries), default='')[:10], 'total': usage_summary.tokens_text(total),
-            'roles': [{'role': role, 'name': names[role], 'tokens': usage_summary.tokens_text(amounts[role]),
-                       'share': round(amounts[role] / total, 4) if total else 0} for role in ROLES]}
+    return {'since': since.isoformat() if since else None, 'total': None if total is None else usage_summary.tokens_text(total),
+            'roles': [{'role': role, 'name': names[role], 'share': _share(amounts[role], total),
+                       'tokens': None if amounts[role] is None else usage_summary.tokens_text(amounts[role])} for role in ROLES]}

@@ -171,5 +171,86 @@ class DetailTests(unittest.TestCase):
         self.assertIsNone(self.row(record, {'schemaVersion': 2, 'byKind': {}})['spend'])
 
 
+START = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
+
+
+class TotalSinceStartTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.folder = Path(temp.name) / 'omarchy/agents/breakdown'
+        self.folder.mkdir(parents=True)
+        patcher = patch.dict(os.environ, {'XDG_STATE_HOME': temp.name}); patcher.start(); self.addCleanup(patcher.stop)
+
+    def write(self, agent, since_start='ok', since=START, total_input=60, output=5):
+        data = {'schemaVersion': 1, 'byKind': {'input': 1, 'output': 1, 'cacheRead': 1, 'cacheWrite': 1},
+                'byProject': [], 'byTool': [], 'costUsd': None, 'unpricedModels': []}
+        if since_start == 'ok':
+            data['sinceStart'] = {'since': since.isoformat(), 'total_input': total_input, 'output': output}
+        elif since_start is not None:
+            data['sinceStart'] = since_start
+        (self.folder / (agent + '.json')).write_text(json.dumps(data))
+
+    @staticmethod
+    def agents(*ids, enabled=True):
+        return [{'id': agent, 'enabled': enabled} for agent in ids]
+
+    def test_legacy_schema_one_without_since_start_still_supports_total_tokens(self):
+        self.write('claude', since_start=None)
+        self.assertEqual(usage_summary.total_tokens(self.agents('claude')), 4)
+        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
+
+    def test_total_since_start_sums_input_plus_output_of_each_selected_account(self):
+        self.write('claude', total_input=60, output=5)
+        self.write('codex', total_input=100, output=5)
+        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude', 'codex'), START), 170)
+
+    def test_invalid_optional_since_start_is_unknown_without_breaking_legacy_reader(self):
+        agents = self.agents('claude')
+        for bad in ({'since': START.isoformat(), 'total_input': -1, 'output': 0}, {'since': START.isoformat(), 'total_input': True, 'output': 0},
+                    {'since': START.isoformat(), 'total_input': 1.5, 'output': 0}, {'since': START.isoformat(), 'total_input': 1},
+                    {'since': 'yesterday', 'total_input': 1, 'output': 0}, {'since': '2026-11-02T12:00:00', 'total_input': 1, 'output': 0},
+                    {'since': START.isoformat(), 'total_input': float('nan'), 'output': 0}, 'x', []):
+            self.write('claude', since_start=bad)
+            self.assertIsNone(usage_summary.total_tokens_since(agents, START), repr(bad))
+            self.assertEqual(usage_summary.total_tokens(agents), 4)
+
+    def test_since_start_utc_overflow_is_unknown_without_breaking_legacy_reader(self):
+        agents = self.agents('claude')
+        for stamp in ('0001-01-01T00:00:00+01:00', '9999-12-31T23:59:59-01:00'):
+            self.write('claude', since_start={'since': stamp, 'total_input': 1, 'output': 0})
+            self.assertIsNone(usage_summary.total_tokens_since(agents, START), stamp)
+            self.assertEqual(usage_summary.total_tokens(agents), 4)
+
+    def test_since_start_matches_equivalent_timezone_offsets(self):
+        self.write('claude', since=START.astimezone(timezone(timedelta(hours=-3))))
+        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), START), 65)
+
+    def test_wrong_start_has_no_thirty_day_fallback(self):
+        self.write('claude', since=START + timedelta(microseconds=1))
+        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
+
+    def test_one_selected_account_without_breakdown_makes_the_sum_unknown(self):
+        self.write('claude')
+        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude', 'codex'), START))
+
+    def test_unselected_or_unsupported_accounts_are_ignored_and_no_source_is_not_zero(self):
+        self.write('claude')
+        agents = self.agents('claude') + self.agents('codex', enabled=False) + self.agents('pi')
+        self.assertEqual(usage_summary.total_tokens_since(agents, START), 65)
+        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude', enabled=False), START))
+        self.assertIsNone(usage_summary.total_tokens_since([], START))
+
+    def test_known_zero_is_distinct_from_unknown(self):
+        self.write('claude', total_input=0, output=0)
+        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), START), 0)
+        (self.folder / 'claude.json').unlink()
+        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
+
+    def test_a_clock_in_the_past_does_not_invalidate_a_matching_block(self):
+        future = datetime.now(timezone.utc) + timedelta(days=3)
+        self.write('claude', since=future)
+        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), future), 65)
+
+
 if __name__ == '__main__':
     unittest.main()

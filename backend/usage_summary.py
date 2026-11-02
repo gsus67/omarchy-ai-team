@@ -203,6 +203,36 @@ def total_tokens(agents):
     return total
 
 
+def _since_start_tokens(data, since):
+    """total_input + output of the ``sinceStart`` block when it is valid and measured from exactly ``since``; else None."""
+    block = data.get('sinceStart') if isinstance(data, dict) and data.get('schemaVersion') == 1 else None
+    if not isinstance(block, dict) or not isinstance(block.get('since'), str):
+        return None
+    counters = (block.get('total_input'), block.get('output'))
+    if any(type(value) is not int or not 0 <= value < 10 ** 15 for value in counters):
+        return None
+    try:
+        moment = datetime.fromisoformat(block['since'].replace('Z', '+00:00'))
+        if moment.tzinfo is None or moment.astimezone(timezone.utc) != since.astimezone(timezone.utc):
+            return None
+    except (ValueError, OverflowError):
+        return None
+    return sum(counters)
+
+
+def total_tokens_since(agents, since):
+    """Input + output tokens of every selected account since ``since``, or None unless all of them were measured from it."""
+    total = None
+    for agent in agents:
+        if agent.get('id') not in SHORT_NAMES or not agent.get('enabled'):
+            continue
+        tokens = _since_start_tokens(_read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json')), since)
+        if tokens is None:
+            return None
+        total = (total or 0) + tokens
+    return total
+
+
 def rows(agents):
     """One row per selected account with a readable record: bar percentages plus the detail shown on click."""
     result = []

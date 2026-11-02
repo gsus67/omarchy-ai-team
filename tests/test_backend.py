@@ -28,6 +28,7 @@ class BackendTests(unittest.TestCase):
         self.bin.mkdir()
         self.env = {**os.environ, "LC_ALL": "es", "HOME": str(self.root), "XDG_CONFIG_HOME": str(self.root / "config"),
                     "CLAUDE_CONFIG_DIR": str(self.root / "claude"), "CODEX_HOME": str(self.root / "codex"),
+                    "XDG_STATE_HOME": str(self.root / "state"),  # never read or write the real state
                     "PATH": str(self.bin), "OMARCHY_PATH": str(self.root / "omarchy")}
         self.environment = patch.dict(os.environ, self.env, clear=True)
         self.environment.start()
@@ -222,6 +223,22 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(unselected["data"]["usage"], [])
         self.assertEqual([{key: row[key] for key in ("id", "name", "five", "weekly")} for row in selected["data"]["usage"]],
                          [{"id": "claude", "name": "Claude", "five": 1, "weekly": 98}])
+
+    def test_status_read_with_selected_account_writes_no_state(self):
+        self.executable("claude", "/bin/true")
+        self.run_cli("set-agents", "claude")
+        tree = lambda: {str(p.relative_to(self.root)): (p.stat().st_mode, p.read_bytes() if p.is_file() else None)
+                        for p in sorted(self.root.rglob("*"))}
+        before = tree()
+        result, reply = self.run_cli("status")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual([row["id"] for row in reply["data"]["agents"] if row["enabled"]], ["claude"])
+        usage = reply["data"]["roleUsage"]
+        self.assertIsNone(usage["since"])
+        self.assertIsNone(usage["total"])
+        self.assertTrue(all(row["tokens"] is None and row["share"] is None for row in usage["roles"]))
+        self.assertEqual(tree(), before)
+        self.assertFalse((self.root / "state/omarchy-ai-team").exists())
 
     def prices_file(self):
         return self.root / ".config/omarchy/agents/prices.json"

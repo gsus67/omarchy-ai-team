@@ -119,6 +119,42 @@ class TaskSnapshotTests(unittest.TestCase):
         self.assertEqual((entry['role'], entry['tokens']), ('code', 20000 + after['counters']['output']))
         self.assertNotIn('PRIVATE', json.dumps(entry))
 
+    def ledger(self):
+        path = self.root / 'state/omarchy-ai-team/role-usage.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def test_secondary_profile_is_recorded_as_secondary_account(self):
+        final = {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(REPORT)}}
+        cases = [('claude', 'claude', 'claude'), ('claude', 'claude-2', 'claude-2'), ('claude', None, 'claude'),
+                 ('codex', 'codex', 'codex'), ('codex', 'codex-2', 'codex-2'), ('codex', None, 'codex')]
+        for index, (agent, profile, expected) in enumerate(cases, 1):
+            with self.subTest(agent=agent, profile=profile):
+                if agent == 'claude':
+                    fake, command = self.child([{**CLAUDE_RESULT, 'structured_output': REPORT}]), ['-p', 'task']
+                else:
+                    fake, command = self.child([CODEX_TURN, final]), ['exec', 'task']
+                code = self.run.run([fake, *command], agent, 'review', {}, self.root, output=io.StringIO(), profile=profile)
+                self.assertEqual(code, 0)
+                entries = self.ledger()
+                self.assertEqual(len(entries), index)
+                self.assertEqual((entries[-1]['agent'], entries[-1]['role']), (expected, 'review'))
+                self.assertIsInstance(entries[-1]['tokens'], int)
+                self.assertGreater(entries[-1]['tokens'], 0)
+
+    def test_profile_fix_does_not_rewrite_historical_ledger(self):
+        state = self.root / 'state/omarchy-ai-team'
+        state.mkdir(parents=True, mode=0o700)
+        old = json.dumps({'at': '2026-01-01T00:00:00+00:00', 'role': 'review', 'agent': 'claude', 'tokens': 7}) + '\n'
+        (state / 'role-usage.jsonl').write_text(old)
+        (state / 'role-usage.jsonl').chmod(0o600)
+        fake = self.child([{**CLAUDE_RESULT, 'structured_output': REPORT}])
+        self.run.run([fake, '-p', 'task'], 'claude', 'review', {}, self.root, output=io.StringIO(), profile='claude-2')
+        text = (state / 'role-usage.jsonl').read_text()
+        self.assertTrue(text.startswith(old))
+        entries = self.ledger()
+        self.assertEqual([entry['agent'] for entry in entries], ['claude', 'claude-2'])
+        self.assertEqual(entries[0]['tokens'], 7)
+
     def test_claude_result_counters_and_missing_counters_stay_unknown(self):
         fake = self.child([{**CLAUDE_RESULT, 'structured_output': REPORT}])
         self.run.run([fake, '-p', 'task'], 'claude', 'code', {}, self.root, output=io.StringIO())
