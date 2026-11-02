@@ -25,7 +25,7 @@ ColumnLayout {
   spacing: Style.space(6)
 
   Ui.PanelSectionHeader { text: root.tr("EQUIPO") }
-  RowLayout {
+  Flow {
     Layout.fillWidth: true
     spacing: root.metrics.xxs
     Ui.Button {

@@ -21,17 +21,45 @@ ColumnLayout {
   signal pageRequested(string id)
   spacing: Style.space(6)
 
+  // The agents are listed in one block per family so accounts of the same tool stay together.
+  readonly property var agentGroups: {
+    const titles = {claude: "Claude Code", codex: "Codex", pi: "Pi"}
+    const order = ["claude", "codex", "pi"]
+    const family = agent => String(agent.id).replace(/-\d+$/, "")
+    const groups = order.map(key => ({title: titles[key], agents: root.agents.filter(agent => family(agent) === key)}))
+    const others = root.agents.filter(agent => order.indexOf(family(agent)) === -1)
+    return groups.concat([{title: root.tr("Otros"), agents: others}]).filter(group => group.agents.length > 0)
+  }
+
   Ui.PanelSectionHeader { text: root.tr("AGENTES") }
   Repeater {
-    model: root.agents
-    delegate: CompactRow {
+    model: root.agentGroups
+    delegate: ColumnLayout {
+      id: group
       required property var modelData
-      objectName: "agent-row-" + modelData.id
       Layout.fillWidth: true
-      label: modelData.name
-      status: modelData.installation === "installed" ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
-      switchVisible: false
-      onOpened: root.pageRequested(modelData.id)
+      spacing: Style.space(2)
+      Text {
+        Layout.topMargin: Style.space(4)
+        text: group.modelData.title
+        textFormat: Text.PlainText
+        color: Color.muted
+        font.family: root.fonts.family
+        font.pixelSize: root.fonts.caption
+        font.bold: true
+      }
+      Repeater {
+        model: group.modelData.agents
+        delegate: CompactRow {
+          required property var modelData
+          objectName: "agent-row-" + modelData.id
+          Layout.fillWidth: true
+          label: modelData.name
+          status: modelData.installation === "installed" ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
+          switchVisible: false
+          onOpened: root.pageRequested(modelData.id)
+        }
+      }
     }
   }
   Ui.PanelSeparator { Layout.fillWidth: true }
