@@ -55,6 +55,7 @@ SMOKE = r'''
   property int missingSelectionCommands: 0
   property int messageStep: 0
   property int zeroTouchStep: 0
+  property int persistWaits: 0
   property int zeroTouchWaits: 0
   property bool zeroTouchExpectError: false
   property string zeroTouchRepairedAt: ""
@@ -409,7 +410,9 @@ SMOKE = r'''
           if (!idleField || !idleField.visible || idleField.value !== 55 || !handoffRow || !handoffRow.visible || !handoffRow.checked || !find(harness,"context-suggest_resume_after_idle",[]) || !find(harness,"context-group_related_subtasks",[]) || !find(harness,"context-explore_with_simple_role",[])) { fail("Context page lacks the long-session settings at their defaults"); return }
           harness.run(["context-set","read_window_lines","200"])
         } else if (navigationStep === 20) {
-          if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { fail("Context setting was not persisted"); return }
+          // The process can exit before its output reaches the snapshot: wait a few ticks, still fail if it never persists.
+          if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { if (++persistWaits > 12) fail("Context setting was not persisted"); return }
+          persistWaits = 0
           click("navigation-back")
         } else if (navigationStep === 21) {
           if (harness.page !== "settings") { fail("Context back did not return to settings"); return }
@@ -665,7 +668,8 @@ SMOKE = r'''
           saveBackup.clicked(); backupSetupStep++; return
         }
         if (backupSetupStep === 2) {
-          if (harness.snapshot.memory.backupSettings.destination !== destination.text || harness.snapshot.memory.backupSettings.hours !== 24) { fail("Backup settings not persisted"); return }
+          if (harness.snapshot.memory.backupSettings.destination !== destination.text || harness.snapshot.memory.backupSettings.hours !== 24) { if (++persistWaits > 12) fail("Backup settings not persisted"); return }
+          persistWaits = 0
           automatic.toggled(); backupSetupStep++; return
         }
         if (backupSetupStep === 3) {
@@ -850,8 +854,12 @@ SMOKE = r'''
           if (teamScroll.contentItem.contentY !== teamContentY) { if (++teamWaits < 20) return; fail("Opening a team popup scrolled the page"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
+          // The list is alphabetical, so walk from the current model to fixture-medium instead of assuming its neighbour.
+          var fromIndex = reviewModel.options.findIndex(option => option.value === reviewModel.value)
+          var toIndex = reviewModel.options.findIndex(option => option.value === JSON.stringify(["codex","fixture-medium"]))
+          if (fromIndex < 0 || toIndex < 0) { fail("Review model options lack the current or fixture-medium entry"); return }
           teamKeying=true
-          pointer.keyClick(Qt.Key_Down)
+          for (var move = 0; move < Math.abs(toIndex - fromIndex); move++) pointer.keyClick(toIndex > fromIndex ? Qt.Key_Down : Qt.Key_Up)
           pointer.keyClick(Qt.Key_Return)
           teamKeying=false
           teamStep++;return
