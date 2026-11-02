@@ -138,6 +138,7 @@ class NativeTeamTests(unittest.TestCase):
         text = self.content({'claude', 'pi'})
         self.assertIn('Pi no tiene sandbox', text)
         self.assertIn('solo lectura', text)
+        self.assertIn('es una instrucción, no aislamiento efectivo', text)
         self.assertIn('no delegues Planificar ni Programar a Pi', text)
 
     def only_pi_state(self):

@@ -248,7 +248,8 @@ def text(paths, settings_file, team=None):
         ('Solo Pi: los modelos de Nous cubren todos los papeles y no tienen sandbox ni aprobación por herramienta, así que pueden cambiar archivos o ejecutar comandos sin preguntar. '
          'Pedir a Revisar que solo lea es una instrucción, no es aislamiento efectivo: trabaja en un worktree Git y comprueba el diff antes de aceptar el resultado. '
          'Avisa de este límite al informar de cada encargo.' if only_pi else
-         'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas; '
+         'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas, '
+         'pero pedirlo es una instrucción, no aislamiento efectivo: si Pi revisa, hazlo en un worktree Git y comprueba el diff después; '
          'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.'),
         '', 'Sustituye <dir> y <encargo> por valores concretos citados como argumentos de shell. '
         'Los comandos siguientes son recetas para la sesión; el plugin nunca los ejecuta.', ''])
