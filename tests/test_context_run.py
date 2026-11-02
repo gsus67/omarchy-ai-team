@@ -134,6 +134,112 @@ class ContextRunTests(unittest.TestCase):
         self.assertEqual(capsule['cwd'], str(self.root))
         self.assertNotIn('bypass', ' '.join(prepared))
 
+    def test_codex_context_protects_only_injected_keys(self):
+        command = ['codex', 'exec', '-c', 'model_auto_compact_token_limit=1', '-c', 'features.hooks=false', 'task']
+        cases = [([], None), (['-c', 'features.hooks=true'], 'features.hooks'),
+                 (['-c', 'model_auto_compact_token_limit=9'], 'model_auto_compact_token_limit')]
+        for injected, protected in cases:
+            with self.subTest(injected=injected), patch.object(self.run.native_launcher, 'invocation',
+                                                              return_value=(injected, [])):
+                if protected is None:
+                    prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+                    self.assertEqual(prepared[-len(command) + 2:], command[2:])
+                else:
+                    with self.assertRaisesRegex(ValueError, protected):
+                        self.run.prepare(command, 'codex', 'code', {}, self.root)
+
+    def test_codex_context_parent_guard_follows_the_real_injections(self):
+        command = ['codex', 'exec', '-c', 'features={hooks=false}', 'task']
+        with patch.object(self.run.native_launcher, 'invocation',
+                          return_value=(['-c', 'model_auto_compact_token_limit=9'], [])):
+            prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+            self.assertEqual(prepared[-len(command) + 2:], command[2:])
+        with patch.object(self.run.native_launcher, 'invocation', return_value=(['-c', 'features.hooks=true'], [])):
+            with self.assertRaisesRegex(ValueError, 'features.hooks'):
+                self.run.prepare(command, 'codex', 'code', {}, self.root)
+
+    def test_codex_context_parent_guard_preserves_unrelated_overrides(self):
+        for value in ('features.other=true', 'features.hooks_extra=false', 'other={hooks=false}',
+                      'model_auto_compact_token_limit_scope=1', 'featuresx={hooks=false}'):
+            command = ['codex', 'exec', '-c', value, 'task']
+            with self.subTest(value=value):
+                prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+                self.assertEqual(prepared[-len(command) + 2:], command[2:])
+        for command in (['codex', 'exec', 'features={hooks=false}'], ['codex', 'exec', '--', '-c', 'features={}'],
+                        ['codex', 'exec', '-m', 'features={hooks=false}', 'task']):
+            with self.subTest(command=command):
+                prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+                self.assertEqual(prepared[-len(command) + 2:], command[2:])
+
+    def test_codex_parent_conflict_is_localized_before_child(self):
+        import i18n
+        settings = self.root/'settings.json'
+        settings.write_text('{}')
+        command = ['--', 'codex', 'exec', '-c', 'features={hooks=false}', 'task']
+        expected = {'es': 'modifica features.hooks, gestionada por Contexto',
+                    'en': 'changes features.hooks, managed by Context'}
+        previous = Path.cwd()
+        self.addCleanup(os.chdir, previous)
+        for language, fragment in expected.items():
+            out = io.StringIO()
+            with self.subTest(language=language), i18n.using(language), \
+                    patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root/'state')}), \
+                    patch.object(self.run.subprocess, 'Popen') as popen, patch('sys.stdout', out):
+                code = self.run.main(['--settings', str(settings), '--agent', 'codex', '--role', 'code',
+                                      '--cwd', str(self.root), *command])
+            reply = json.loads(out.getvalue())
+            self.assertEqual(code, 1)
+            self.assertEqual(set(reply), set(REPORT))
+            self.assertIn(fragment, reply['error'])
+            self.assertNotIn('hooks=false', out.getvalue())
+            popen.assert_not_called()
+            self.assertFalse((self.root/'state').exists())
+
+    def test_disabled_context_preserves_protected_overrides(self):
+        command = ['codex', 'exec', '-c', 'model_auto_compact_token_limit=1', '--disable', 'hooks', 'task']
+        for config, override in (({'context': {'enabled': False}}, None), ({}, {'enabled': False, 'reason': 'native run'})):
+            with self.subTest(config=config, override=override):
+                prepared, _, capsule = self.run.prepare(command, 'codex', 'code', config, self.root, override=override)
+                self.assertEqual(prepared, command)
+                self.assertIsNone(capsule)
+                with patch.object(self.run.os, 'execvpe') as execute:
+                    self.run.run(command, 'codex', 'code', config, self.root, override=override)
+                self.assertEqual(execute.call_args.args[1], command)
+                self.assertEqual(execute.call_args.args[2], dict(os.environ))
+
+    def test_codex_context_guard_is_independent_of_fresh_worker(self):
+        config = {'context': {'fresh_worker_per_subtask': False}}
+        for command in (['codex', 'exec', '-c', 'features.hooks=false', 'task'],
+                        ['codex', 'exec', 'task', '--enable', 'hooks']):
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, 'features.hooks'):
+                self.run.prepare(command, 'codex-2', 'code', config, self.root)
+
+    def test_codex_context_conflict_returns_localized_five_field_error_before_child(self):
+        import i18n
+        settings = self.root/'settings.json'
+        settings.write_text('{}')
+        command = ['--', 'codex', 'exec', '-c', 'features.hooks=false=SECRET', 'task']
+        expected = {'es': 'modifica features.hooks, gestionada por Contexto',
+                    'en': 'changes features.hooks, managed by Context'}
+        previous = Path.cwd()
+        self.addCleanup(os.chdir, previous)
+        for language, fragment in expected.items():
+            out = io.StringIO()
+            with self.subTest(language=language), i18n.using(language), \
+                    patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root/'state')}), \
+                    patch.object(self.run.subprocess, 'Popen') as popen, patch('sys.stdout', out):
+                code = self.run.main(['--settings', str(settings), '--agent', 'codex', '--role', 'code',
+                                      '--cwd', str(self.root), *command])
+            reply = json.loads(out.getvalue())
+            self.assertEqual(code, 1)
+            self.assertEqual(set(reply), set(REPORT))
+            self.assertEqual(reply['status'], 'failed')
+            self.assertIn(fragment, reply['error'])
+            self.assertNotIn('SECRET', out.getvalue())
+            self.assertNotIn('exec', reply['error'])
+            popen.assert_not_called()
+            self.assertFalse((self.root/'state').exists())
+
     def test_recipes_call_wrapper_with_role_settings_and_original_controls(self):
         row = {'agent': 'codex', 'model': 'chosen', 'effort': 'high'}
         line = native_team.role_commands('review', row, ['codex-2'], settings_file='/plugin/settings.json')[0]
