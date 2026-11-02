@@ -144,8 +144,9 @@ def _read_start(directory):
         raise UsageStartError from error
 
 
-def _publish(directory, moment):
-    """Write the start to a private temporary and link it into place; it never replaces an existing file."""
+def _publish(directory, moment, *, replace=False):
+    """Write the start to a private temporary and link it into place; it never replaces an existing file
+    unless ``replace``, which swaps it atomically and syncs the directory entry."""
     temporary = '.usage-start.%s' % secrets.token_hex(8)
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
     try:
@@ -153,6 +154,10 @@ def _publish(directory, moment):
             handle.write(json.dumps({'schemaVersion': 1, 'since': moment.isoformat()}) + '\n')
             handle.flush()
             os.fsync(handle.fileno())
+        if replace:
+            os.replace(temporary, START_NAME, src_dir_fd=directory, dst_dir_fd=directory)
+            os.fsync(directory)
+            return
         try:
             os.link(temporary, START_NAME, src_dir_fd=directory, dst_dir_fd=directory)
         except FileExistsError:
@@ -177,6 +182,20 @@ def get_or_create_start(*, now=None, state_dir=None):
         if published is None:
             raise UsageStartError
         return published
+    finally:
+        os.close(directory)
+
+
+def reset_start(*, now=None, state_dir=None):
+    """Replace the persisted start with ``now`` (aware UTC); an unsafe or invalid one is not repaired."""
+    if now is not None and (not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None):
+        raise ValueError(now)  # only None (the clock) or an aware datetime; never a falsy or naive stand-in
+    directory = _open_state_dir(Path(state_dir) if state_dir else default_state_dir(), create=False)
+    try:
+        _read_start(directory)  # raises on anything unsafe or invalid; a missing start is simply written
+        moment = (now if now is not None else datetime.now(timezone.utc)).astimezone(timezone.utc)
+        _publish(directory, moment, replace=True)
+        return moment
     finally:
         os.close(directory)
 
