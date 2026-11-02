@@ -39,6 +39,7 @@ BREAKDOWN_ACCOUNTS = {
     'codex': ('codex', '.codex'), 'codex-2': ('codex', '.codex-2'),
 }
 BREAKDOWN_DAYS = 30
+MAX_SETTINGS_BYTES = 1 << 20
 
 
 def usage_start():
@@ -121,33 +122,86 @@ def prices_path():
     return Path.home() / '.config/omarchy/agents/prices.json'
 
 
-def write_breakdowns(now=None):
+def window_days_setting():
+    """The selected measurement window (7 or 30 days) from the plugin settings: 7 when the file or key is absent,
+    None when the file or the value is not valid (no measurement is published then). Read-only, strict."""
+    path = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'omarchy-ai-team/settings.json'
+    module = usage_start()
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return module.DEFAULT_WINDOW_DAYS
+    except OSError:
+        return None
+    try:
+        with os.fdopen(descriptor, 'rb') as handle:
+            data = json.loads(handle.read(MAX_SETTINGS_BYTES + 1)[:MAX_SETTINGS_BYTES])
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if 'usageWindowDays' not in data:
+        return module.DEFAULT_WINDOW_DAYS
+    try:
+        return module.window_days(data['usageWindowDays'])
+    except ValueError:
+        return None
+
+
+def write_breakdowns(now=None, *, window_days=7):
     """Write where each account's tokens went (and what they would cost); remove stale files.
 
-    Returns the ids whose scan failed; one broken account never hides the others. The common start is
-    resolved once for the four scans; if it cannot be, nothing is scanned and every snapshot is kept.
+    Returns the ids whose scan failed; one broken account never hides the others. One capture (start S,
+    window N, instant T) is shared by the four scans; if S cannot be resolved nothing is scanned. Before
+    publishing, S and N are read again: if either changed the attempt is discarded and nothing is written.
+    ``window_days`` None (an invalid preference) publishes the detail without a measurement.
     """
     now = now or datetime.now(timezone.utc)
+    module = usage_start()
     try:
-        since = usage_start().get_or_create_start(now=now)
+        since = module.get_or_create_start(now=now)
     except Exception as error:  # an invalid start is never replaced: the previous snapshots stay as they are
         print('ai-team-usage: usage start failed: ' + type(error).__name__, file=sys.stderr)
         return list(BREAKDOWN_ACCOUNTS)
+    engines, measured = frozenset(), window_days is not None
+    if measured:
+        try:
+            cut = module.effective_since(since, now, window_days)
+        except ValueError:  # a start after T, or unrepresentable arithmetic: unknown, the start is kept
+            measured = False
+        else:
+            try:
+                engines = module.managed_engines(cut, now)
+            except OSError:
+                engines = frozenset(('claude', 'codex'))  # an unreadable ledger: every engine counts as managed
     table = prices.load_prices(prices_path())
     folder = breakdown_dir()
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
-    failed = []
+    failed, bodies = [], {}
+    options = {'since': since if measured else None, 'total_days': window_days or module.DEFAULT_WINDOW_DAYS}
     for account, (kind, profile) in BREAKDOWN_ACCOUNTS.items():
         try:
             root = Path.home() / profile
+            managed = kind in engines
             if kind == 'claude':
-                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now, since=since)
+                body = breakdown.scan_claude(root / 'projects', table, BREAKDOWN_DAYS, now, managed_runs=managed, **options)
             else:
-                body = breakdown.scan_codex(root / 'sessions', table, BREAKDOWN_DAYS, now,
-                                            extra_dirs=(root / 'archived_sessions',), since=since)
-            if body is not None:
-                body = {'schemaVersion': 1, 'id': account, 'generatedAt': now.isoformat(), **body}
+                body = breakdown.scan_codex(root / 'sessions', table, BREAKDOWN_DAYS, now, extra_dirs=(root / 'archived_sessions',),
+                                            managed_runs=managed, **options)
+            bodies[account] = None if body is None else {'schemaVersion': 1, 'id': account, 'generatedAt': now.isoformat(), **body}
+        except Exception as error:
+            print('ai-team-usage: breakdown ' + account + ' failed: ' + type(error).__name__, file=sys.stderr)
+            failed.append(account)
+    try:
+        unchanged = module.get_or_create_start(now=now) == since and window_days_setting() == window_days
+    except Exception:
+        unchanged = False
+    if not unchanged:  # the capture is stale: publishing it would mix two generations
+        print('ai-team-usage: usage start or window changed; the attempt was discarded', file=sys.stderr)
+        return list(BREAKDOWN_ACCOUNTS)
+    for account, body in bodies.items():
+        try:
             write(account, body, folder)
         except Exception as error:
             print('ai-team-usage: breakdown ' + account + ' failed: ' + type(error).__name__, file=sys.stderr)
@@ -156,15 +210,16 @@ def write_breakdowns(now=None):
 
 
 def main(argv=None):
-    flags = [flag for flag in (argv if argv is not None else sys.argv[1:]) if flag in ('--force', '--limits-only')]
+    arguments = argv if argv is not None else sys.argv[1:]
+    flags = [flag for flag in arguments if flag in ('--force', '--limits-only')]
     status = 0
-    for account in ACCOUNTS:
+    for account in () if '--breakdowns-only' in arguments else ACCOUNTS:  # --breakdowns-only never runs the official collectors
         try:
             write(account, collect(account, flags), state_dir())
         except Exception as error:  # one broken account must not hide the other
             print('ai-team-usage: ' + account + ' failed: ' + type(error).__name__, file=sys.stderr)
             status = 1
-    if write_breakdowns():
+    if write_breakdowns(window_days=window_days_setting()):
         status = 1
     return status
 

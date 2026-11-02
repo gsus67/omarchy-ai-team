@@ -19,6 +19,9 @@ ColumnLayout {
   property string errorText: ""
   property string message: ""
   property bool teamModelsPending: false
+  property int requestedUsageWindowDays: 0  // the window asked for and not yet measured; 0 when none
+  readonly property int usageWindowDays: root.requestedUsageWindowDays !== 0 ? root.requestedUsageWindowDays : ((root.snapshot.roleUsage || ({})).windowDays || 7)
+  readonly property bool usageWindowPending: root.requestedUsageWindowDays !== 0
   readonly property var fonts: Style.font
   readonly property var summary: root.snapshot.summary || ({text: root.tr("Consultando…"), page: "", state: "pending"})
   readonly property var launcher: root.snapshot.launcher || ({})
@@ -38,6 +41,16 @@ ColumnLayout {
     root.refreshTeamModels()
   }
   onBusyChanged: root.refreshTeamModels()
+  onSnapshotChanged: {
+    const usage = root.snapshot.roleUsage || ({})
+    if (root.requestedUsageWindowDays !== 0 && usage.windowDays === root.requestedUsageWindowDays && usage.pending === false) root.requestedUsageWindowDays = 0
+  }
+
+  function requestUsageWindow(days) {
+    if (root.busy || (days !== 7 && days !== 30)) return
+    root.requestedUsageWindowDays = days  // the selection and the hidden figures must not wait for the backend
+    root.commandRequested(["usage-window", String(days)])
+  }
 
   function refreshTeamModels() {
     if (!root.teamModelsPending || root.busy) return
@@ -200,7 +213,7 @@ ColumnLayout {
           Layout.fillWidth: true
           visible: !!root.snapshot.roleUsage
           label: root.tr("Total")
-          status: (root.snapshot.roleUsage || {}).total || ""
+          status: root.busy || root.usageWindowPending ? "" : ((root.snapshot.roleUsage || {}).total || "")
           switchVisible: false
           onOpened: root.page = "roles"
         }
@@ -341,6 +354,10 @@ ColumnLayout {
         visible: root.page === "roles"
         Layout.fillWidth: true
         info: root.snapshot.roleUsage || ({})
+        windowDays: root.usageWindowDays
+        busy: root.busy
+        measurementPending: root.usageWindowPending
+        onWindowRequested: days => root.requestUsageWindow(days)
       }
 
       ContextPage {

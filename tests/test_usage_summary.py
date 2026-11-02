@@ -174,82 +174,116 @@ class DetailTests(unittest.TestCase):
 START = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
 
 
-class TotalSinceStartTests(unittest.TestCase):
+class LegacyTotalTests(unittest.TestCase):
+    def test_a_schema_one_breakdown_without_a_measurement_still_supports_total_tokens(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'XDG_STATE_HOME': temp}):
+            folder = Path(temp) / 'omarchy/agents/breakdown'; folder.mkdir(parents=True)
+            (folder / 'claude.json').write_text(json.dumps({'schemaVersion': 1, 'byKind': {'input': 1, 'output': 1, 'cacheRead': 1, 'cacheWrite': 1},
+                                                            'byProject': [], 'byTool': [], 'costUsd': None, 'unpricedModels': []}))
+            self.assertEqual(usage_summary.total_tokens([{'id': 'claude', 'enabled': True}]), 4)
+
+
+AS_OF = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+OWN_START = datetime(2026, 11, 1, 8, 0, tzinfo=timezone.utc)
+
+
+class MeasurementTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.folder = Path(temp.name) / 'omarchy/agents/breakdown'
         self.folder.mkdir(parents=True)
         patcher = patch.dict(os.environ, {'XDG_STATE_HOME': temp.name}); patcher.start(); self.addCleanup(patcher.stop)
 
-    def write(self, agent, since_start='ok', since=START, total_input=60, output=5):
-        data = {'schemaVersion': 1, 'byKind': {'input': 1, 'output': 1, 'cacheRead': 1, 'cacheWrite': 1},
+    def write(self, agent, *, start=OWN_START, days=7, generated=AS_OF, since='auto', jefe=(60, 5), otros=(0, 0), limited=False, block='ok'):
+        data = {'schemaVersion': 1, 'id': agent, 'generatedAt': generated.isoformat(),
+                'byKind': {'input': 1, 'output': 1, 'cacheRead': 1, 'cacheWrite': 1},
                 'byProject': [], 'byTool': [], 'costUsd': None, 'unpricedModels': []}
-        if since_start == 'ok':
-            data['sinceStart'] = {'since': since.isoformat(), 'total_input': total_input, 'output': output}
-        elif since_start is not None:
-            data['sinceStart'] = since_start
+        if since == 'auto':
+            since = max(start, generated - timedelta(days=days))
+        if block == 'ok':
+            data['measurement'] = {'start': start.isoformat(), 'since': since.isoformat(), 'windowDays': days,
+                                   'jefe': {'total_input': jefe[0], 'output': jefe[1]},
+                                   'otros': {'total_input': otros[0], 'output': otros[1]}, 'classificationLimited': limited}
+        elif block is not None:
+            data['measurement'] = block
         (self.folder / (agent + '.json')).write_text(json.dumps(data))
 
     @staticmethod
     def agents(*ids, enabled=True):
         return [{'id': agent, 'enabled': enabled} for agent in ids]
 
-    def test_legacy_schema_one_without_since_start_still_supports_total_tokens(self):
-        self.write('claude', since_start=None)
-        self.assertEqual(usage_summary.total_tokens(self.agents('claude')), 4)
-        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
+    def measure(self, *ids, start=OWN_START, days=7):
+        return usage_summary.measurement(self.agents(*ids), start=start, window_days=days)
 
-    def test_total_since_start_sums_input_plus_output_of_each_selected_account(self):
-        self.write('claude', total_input=60, output=5)
-        self.write('codex', total_input=100, output=5)
-        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude', 'codex'), START), 170)
+    def test_measurement_sums_jefe_and_otros_of_every_selected_account(self):
+        self.write('claude', jefe=(60, 5), otros=(10, 1))
+        self.write('codex', jefe=(100, 5), otros=(20, 2), limited=True)
+        self.assertEqual(self.measure('claude', 'codex'),
+                         {'since': AS_OF - timedelta(days=7), 'asOf': AS_OF, 'jefe': 170, 'otros': 33, 'limited': True})
 
-    def test_invalid_optional_since_start_is_unknown_without_breaking_legacy_reader(self):
-        agents = self.agents('claude')
-        for bad in ({'since': START.isoformat(), 'total_input': -1, 'output': 0}, {'since': START.isoformat(), 'total_input': True, 'output': 0},
-                    {'since': START.isoformat(), 'total_input': 1.5, 'output': 0}, {'since': START.isoformat(), 'total_input': 1},
-                    {'since': 'yesterday', 'total_input': 1, 'output': 0}, {'since': '2026-11-02T12:00:00', 'total_input': 1, 'output': 0},
-                    {'since': START.isoformat(), 'total_input': float('nan'), 'output': 0}, 'x', []):
-            self.write('claude', since_start=bad)
-            self.assertIsNone(usage_summary.total_tokens_since(agents, START), repr(bad))
-            self.assertEqual(usage_summary.total_tokens(agents), 4)
+    def test_measurement_rejects_wrong_effective_cutoff(self):
+        self.write('claude', since=OWN_START + timedelta(microseconds=1))
+        self.assertIsNone(self.measure('claude'))
+        self.write('claude', start=AS_OF - timedelta(days=40), since=AS_OF - timedelta(days=30))  # 30-day cutoff under a 7-day request
+        self.assertIsNone(self.measure('claude', start=AS_OF - timedelta(days=40)))
 
-    def test_since_start_utc_overflow_is_unknown_without_breaking_legacy_reader(self):
-        agents = self.agents('claude')
-        for stamp in ('0001-01-01T00:00:00+01:00', '9999-12-31T23:59:59-01:00'):
-            self.write('claude', since_start={'since': stamp, 'total_input': 1, 'output': 0})
-            self.assertIsNone(usage_summary.total_tokens_since(agents, START), stamp)
-            self.assertEqual(usage_summary.total_tokens(agents), 4)
+    def test_measurement_accepts_equivalent_utc_offsets(self):
+        offset = timezone(timedelta(hours=-3))
+        self.write('claude', start=OWN_START.astimezone(offset), generated=AS_OF.astimezone(offset))
+        result = self.measure('claude')
+        self.assertEqual((result['since'], result['asOf']), (AS_OF - timedelta(days=7), AS_OF))
 
-    def test_since_start_matches_equivalent_timezone_offsets(self):
-        self.write('claude', since=START.astimezone(timezone(timedelta(hours=-3))))
-        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), START), 65)
+    def test_measurement_rejects_another_selected_window(self):
+        self.write('claude', days=30)
+        self.assertIsNone(self.measure('claude', days=7))
+        self.assertEqual(self.measure('claude', days=30)['jefe'], 65)
+        self.assertIsNone(self.measure('claude', days=14))
 
-    def test_wrong_start_has_no_thirty_day_fallback(self):
-        self.write('claude', since=START + timedelta(microseconds=1))
-        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
-
-    def test_one_selected_account_without_breakdown_makes_the_sum_unknown(self):
+    def test_measurement_rejects_mixed_account_generations(self):
         self.write('claude')
-        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude', 'codex'), START))
+        self.write('codex', generated=AS_OF + timedelta(minutes=1))
+        self.assertIsNone(self.measure('claude', 'codex'))
 
-    def test_unselected_or_unsupported_accounts_are_ignored_and_no_source_is_not_zero(self):
+    def test_measurement_rejects_another_start(self):
         self.write('claude')
+        self.assertIsNone(self.measure('claude', start=AS_OF + timedelta(days=1)))
+        self.assertIsNone(self.measure('claude', start=OWN_START - timedelta(seconds=1)))
+
+    def test_old_since_start_block_does_not_satisfy_the_new_total(self):
+        self.write('claude', block={'since': OWN_START.isoformat(), 'total_input': 1, 'output': 0})
+        self.assertIsNone(self.measure('claude'))
+
+    def test_invalid_counters_or_flag_are_unknown(self):
+        good = {'start': OWN_START.isoformat(), 'since': OWN_START.isoformat(), 'windowDays': 7,
+                'jefe': {'total_input': 1, 'output': 0}, 'otros': {'total_input': 0, 'output': 0}, 'classificationLimited': False}
+        for change in ({'jefe': {'total_input': -1, 'output': 0}}, {'jefe': {'total_input': True, 'output': 0}},
+                       {'otros': {'total_input': 1.5, 'output': 0}}, {'otros': {'total_input': 1}}, {'otros': None},
+                       {'classificationLimited': 1}, {'classificationLimited': None}, {'windowDays': True}, {'windowDays': '7'},
+                       {'start': 'yesterday'}, {'since': '2026-11-01T08:00:00'}):
+            self.write('claude', block={**good, **change})
+            self.assertIsNone(self.measure('claude'), repr(change))
+
+    def test_missing_generation_or_missing_account_is_unknown_not_zero(self):
+        self.write('claude')
+        self.assertIsNone(self.measure('claude', 'codex'))
+        data = json.loads((self.folder / 'claude.json').read_text()); data.pop('generatedAt')
+        (self.folder / 'claude.json').write_text(json.dumps(data))
+        self.assertIsNone(self.measure('claude'))
+        self.assertIsNone(usage_summary.measurement([], start=OWN_START, window_days=7))
+
+    def test_unselected_or_unsupported_accounts_are_ignored_and_known_zero_is_zero(self):
+        self.write('claude', jefe=(0, 0))
         agents = self.agents('claude') + self.agents('codex', enabled=False) + self.agents('pi')
-        self.assertEqual(usage_summary.total_tokens_since(agents, START), 65)
-        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude', enabled=False), START))
-        self.assertIsNone(usage_summary.total_tokens_since([], START))
+        result = usage_summary.measurement(agents, start=OWN_START, window_days=7)
+        self.assertEqual((result['jefe'], result['otros']), (0, 0))
 
-    def test_known_zero_is_distinct_from_unknown(self):
-        self.write('claude', total_input=0, output=0)
-        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), START), 0)
-        (self.folder / 'claude.json').unlink()
-        self.assertIsNone(usage_summary.total_tokens_since(self.agents('claude'), START))
+    def test_start_in_the_future_of_the_snapshot_is_unknown(self):
+        self.write('claude', start=AS_OF + timedelta(days=1), since=AS_OF + timedelta(days=1))
+        self.assertIsNone(self.measure('claude', start=AS_OF + timedelta(days=1)))
 
-    def test_a_clock_in_the_past_does_not_invalidate_a_matching_block(self):
-        future = datetime.now(timezone.utc) + timedelta(days=3)
-        self.write('claude', since=future)
-        self.assertEqual(usage_summary.total_tokens_since(self.agents('claude'), future), 65)
+    def test_invalid_window_request_is_unknown(self):
+        self.write('claude')
+        self.assertIsNone(self.measure('claude', days=True))
 
 
 if __name__ == '__main__':

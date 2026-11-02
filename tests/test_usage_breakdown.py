@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -123,6 +124,17 @@ US =timedelta(microseconds=1)
 
 def without_since_start(body):
     return {key: value for key, value in body.items() if key != 'sinceStart'}
+
+
+def compat(body):
+    """The ``measurement`` block in the older ``sinceStart`` shape (the cut and the summed counters)."""
+    if body is None or 'measurement' not in body:
+        return body
+    block = body['measurement']
+    legacy = {key: value for key, value in body.items() if key != 'measurement'}
+    legacy['sinceStart'] = {'since': block['since'], 'total_input': block['jefe']['total_input'] + block['otros']['total_input'],
+                            'output': block['jefe']['output'] + block['otros']['output']}
+    return legacy
 
 
 def count_opens(test, suffix='.jsonl'):
@@ -277,8 +289,8 @@ class ClaudeSinceStartTests(unittest.TestCase):
         (folder / name).write_text('\n'.join(lines) + '\n')
         return folder / name
 
-    def scan(self, since=START, days=30):
-        return breakdown.scan_claude(self.root, prices.DEFAULT_PRICES, days, NOW, since=since)
+    def scan(self, since=START, days=30, total_days=30):
+        return compat(breakdown.scan_claude(self.root, prices.DEFAULT_PRICES, days, NOW, since=since, total_days=total_days))
 
     def test_claude_since_start_is_inclusive(self):
         self.write(claude_line('m0', at=START - US, usage=(10, 5, 20, 30)), claude_line('m1', at=START, usage=(10, 5, 20, 30)),
@@ -322,8 +334,8 @@ class ClaudeSinceStartTests(unittest.TestCase):
     def test_claude_lifetime_survives_without_recent_messages(self):
         start = NOW - timedelta(days=100)
         self.write(claude_line('m1', at=NOW - timedelta(days=60), usage=(10, 5, 20, 30)))
-        result = self.scan(since=start)
-        self.assertEqual(result['sinceStart'], {'since': start.isoformat(), 'total_input': 60, 'output': 5})
+        result = self.scan(since=start)  # older than the thirty-day window: not measured, but known
+        self.assertEqual(result['sinceStart'], {'since': (NOW - timedelta(days=30)).isoformat(), 'total_input': 0, 'output': 0})
         self.assertEqual((result['windowDays'], result['byKind'], result['byProject'], result['byTool']),
                          (30, dict.fromkeys(breakdown.KIND_NAMES, 0), [], []))
 
@@ -466,6 +478,102 @@ class ClaudeSinceStartTests(unittest.TestCase):
             self.assertEqual(self.scan()['sinceStart'], {'since': START.isoformat(), 'total_input': 60, 'output': 5})
 
 
+def origin_line(message_id, entrypoint=MISSING, sidechain=MISSING, **options):
+    """A Claude assistant line carrying the native origin fields ``entrypoint`` and ``isSidechain`` (MISSING leaves one out)."""
+    entry = json.loads(claude_line(message_id, **options))
+    if entrypoint is not MISSING:
+        entry['entrypoint'] = entrypoint
+    if sidechain is not MISSING:
+        entry['isSidechain'] = sidechain
+    return json.dumps(entry)
+
+
+class ClaudeOriginTests(unittest.TestCase):
+    """B5: the origin of every message (native fields only) splits the measured window into Jefe and Otros."""
+    LATER = START + timedelta(days=1)
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def write(self, *lines, name='session.jsonl'):
+        folder = self.root / '-home-u-Work-a'
+        folder.mkdir(exist_ok=True)
+        (folder / name).write_text('\n'.join(lines) + '\n')
+        return folder / name
+
+    def measure(self, managed_runs=False):
+        return breakdown.scan_claude(self.root, prices.DEFAULT_PRICES, 30, NOW, since=START, total_days=30, managed_runs=managed_runs)['measurement']
+
+    def assertSplit(self, block, jefe, otros, limited):
+        self.assertEqual((block['jefe'], block['otros'], block['classificationLimited']), (jefe, otros, limited))
+
+    FULL = {'total_input': 60, 'output': 5}
+    NONE = {'total_input': 0, 'output': 0}
+
+    def test_claude_cli_false_sidechain_is_interactive_jefe(self):
+        self.write(origin_line('m1', 'cli', False, at=self.LATER, usage=(10, 5, 20, 30)))
+        self.assertSplit(self.measure(), self.FULL, self.NONE, False)
+        self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, False)
+
+    def test_claude_sidechain_true_in_interactive_session_routes_to_otros(self):
+        self.write(origin_line('m1', 'cli', True, at=self.LATER, usage=(10, 5, 20, 30)))
+        self.assertSplit(self.measure(), self.NONE, self.FULL, False)
+
+    def test_claude_sdk_cli_without_managed_runs_routes_to_otros(self):
+        self.write(origin_line('m1', 'sdk-cli', False, at=self.LATER, usage=(10, 5, 20, 30)))
+        self.assertSplit(self.measure(managed_runs=False), self.NONE, self.FULL, False)
+
+    def test_claude_sdk_cli_with_managed_runs_stays_jefe_with_limitation(self):
+        self.write(origin_line('m1', 'sdk-cli', False, at=self.LATER, usage=(10, 5, 20, 30)),
+                   origin_line('m2', 'sdk-cli', True, at=self.LATER, usage=(10, 5, 20, 30)))
+        self.assertSplit(self.measure(managed_runs=True), {'total_input': 120, 'output': 10}, self.NONE, True)
+
+    def test_claude_repeated_message_counts_once_before_origin_split(self):
+        lines = [origin_line('m1', 'cli', True, at=self.LATER, usage=usage) for usage in ((10, 1, 0, 0), (10, 5, 20, 0), (10, 5, 20, 30))]
+        self.write(*lines[::-1], name='b.jsonl')
+        self.write(*lines, name='a.jsonl')
+        self.assertSplit(self.measure(), self.NONE, self.FULL, False)
+
+    def test_claude_origin_conflict_stays_jefe_limited(self):
+        for second in (('cli', True), ('sdk-cli', False), ('cli', MISSING)):
+            self.write(origin_line('m1', 'cli', False, at=self.LATER, usage=(10, 5, 20, 30)),
+                       origin_line('m1', second[0], second[1], at=self.LATER, usage=(10, 5, 20, 30)))
+            self.assertSplit(self.measure(), self.FULL, self.NONE, True)
+
+    def test_missing_or_invalid_origin_stays_jefe_limited(self):
+        cases = ((MISSING, MISSING), ('cli', MISSING), (MISSING, False), ('cli', 'false'), ('cli', 1), ('cli', None), ('cli', 0),
+                 ('desktop', False), ('', False), (5, False), (None, False), ('CLI', False), ('sdk-cli ', True))
+        for entrypoint, sidechain in cases:
+            self.write(origin_line('m1', entrypoint, sidechain, at=self.LATER, usage=(10, 5, 20, 30)))
+            self.assertSplit(self.measure(), self.FULL, self.NONE, True)
+            self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, True)
+
+    def test_a_limitation_outside_the_window_or_without_usage_is_not_reported(self):
+        self.write(origin_line('old', 'weird', MISSING, at=START - US, usage=(10, 5, 20, 30)),
+                   origin_line('m1', 'cli', False, at=self.LATER, usage=(10, 5, 20, 30)))
+        self.assertSplit(self.measure(), self.FULL, self.NONE, False)
+
+    def test_origin_partition_uses_one_transcript_pass(self):
+        path = self.write(origin_line('m1', 'cli', False, at=self.LATER), origin_line('m2', 'cli', True, at=self.LATER))
+        opened = count_opens(self)
+        self.measure()
+        self.assertEqual(opened[str(path)], 1)
+
+    def test_claude_partition_sums_to_the_canonical_measurement(self):
+        usages = {'a': (10, 5, 20, 30), 'b': (1, 2, 3, 4), 'c': (7, 0, 0, 9), 'd': (100, 50, 25, 5), 'e': (3, 3, 3, 3)}
+        origins = {'a': ('cli', False), 'b': ('cli', True), 'c': ('sdk-cli', False), 'd': (MISSING, MISSING), 'e': ('cli', 'x')}
+        self.write(*(origin_line(key, *origins[key], at=self.LATER, usage=usage) for key, usage in usages.items()))
+        split = self.measure()
+        self.write(*(claude_line(key, at=self.LATER, usage=usage) for key, usage in usages.items()))
+        canonical = self.measure()
+        add = lambda block, field: block['jefe'][field] + block['otros'][field]
+        for field in ('total_input', 'output'):
+            self.assertEqual(add(split, field), add(canonical, field), field)
+        self.assertNotEqual(split['otros'], self.NONE)
+        self.assertNotEqual(split['jefe'], self.NONE)
+
+
 class CodexScanTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
@@ -579,6 +687,262 @@ class CodexScanTests(unittest.TestCase):
         self.assertIsNone(self.scan())
 
 
+def codex_id(number):
+    return str(uuid.UUID(int=number))
+
+
+def codex_meta(session, source=MISSING, **payload):
+    """A session_meta line for ``session`` (a codex_id); ``source`` MISSING leaves the field out."""
+    body = dict(payload, id=session)
+    if source is not MISSING:
+        body['source'] = source
+    return json.dumps({'timestamp': iso(START), 'type': 'session_meta', 'payload': body})
+
+
+def spawned_by(parent):
+    return {'subagent': {'thread_spawn': {'parent_thread_id': parent, 'depth': 1}}}
+
+
+class CodexOriginTests(unittest.TestCase):
+    """B6: the native source of each rollout (own identity, parents, forks) splits the window into Jefe and Otros."""
+    LATER = START + timedelta(days=1)
+    FULL = {'total_input': 100, 'output': 10}
+    NONE = {'total_input': 0, 'output': 0}
+    CLI, EXEC = 1, 2
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def events(self, count=1):
+        return [codex_count(100, 0, output=10, at=self.LATER, record=False) for _ in range(count)]
+
+    def write(self, number, *lines, name=None, root=None):
+        folder = (root or self.root) / '2026' / '11' / '02'
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (name or 'rollout-2026-11-02T10-00-00-%s.jsonl' % codex_id(number))
+        path.write_text('\n'.join(lines) + '\n')
+        return path
+
+    def session(self, number, source, count=1, **options):
+        return self.write(number, codex_meta(codex_id(number), source), *self.events(count), **options)
+
+    def measure(self, managed_runs=False, extra_dirs=()):
+        return breakdown.scan_codex(self.root, prices.DEFAULT_PRICES, 30, NOW, extra_dirs, since=START, total_days=30,
+                                    managed_runs=managed_runs)['measurement']
+
+    def assertSplit(self, block, jefe, otros, limited):
+        self.assertEqual((block['jefe'], block['otros'], block['classificationLimited']), (jefe, otros, limited))
+
+    def double(self, block):
+        return {key: value * 2 for key, value in block.items()}
+
+    def test_codex_originator_does_not_override_subagent_source(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI)), originator='codex_cli_rs'), *self.events())
+        self.write(11, codex_meta(codex_id(11), 'cli', originator='codex_exec'), *self.events())
+        self.assertSplit(self.measure(), self.FULL, self.FULL, False)
+
+    def test_codex_cli_is_jefe_and_exec_follows_the_managed_gate(self):
+        self.session(self.CLI, 'cli')
+        self.assertSplit(self.measure(managed_runs=False), self.FULL, self.NONE, False)
+        self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, False)
+        self.session(self.EXEC, 'exec')
+        self.assertSplit(self.measure(managed_runs=True), self.double(self.FULL), self.NONE, True)
+
+    def test_codex_exec_without_managed_runs_routes_to_otros(self):
+        self.session(self.EXEC, 'exec')
+        self.assertSplit(self.measure(managed_runs=False), self.NONE, self.FULL, False)
+
+    def test_codex_exec_with_managed_runs_stays_jefe_limited(self):
+        self.session(self.EXEC, 'exec')
+        self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, True)
+
+    def test_managed_overlap_without_session_link_is_not_subtracted(self):
+        self.session(self.EXEC, 'exec', count=2)
+        self.session(3, 'exec')
+        self.assertSplit(self.measure(managed_runs=True), {'total_input': 300, 'output': 30}, self.NONE, True)
+
+    def test_codex_foreign_fork_metadata_does_not_replace_own_origin(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), codex_meta(codex_id(99), 'cli'), *self.events())
+        self.assertSplit(self.measure(), self.FULL, self.NONE, True)  # a fork never reads as the foreign origin nor as Otros
+
+    def test_codex_repeating_the_own_metadata_is_not_a_fork(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), codex_meta(codex_id(10), 'cli'), *self.events())
+        self.assertSplit(self.measure(), self.NONE, self.FULL, False)
+
+    def test_codex_fork_file_stays_jefe_limited_without_splitting_events(self):
+        events = self.events(3)
+        self.write(10, codex_meta(codex_id(10), 'exec'), events[0], codex_meta(codex_id(99), 'cli'), events[1], events[2])
+        self.assertSplit(self.measure(), {'total_input': 300, 'output': 30}, self.NONE, True)
+
+    def test_codex_id_not_matching_filename_stays_jefe_limited(self):
+        self.write(10, codex_meta(codex_id(11), 'exec'), *self.events())
+        self.write(12, codex_meta(codex_id(12), 'exec'), *self.events(), name='rollout-no-uuid.jsonl')
+        self.write(13, codex_meta(5, 'exec'), *self.events(), name='rollout-13.jsonl')
+        self.write(14, *self.events(), name='rollout-2026-11-02T10-00-00-%s.jsonl' % codex_id(14))
+        self.assertSplit(self.measure(), {'total_input': 400, 'output': 40}, self.NONE, True)
+
+    def test_codex_subagent_of_interactive_cli_root_routes_to_otros(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events())
+        self.write(11, codex_meta(codex_id(11), spawned_by(codex_id(10))), *self.events())
+        self.assertSplit(self.measure(), self.NONE, self.double(self.FULL), False)
+
+    def test_codex_parent_in_another_directory_is_found(self):
+        other = tempfile.TemporaryDirectory(); self.addCleanup(other.cleanup)
+        elsewhere = Path(other.name)
+        self.session(self.CLI, 'cli', count=0, root=elsewhere)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events())
+        self.assertSplit(self.measure(extra_dirs=(elsewhere,)), self.NONE, self.FULL, False)
+
+    def test_codex_subagent_of_exec_root_follows_the_managed_gate(self):
+        self.session(self.EXEC, 'exec', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.EXEC))), *self.events())
+        self.assertSplit(self.measure(managed_runs=False), self.NONE, self.FULL, False)
+        self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, True)
+
+    def test_codex_missing_parent_or_parent_cycle_stays_jefe_limited(self):
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(77))), *self.events())
+        self.write(11, codex_meta(codex_id(11), spawned_by(codex_id(12))), *self.events())
+        self.write(12, codex_meta(codex_id(12), spawned_by(codex_id(11))), *self.events())
+        self.write(13, codex_meta(codex_id(13), spawned_by(codex_id(13))), *self.events())
+        self.assertSplit(self.measure(), {'total_input': 400, 'output': 40}, self.NONE, True)
+
+    def test_codex_parent_chain_is_limited_to_eight_hops(self):
+        self.session(self.CLI, 'cli', count=0)
+        for level in range(1, 10):
+            parent = self.CLI if level == 1 else 100 + level - 1
+            self.write(100 + level, codex_meta(codex_id(100 + level), spawned_by(codex_id(parent))), *self.events())
+        self.assertSplit(self.measure(), self.FULL, {'total_input': 800, 'output': 80}, True)  # the ninth hop stays Jefe
+
+    def test_codex_unknown_or_invalid_source_stays_jefe_limited(self):
+        sources = (MISSING, '', 5, None, ['cli'], {}, {'subagent': 'x'}, {'subagent': {}}, {'subagent': {'thread_spawn': {}}},
+                   {'subagent': {'thread_spawn': {'parent_thread_id': 5}}}, {'subagent': {'thread_spawn': {'parent_thread_id': 'nope'}}},
+                   {'other': {'thread_spawn': {'parent_thread_id': codex_id(self.CLI)}}}, 'CLI', 'exec ')
+        self.session(self.CLI, 'cli', count=0)
+        for number, source in enumerate(sources, 10):
+            self.session(number, source)
+        self.assertSplit(self.measure(), {'total_input': 100 * len(sources), 'output': 10 * len(sources)}, self.NONE, True)
+
+    def test_codex_explicit_fork_without_foreign_metadata_stays_jefe_limited(self):
+        self.write(10, codex_meta(codex_id(10), 'exec', forked_from_id=codex_id(99)), *self.events(3))
+        self.assertSplit(self.measure(managed_runs=False), {'total_input': 300, 'output': 30}, self.NONE, True)
+        self.write(11, codex_meta(codex_id(11), 'exec', forked_from_id=codex_id(11)), *self.events())
+        self.write(12, codex_meta(codex_id(12), 'exec', forked_from_id='nope'), *self.events())
+        self.write(13, codex_meta(codex_id(13), 'exec', forked_from_id=5), *self.events())
+        self.assertSplit(self.measure(managed_runs=False), {'total_input': 600, 'output': 60}, self.NONE, True)
+
+    def test_codex_absent_or_null_forked_from_id_is_not_a_fork(self):
+        self.write(10, codex_meta(codex_id(10), 'exec', forked_from_id=None), *self.events())
+        self.write(11, codex_meta(codex_id(11), 'exec'), *self.events())
+        self.assertSplit(self.measure(managed_runs=False), self.NONE, self.double(self.FULL), False)
+
+    def test_codex_child_of_a_fork_root_stays_jefe_limited(self):
+        self.write(self.CLI, codex_meta(codex_id(self.CLI), 'cli', forked_from_id=codex_id(99)))
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events())
+        self.assertSplit(self.measure(), self.FULL, self.NONE, True)
+
+    def test_codex_direct_parent_without_nested_parent_routes_to_otros(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), {'subagent': {'thread_spawn': {}}}, parent_thread_id=codex_id(self.CLI)), *self.events())
+        self.assertSplit(self.measure(managed_runs=True), self.NONE, self.FULL, False)
+
+    INVALID_SOURCES = ({}, {'other': {}}, {'subagent': 'invalid'}, {'subagent': {}}, {'subagent': {'thread_spawn': 7}})
+
+    def test_codex_invalid_source_with_direct_parent_stays_jefe_limited(self):
+        self.session(self.CLI, 'cli', count=0)
+        for source in self.INVALID_SOURCES:
+            for managed in (True, False):
+                with self.subTest(source=source, managed=managed):
+                    self.write(10, codex_meta(codex_id(10), source, parent_thread_id=codex_id(self.CLI)), *self.events())
+                    self.assertSplit(self.measure(managed_runs=managed), self.FULL, self.NONE, True)
+
+    def test_codex_invalid_source_in_parent_chain_stays_jefe_limited(self):
+        self.session(self.CLI, 'cli', count=0)
+        for source in self.INVALID_SOURCES:
+            for managed in (True, False):
+                with self.subTest(source=source, managed=managed):
+                    self.write(11, codex_meta(codex_id(11), source, parent_thread_id=codex_id(self.CLI)))
+                    self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(11))), *self.events())
+                    self.assertSplit(self.measure(managed_runs=managed), self.FULL, self.NONE, True)
+
+    def test_codex_equivalent_native_parents_give_the_same_split(self):
+        self.session(self.CLI, 'cli', count=0)
+        cli = codex_id(self.CLI)
+        variants = {'nested only': (spawned_by(cli), {}), 'direct only': ({'subagent': {'thread_spawn': {}}}, {'parent_thread_id': cli}),
+                    'both equal': (spawned_by(cli), {'parent_thread_id': cli}), 'direct null': (spawned_by(cli), {'parent_thread_id': None})}
+        for name, (source, extra) in variants.items():
+            with self.subTest(name):
+                self.write(10, codex_meta(codex_id(10), source, **extra), *self.events())
+                self.assertSplit(self.measure(managed_runs=True), self.NONE, self.FULL, False)
+
+    def test_codex_conflicting_native_parents_stay_jefe_limited(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.session(self.EXEC, 'exec', count=0)
+        cli, exe = codex_id(self.CLI), codex_id(self.EXEC)
+        for name, nested, direct in (('nested cli', cli, exe), ('nested exec', exe, cli), ('direct invalid', cli, 'nope'),
+                                     ('direct number', cli, 5)):
+            with self.subTest(name):
+                self.write(10, codex_meta(codex_id(10), spawned_by(nested), parent_thread_id=direct), *self.events())
+                self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, True)
+        with self.subTest('nested invalid, direct valid'):
+            self.write(10, codex_meta(codex_id(10), spawned_by('nope'), parent_thread_id=cli), *self.events())
+            self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, True)
+
+    def test_codex_direct_parent_on_a_non_subagent_source_stays_jefe_limited(self):
+        self.session(self.CLI, 'cli', count=0)
+        self.write(10, codex_meta(codex_id(10), 'cli', parent_thread_id=codex_id(self.CLI)), *self.events())
+        self.assertSplit(self.measure(), self.FULL, self.NONE, True)
+
+    def test_codex_vscode_root_is_jefe_without_limitation(self):
+        self.session(self.CLI, 'vscode')
+        for managed in (False, True):
+            with self.subTest(managed_runs=managed):
+                self.assertSplit(self.measure(managed_runs=managed), self.FULL, self.NONE, False)
+
+    def test_codex_subagent_of_vscode_root_stays_jefe_limited(self):
+        self.session(self.CLI, 'vscode', count=0)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events())
+        self.assertSplit(self.measure(), self.FULL, self.NONE, True)
+
+    def test_origin_partition_preserves_existing_dedup_and_window(self):
+        repeated = codex_count(100, 0, output=10, at=self.LATER, record=False)
+        self.write(self.EXEC, codex_meta(codex_id(self.EXEC), 'exec'), repeated, repeated,
+                   codex_count(100, 0, output=10, at=START - US, record=False),
+                   codex_count(100, 0, output=10, at=NOW + US, record=False),
+                   codex_count(100, 0, output=10, at=START, record=False))
+        self.assertSplit(self.measure(), self.NONE, self.double(self.FULL), False)
+
+    def test_a_limited_file_without_usage_in_the_window_is_not_reported(self):
+        self.write(10, codex_meta(codex_id(11), 'exec'), codex_count(100, 0, output=10, at=START - US, record=False))
+        self.session(self.CLI, 'cli')
+        self.assertSplit(self.measure(), self.FULL, self.NONE, False)
+
+    def test_codex_partition_sums_to_the_canonical_measurement(self):
+        self.session(self.CLI, 'cli', count=2)
+        self.session(self.EXEC, 'exec', count=3)
+        self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events(4))
+        self.write(11, codex_meta(codex_id(99), 'cli'), *self.events(5), name='rollout-odd.jsonl')
+        split = self.measure()
+        for path in self.root.rglob('*.jsonl'):
+            path.write_text('\n'.join(line for line in path.read_text().splitlines() if '"session_meta"' not in line) + '\n')
+        canonical = self.measure()
+        for field in ('total_input', 'output'):
+            self.assertEqual(split['jefe'][field] + split['otros'][field], canonical['jefe'][field] + canonical['otros'][field])
+        self.assertNotEqual(split['otros'], self.NONE)
+        self.assertNotEqual(split['jefe'], self.NONE)
+
+    def test_origin_partition_uses_one_transcript_pass(self):
+        path = self.session(self.CLI, 'cli')
+        child = self.write(10, codex_meta(codex_id(10), spawned_by(codex_id(self.CLI))), *self.events())
+        opened = count_opens(self)
+        self.measure()
+        self.assertEqual(opened, {str(path): 1, str(child): 1})
+
+
 class CodexSinceStartTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
@@ -590,8 +954,8 @@ class CodexSinceStartTests(unittest.TestCase):
         (folder / name).write_text('\n'.join(lines) + '\n')
         return folder / name
 
-    def scan(self, since=START, days=30, extra_dirs=()):
-        return breakdown.scan_codex(self.root, prices.DEFAULT_PRICES, days, NOW, extra_dirs, since=since)
+    def scan(self, since=START, days=30, extra_dirs=(), total_days=30):
+        return compat(breakdown.scan_codex(self.root, prices.DEFAULT_PRICES, days, NOW, extra_dirs, since=since, total_days=total_days))
 
     def test_codex_since_start_is_inclusive(self):
         self.write(codex_context(), codex_count(100, 40, output=10, at=START - US), codex_count(100, 40, output=10, at=START),
@@ -634,7 +998,7 @@ class CodexSinceStartTests(unittest.TestCase):
         start = NOW - timedelta(days=100)
         self.write(codex_context(), codex_count(10, 0, output=2, at=NOW - timedelta(days=60), record=False))
         result = self.scan(since=start)
-        self.assertEqual(result['sinceStart'], {'since': start.isoformat(), 'total_input': 10, 'output': 2})
+        self.assertEqual(result['sinceStart'], {'since': (NOW - timedelta(days=30)).isoformat(), 'total_input': 0, 'output': 0})
         self.assertEqual((result['windowDays'], result['byKind'], result['byProject'], result['byTool']),
                          (30, dict.fromkeys(breakdown.KIND_NAMES, 0), [], []))
 
@@ -651,7 +1015,7 @@ class CodexSinceStartTests(unittest.TestCase):
         opened = count_opens(self)
         result = self.scan(since=NOW - timedelta(days=90), extra_dirs=(archived,))
         self.assertEqual(opened, {str(first): 1, str(second): 1})
-        self.assertEqual(result['sinceStart']['total_input'], 30)
+        self.assertEqual(result['sinceStart']['total_input'], 10)
 
     def test_codex_empty_readable_source_is_a_known_zero_and_a_missing_one_is_not(self):
         result = self.scan()

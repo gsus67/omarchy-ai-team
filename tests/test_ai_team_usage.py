@@ -4,7 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,7 +41,8 @@ class UsageTests(unittest.TestCase):
         (self.root / 'bin/omarchy-agent-usage-claude').write_text(CLAUDE)
         (self.root / 'bin/omarchy-agent-usage-codex').write_text(CODEX)
         patcher = patch.dict(os.environ, {'HOME': str(self.root / 'home'), 'OMARCHY_PATH': str(self.root),
-                                          'XDG_STATE_HOME': str(self.root / 'state')})
+                                          'XDG_STATE_HOME': str(self.root / 'state'),
+                                          'XDG_CONFIG_HOME': str(self.root / 'config')})
         patcher.start(); self.addCleanup(patcher.stop)
         (self.root / 'home').mkdir()
 
@@ -120,8 +121,12 @@ class UsageTests(unittest.TestCase):
         self.transcript('.claude-2')
         ai_team_usage.write_breakdowns()
         written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
-        self.assertEqual(written['sinceStart'], {'since': '2020-01-01T00:00:00+00:00', 'total_input': 1_000_000, 'output': 0})
+        as_of = datetime.fromisoformat(written['generatedAt'])
+        self.assertEqual(written['measurement'], {
+            'start': '2020-01-01T00:00:00+00:00', 'since': (as_of - timedelta(days=7)).isoformat(), 'windowDays': 7,
+            'jefe': {'total_input': 1_000_000, 'output': 0}, 'otros': {'total_input': 0, 'output': 0}, 'classificationLimited': True})
         self.assertEqual(written['windowDays'], 30)
+        self.assertNotIn('sinceStart', written)
 
     def test_one_start_is_resolved_once_and_shared_by_the_four_scans(self):
         seen = []
@@ -159,7 +164,8 @@ class UsageTests(unittest.TestCase):
         ai_team_usage.write_breakdowns()
         self.assertEqual([path.name for path in stale.glob('*.json')], ['codex-2.json'])
         written = json.loads((stale / 'codex-2.json').read_text())
-        self.assertEqual((written['sinceStart']['total_input'], written['sinceStart']['output']), (0, 0))
+        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']), ({'total_input': 0, 'output': 0},) * 2)
+        self.assertFalse(written['measurement']['classificationLimited'])
         self.assertEqual(written['byKind'], dict.fromkeys(('input', 'output', 'cacheRead', 'cacheWrite'), 0))
 
     def test_main_writes_breakdowns_even_if_a_collector_fails(self):
@@ -257,7 +263,8 @@ class UsageTests(unittest.TestCase):
         (self.root / 'home/.claude-2/projects').mkdir(parents=True)
         self.assertEqual(ai_team_usage.write_breakdowns(), [])
         written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
-        self.assertEqual((written['sinceStart']['total_input'], written['sinceStart']['output']), (0, 0))
+        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']), ({'total_input': 0, 'output': 0},) * 2)
+        self.assertFalse(written['measurement']['classificationLimited'])
 
     def test_source_disappearing_mid_scan_does_not_publish_partial_total(self):
         self.transcript('.claude-2')
@@ -274,6 +281,122 @@ class UsageTests(unittest.TestCase):
         with patch.object(os, 'scandir', vanishing):
             self.assertEqual(ai_team_usage.write_breakdowns(), ['claude-2'])
         self.assertEqual(target.read_bytes(), good)
+
+    NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+
+    def settings(self, content=None, **keys):
+        path = self.root / 'config/omarchy-ai-team/settings.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content if content is not None else json.dumps(keys))
+        return path
+
+    def test_window_days_setting_defaults_to_seven_and_is_strict(self):
+        self.assertEqual(ai_team_usage.window_days_setting(), 7)  # no file: nothing is written either
+        self.assertFalse((self.root / 'config').exists())
+        self.settings(other=1)
+        self.assertEqual(ai_team_usage.window_days_setting(), 7)
+        self.settings(usageWindowDays=30)
+        self.assertEqual(ai_team_usage.window_days_setting(), 30)
+        for invalid in ('7', 7.0, True, 14, 0, None, [7]):
+            self.settings(usageWindowDays=invalid)
+            self.assertIsNone(ai_team_usage.window_days_setting(), invalid)
+        self.settings('{broken')
+        self.assertIsNone(ai_team_usage.window_days_setting())
+        path = self.settings(usageWindowDays=30)
+        path.unlink()
+        path.symlink_to(self.root / 'elsewhere.json')
+        self.assertIsNone(ai_team_usage.window_days_setting())
+
+    def test_writer_shares_start_window_and_timestamp_across_four_scans(self):
+        self.persist_start('2020-01-01T00:00:00+00:00')
+        seen = []
+
+        def scan(root, table, days, now, *args, **kwargs):
+            seen.append((now, kwargs['since'], kwargs['total_days'], days))
+        with patch.object(ai_team_usage.breakdown, 'scan_claude', scan), patch.object(ai_team_usage.breakdown, 'scan_codex', scan):
+            ai_team_usage.write_breakdowns(self.NOW, window_days=30)
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(set(seen), {(self.NOW, datetime(2020, 1, 1, tzinfo=timezone.utc), 30, 30)})
+
+    def test_managed_runs_follow_the_ledger_engines_inside_the_window(self):
+        self.persist_start('2020-01-01T00:00:00+00:00')
+        flags = {}
+
+        def scan(engine):
+            def run(root, table, days, now, *args, managed_runs, **kwargs):
+                flags.setdefault(engine, set()).add(managed_runs)
+            return run
+        ledger = self.root / 'state/omarchy-ai-team/role-usage.jsonl'
+
+        def run(**kwargs):
+            flags.clear()
+            with patch.object(ai_team_usage.breakdown, 'scan_claude', scan('claude')), patch.object(ai_team_usage.breakdown, 'scan_codex', scan('codex')):
+                ai_team_usage.write_breakdowns(self.NOW, **kwargs)
+            return flags['claude'], flags['codex']
+
+        def row(at, agent):
+            return json.dumps({'at': at, 'role': 'code', 'agent': agent, 'tokens': 1}) + '\n'
+        self.assertEqual(run(), ({False}, {False}))  # no ledger: nothing was managed
+        ledger.write_text(row('2026-11-19T12:00:00+00:00', 'claude-2') + row('2026-11-01T12:00:00+00:00', 'codex'))
+        self.assertEqual(run(), ({True}, {False}))  # the codex run is older than the seven days
+        self.assertEqual(run(window_days=30), ({True}, {True}))
+        ledger.unlink()
+        ledger.mkdir()
+        self.assertEqual(run(), ({True}, {True}))  # an unreadable ledger: every engine is managed
+
+    def test_a_start_after_now_publishes_detail_without_measurement_and_keeps_the_start(self):
+        self.persist_start('2030-01-01T00:00:00+00:00')
+        self.transcript('.claude-2')
+        saved = self.start_file().read_text()
+        self.assertEqual(ai_team_usage.write_breakdowns(self.NOW), [])
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertNotIn('measurement', written)
+        self.assertEqual(self.start_file().read_text(), saved)
+
+    def test_main_reads_the_preference_once_and_an_invalid_one_publishes_no_measurement(self):
+        self.persist_start()
+        self.transcript('.claude-2')
+        self.settings(usageWindowDays=30)
+        ai_team_usage.main(['--breakdowns-only'])
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertEqual(written['measurement']['windowDays'], 30)
+        self.settings(usageWindowDays=14)
+        ai_team_usage.main(['--breakdowns-only'])
+        written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
+        self.assertNotIn('measurement', written)
+        self.assertEqual(written['windowDays'], 30)
+
+    def test_breakdowns_only_does_not_call_official_collectors(self):
+        self.persist_start()
+        self.transcript('.claude-2')
+        (self.root / 'home/.codex-2').mkdir()
+        with patch.object(ai_team_usage, 'collect', side_effect=AssertionError('collector called')):
+            self.assertEqual(ai_team_usage.main(['--breakdowns-only']), 0)
+        self.assertTrue((ai_team_usage.breakdown_dir() / 'claude-2.json').exists())
+        self.assertFalse(ai_team_usage.state_dir().exists())
+
+    def test_changed_preference_or_start_before_publish_discards_the_attempt(self):
+        self.persist_start()
+        self.transcript('.claude-2')
+        self.assertEqual(ai_team_usage.write_breakdowns(window_days=7), [])
+        folder = ai_team_usage.breakdown_dir()
+        before = {path.name: path.read_text() for path in folder.glob('*.json')}
+        real = ai_team_usage.breakdown.scan_claude
+
+        def changing(*args, **kwargs):
+            self.settings(usageWindowDays=30)
+            return real(*args, **kwargs)
+        with patch.object(ai_team_usage.breakdown, 'scan_claude', changing):
+            self.assertEqual(sorted(ai_team_usage.write_breakdowns(window_days=7)), sorted(ai_team_usage.BREAKDOWN_ACCOUNTS))
+        self.assertEqual({path.name: path.read_text() for path in folder.glob('*.json')}, before)
+        self.settings(usageWindowDays=7)
+
+        def moving(*args, **kwargs):
+            self.start_file().write_text(json.dumps({'schemaVersion': 1, 'since': '2021-01-01T00:00:00+00:00'}))
+            return real(*args, **kwargs)
+        with patch.object(ai_team_usage.breakdown, 'scan_claude', moving):
+            self.assertEqual(sorted(ai_team_usage.write_breakdowns(window_days=7)), sorted(ai_team_usage.BREAKDOWN_ACCOUNTS))
+        self.assertEqual({path.name: path.read_text() for path in folder.glob('*.json')}, before)
 
     def test_prices_file_is_created_once_and_user_edits_survive(self):
         ai_team_usage.write_breakdowns()

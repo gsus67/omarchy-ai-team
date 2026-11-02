@@ -13,8 +13,17 @@ ColumnLayout {
   property var translations: ({})
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
   property var info: ({})
-  readonly property var moment: root.info.since ? new Date(root.info.since) : null
-  readonly property string sinceText: root.moment && !isNaN(root.moment.getTime()) ? root.moment.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
+  property int windowDays: 7
+  property bool busy: false
+  property bool measurementPending: false  // a window was requested and its measurement has not arrived yet
+  readonly property bool loading: root.busy || root.measurementPending
+  signal windowRequested(int days)
+  function dateText(iso) {
+    const moment = iso ? new Date(iso) : null
+    return moment && !isNaN(moment.getTime()) ? moment.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
+  }
+  readonly property string sinceText: root.dateText(root.info.since)
+  readonly property string asOfText: root.dateText(root.info.asOf)
   readonly property var fonts: Style.font
   spacing: Style.space(6)
 
@@ -28,8 +37,17 @@ ColumnLayout {
   }
 
   Ui.PanelSectionHeader { text: root.tr("TOTAL") }
+  WrapButtonGroup {
+    objectName: "roles-window"
+    options: [{value: "7", label: root.tr("7 días")}, {value: "30", label: root.tr("30 días")}]
+    value: String(root.windowDays)
+    enabled: !root.busy
+    onChanged: value => root.windowRequested(parseInt(value))
+  }
   Text {
+    objectName: "roles-total"
     Layout.fillWidth: true
+    visible: !root.loading  // the figures of the previous window are hidden until the requested one arrives
     text: root.info.total === null || root.info.total === undefined ? root.tr("Desconocido") : root.tr("{cantidad} tokens", {cantidad: root.info.total})
     textFormat: Text.PlainText
     color: Commons.Color.foreground
@@ -38,9 +56,10 @@ ColumnLayout {
     font.bold: true
   }
   Repeater {
-    model: root.info.roles || []
+    model: root.loading ? [] : (root.info.roles || [])
     delegate: ColumnLayout {
       id: role
+      objectName: "roles-row"
       required property var modelData
       Layout.fillWidth: true
       spacing: Style.space(2)
@@ -71,6 +90,12 @@ ColumnLayout {
       }
     }
   }
-  Note { text: root.sinceText ? root.tr("Medido desde {fecha}", {fecha: root.sinceText}) : root.tr("Inicio de medición no disponible") }
-  Note { text: root.tr("El Jefe y los obreros (Planificar, Programar, Revisar y Sencillas) se miden desde el mismo inicio y con la misma unidad: entrada más salida. Un valor desconocido no cuenta como cero.") }
+  Note { objectName: "roles-updating"; visible: root.loading; text: root.tr("Actualizando medición…") }
+  Note { visible: !root.loading && !!root.info.pending; text: root.tr("Medición pendiente de actualizar.") }
+  Note { objectName: "roles-since"; visible: !root.loading; text: root.sinceText ? root.tr("Medido desde {fecha}", {fecha: root.sinceText}) : root.tr("Inicio de medición no disponible") }
+  Note { visible: !root.loading && !!root.info.partialWindow && !!root.sinceText; text: root.tr("Aún no hay {dias} días completos de medición. Se mide desde {fecha}.", {dias: root.windowDays, fecha: root.sinceText}) }
+  Note { objectName: "roles-asof"; visible: !root.loading && !!root.asOfText; text: root.tr("Última medición: {fecha}", {fecha: root.asOfText}) }
+  Note { objectName: "roles-overlap"; visible: !root.loading && !!root.info.classificationLimited; text: root.tr("Jefe incluye el consumo cuyo origen no se pudo verificar; algunos encargos pueden contarse también en los roles.") }
+  Note { text: root.tr("Otros reúne el consumo de Claude y Codex fuera de los papeles del equipo; el reparto es parcial.") }
+  Note { text: root.tr("Todas las filas usan la misma ventana móvil y el mismo inicio común.") }
 }
