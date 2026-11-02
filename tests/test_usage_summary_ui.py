@@ -61,6 +61,11 @@ class UsageSummaryUiTests(unittest.TestCase):
         source = (ROOT / 'HarnessContent.qml').read_text()
         self.assertNotIn('Ui.PanelSeparator { Layout.fillWidth: true }\n\n        RowLayout {\n          Layout.fillWidth: true\n          spacing: Style.space(2)\n          Ui.Button {\n            objectName: "launch-default"', source)
 
+    def test_the_error_detail_visibility_is_always_a_boolean(self):
+        # `a && (b || c)` can evaluate to undefined and QML then logs "Unable to assign [undefined] to bool" on every open.
+        source = (ROOT / 'HarnessContent.qml').read_text()
+        self.assertIn('visible: !!(statusLine.truncated && (root.errorText || root.snapshot.warning))', source)
+
     def test_the_bar_icon_differs_from_the_consumption_panel_icon(self):
         source = (ROOT / 'Panel.qml').read_text()
         icon = re.search(r'objectName: "harness-icon".*?text: "(.)"', source, re.S).group(1)

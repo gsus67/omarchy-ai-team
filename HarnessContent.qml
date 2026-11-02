@@ -141,7 +141,7 @@ ColumnLayout {
       Text {
         objectName: "error-detail"
         Layout.fillWidth: true
-        visible: statusLine.truncated && (root.errorText || root.snapshot.warning)
+        visible: !!(statusLine.truncated && (root.errorText || root.snapshot.warning))
         text: root.errorText || root.snapshot.warning || ""
         textFormat: Text.PlainText
         color: Commons.Color.urgent
