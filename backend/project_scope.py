@@ -36,7 +36,7 @@ def project_options(settings_file, memories=(), projects=()):
                 try:
                     row = json.loads(memory_archive.read_file(metadata, 4096))
                     if row.get('schemaVersion') == 1 and isinstance(row.get('name'), str):
-                        result[folder.name] = {'value': folder.name, 'label': row['name'][:100] + ' · ' + folder.name[:8]}
+                        result[folder.name] = {'value': folder.name, 'label': memory_archive.clean_name(row['name'], 100) + ' · ' + folder.name[:8]}
                 except (OSError, ValueError, native_plugins.PluginError):
                     pass
     return [{'value': 'default', 'label': tr('Preferencias generales')}, *sorted(result.values(), key=lambda row: (row['label'], row['value']))]
