@@ -12,7 +12,7 @@ ColumnLayout {
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
   property var info: ({})
   property bool busy: false
-  property string scope: ""
+  property string scope: "jefe"
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   readonly property var values: root.scope === "" ? (root.info.settings || ({})) : ((root.info.resolved || ({}))[root.scope] || ({}))

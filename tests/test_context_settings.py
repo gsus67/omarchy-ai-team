@@ -1,4 +1,5 @@
 """Plugin-only persistence of context settings; HOME/XDG are synthetic."""
+import re
 
 import contextlib
 import io
@@ -131,6 +132,64 @@ class ContextSettingsStoreTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(harness.config_path().stat().st_mode), 0o600)
         self.assertEqual(sorted(p.name for p in harness.config_path().parent.iterdir()),
                          [harness.config_path().name])
+
+
+class ContextPageDefaultScopeTests(unittest.TestCase):
+    @staticmethod
+    def strip_comments(source):
+        out, i, n = [], 0, len(source)
+        while i < n:
+            two = source[i:i + 2]
+            if source[i] == '"':
+                j = i + 1
+                while j < n and source[j] not in '"\n':
+                    j += 2 if source[j] == '\\' else 1
+                out.append(source[i:j + 1])
+                i = j + 1
+            elif two == '//':
+                while i < n and source[i] != '\n':
+                    i += 1
+            elif two == '/*':
+                end = source.find('*/', i + 2)
+                i = n if end < 0 else end + 2
+                out.append(' ')
+            else:
+                out.append(source[i])
+                i += 1
+        return ''.join(out)
+
+    @classmethod
+    def default_scope(cls, source):
+        found = re.findall(r'^[ \t]*property[ \t]+string[ \t]+scope[ \t]*:[ \t]*"([^"\n]*)"[ \t]*;?[ \t]*$',
+                           cls.strip_comments(source), re.M)
+        return found[0] if len(found) == 1 else None
+
+    @classmethod
+    def scope_options(cls, source):
+        code = cls.strip_comments(source)
+        block = re.search(r'objectName:\s*"context-scope".*?options:\s*\[(.*?)\]\s*\n\s*value:', code, re.S)
+        return re.findall(r'value:\s*"([^"]+)"', block.group(1)) if block else []
+
+    def test_the_context_tab_opens_with_the_boss_role_selected(self):
+        source = (Path(__file__).resolve().parents[1] / 'ContextPage.qml').read_text()
+        self.assertEqual(self.default_scope(source), 'jefe')
+        self.assertIn(self.default_scope(source), self.scope_options(source))
+
+    def test_a_commented_literal_is_not_a_declaration(self):
+        source = '// property string scope: "jefe"\n/* property string scope: "jefe" */\nproperty string scope: ""\n'
+        self.assertEqual(self.default_scope(source), '')
+        self.assertIsNone(self.default_scope('// property string scope: "jefe"\n/* property string scope: "jefe" */\n'))
+
+    def test_delimiters_inside_strings_do_not_hide_the_declaration(self):
+        source = 'Item { text: "/*"; other: "// x"; label: "*/" }\nproperty string scope: "jefe" // trailing\n'
+        self.assertEqual(self.default_scope(source), 'jefe')
+        self.assertEqual(self.default_scope('x: "a\\"/*"\nproperty string scope: "jefe"\n'), 'jefe')
+
+    def test_only_a_complete_literal_is_a_declaration(self):
+        self.assertIsNone(self.default_scope('property string scope: "jefe-invalid" + x\n'))
+        self.assertNotIn(self.default_scope('property string scope: "jefe-invalid"\n'), self.scope_options(
+            'objectName: "context-scope"\n options: [{value: "jefe"}]\n value: x'))
+        self.assertEqual(self.default_scope('property string scope: "jefe"; // ok\n'), 'jefe')
 
 
 if __name__ == '__main__':
