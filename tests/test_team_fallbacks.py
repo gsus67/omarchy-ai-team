@@ -316,6 +316,18 @@ class CombinationTests(unittest.TestCase):
         for key in team.ROLES:
             self.assertIn(f'{team.LABELS[key]} no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', text)
 
+    def test_skill_marks_a_review_alternative_that_is_the_leading_cli(self):
+        rows = team.alternatives('review', self.state['roles'], self.state['options'])
+        text = self.text()
+        lead = [row for row in rows if row['agent'] == 'codex']
+        other = [row for row in rows if row['agent'] != 'codex']
+        self.assertTrue(lead)
+        marker = 'no independiente'
+        section = text[text.index('Alternativas de Revisar'):]
+        section = section[:section.index('\n\n')]
+        for row in lead: self.assertRegex(section, rf'# \d+: {row["model"]} \({marker}')
+        for row in other: self.assertNotRegex(section, rf'# \d+: {row["model"]} \({marker}')
+
 
 class OnlyPiTests(unittest.TestCase):
     A, B, C = 'nous/a:free', 'nous/b:free', 'nous/c:free'

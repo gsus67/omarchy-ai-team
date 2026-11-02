@@ -263,7 +263,9 @@ def text(paths, settings_file, team=None):
             lines += ['Alternativas de '+roles.LABELS[key]+', en orden:', '```sh']
             for number, option in enumerate(options, 1):
                 # One model can take one line per Codex account: the number marks the alternative.
-                lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles, settings_file=settings_file, only_pi=only_pi)]
+                # The leading CLI's own family cannot give an independent review of what it wrote.
+                mark = ' (no independiente: es la familia de la CLI que dirige esta sesión)' if key == 'review' and option['agent'] == paths['profile'].removesuffix('-2') else ''
+                lines += ['# '+str(number)+': '+option['model']+mark, *role_commands(key, option, profiles, settings_file=settings_file, only_pi=only_pi)]
             lines += ['```', '']
         else:
             lines += [roles.LABELS[key]+' no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', '']
