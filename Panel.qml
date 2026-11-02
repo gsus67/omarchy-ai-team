@@ -123,6 +123,7 @@ Ui.Panel {
       message: root.message
       operation: root.operation
       onCommandRequested: arguments => root.run(arguments)
+      onErrorDismissed: root.errorText = ""
       onRestoreRequested: (commandArgs, explanation) => {
         confirmation.pendingArguments = commandArgs
         confirmation.selectedIndex = 0

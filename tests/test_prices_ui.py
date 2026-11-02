@@ -25,5 +25,14 @@ class PricesUiTests(unittest.TestCase):
         self.assertIn('Ui.PanelSeparator', page)
 
 
+class PanelBehaviourTests(unittest.TestCase):
+    def test_an_error_is_dropped_when_the_page_changes(self):
+        self.assertIn('root.errorDismissed()', (ROOT / 'HarnessContent.qml').read_text())
+        self.assertIn('onErrorDismissed: root.errorText = ""', (ROOT / 'Panel.qml').read_text())
+
+    def test_team_models_are_sorted_alphabetically(self):
+        self.assertIn('.sort((a, b) => a.model.localeCompare(b.model', (ROOT / 'TeamPage.qml').read_text())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -29,8 +29,10 @@ ColumnLayout {
   signal restoreRequested(var arguments, string explanation)
   signal authorizationRequested(var arguments, string explanation)
   signal uninstallRequested(var arguments, string explanation)
+  signal errorDismissed()
   spacing: Style.space(6)
   onPageChanged: {
+    if (root.errorText !== "") root.errorDismissed()  // an error belongs to the page where it happened
     root.scrollTop()
     root.teamModelsPending = root.page === "team"
     root.refreshTeamModels()

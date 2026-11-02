@@ -81,7 +81,9 @@ ColumnLayout {
       readonly property var current: (root.info.roles || {})[role.modelData.id] || ({})
       readonly property var recommended: role.current.recommended || ({})
       readonly property var choice: (root.info.options || []).find(option => option.agent === role.current.agent && option.model === role.current.model) || ({})
-      readonly property var modelOptions: (root.info.options || []).map(option => ({
+      readonly property var modelOptions: (root.info.options || []).slice()
+        .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}) || a.agent.localeCompare(b.agent))
+        .map(option => ({
         value: JSON.stringify([option.agent, option.model]),
         label: option.agent === role.recommended.agent && option.model === role.recommended.model ? root.tr("★ {modelo}", {modelo: option.model}) : option.model
       }))
