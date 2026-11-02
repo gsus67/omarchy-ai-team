@@ -143,7 +143,7 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.body
   }
-  Ui.ButtonGroup {
+  WrapButtonGroup {
     objectName: "default-agent"
     spacing: root.metrics.xxs
     fontSize: root.fonts.caption

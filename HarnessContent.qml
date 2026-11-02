@@ -149,12 +149,22 @@ ColumnLayout {
     implicitHeight: pageColumn.implicitHeight
     clip: true
     QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
-    QQC.ScrollBar.vertical.policy: pageColumn.implicitHeight > height ? QQC.ScrollBar.AsNeeded : QQC.ScrollBar.AlwaysOff
+    // With more to see the bar is always shown, in its own column at the right edge, so it never
+    // covers the values (same rule as the RGB plugin).
+    readonly property bool overflowing: pageColumn.implicitHeight > height
+    QQC.ScrollBar.vertical: QQC.ScrollBar {
+      id: verticalBar
+      parent: scroll
+      anchors.top: scroll.top
+      anchors.right: scroll.right
+      anchors.bottom: scroll.bottom
+      policy: scroll.overflowing ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff
+    }
     contentWidth: availableWidth
 
     ColumnLayout {
       id: pageColumn
-      width: scroll.availableWidth
+      width: scroll.availableWidth - (scroll.overflowing ? verticalBar.width + Style.space(8) : 0)
       spacing: Style.space(6)
 
       Text {
