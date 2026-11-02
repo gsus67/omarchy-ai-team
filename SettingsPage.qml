@@ -4,6 +4,7 @@ import "I18n.js" as I18n
 import QtQuick.Layouts
 import qs.Ui as Ui
 import qs.Commons
+import qs.Commons as Commons
 
 ColumnLayout {
   id: root
@@ -58,7 +59,7 @@ ColumnLayout {
         readonly property bool installed: modelData.installation === "installed"
         text: (installed ? "" : "○ ") + modelData.name
         tooltipText: root.setupStatus(modelData)
-        foreground: installed ? Color.foreground : Color.muted
+        foreground: installed ? Commons.Color.foreground : Commons.Color.muted
         bordered: true
         focusable: true
         fontSize: root.fonts.caption
@@ -72,7 +73,7 @@ ColumnLayout {
     visible: text !== ""
     text: root.repairedText()
     textFormat: Text.PlainText
-    color: Color.muted
+    color: Commons.Color.muted
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
@@ -83,7 +84,7 @@ ColumnLayout {
     objectName: "language-label"
     text: root.tr("Idioma")
     textFormat: Text.PlainText
-    color: Color.foreground
+    color: Commons.Color.foreground
     font.family: root.fonts.family
     font.pixelSize: root.fonts.body
   }
@@ -157,7 +158,7 @@ ColumnLayout {
     visible: !!root.aiCheck.checkedAt
     text: root.tr("Última comprobación: {fecha}", {fecha: root.aiCheck.checkedAt || ""})
     textFormat: Text.PlainText
-    color: Color.muted
+    color: Commons.Color.muted
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
