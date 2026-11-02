@@ -20,6 +20,9 @@ class SharedMemoryTests(unittest.TestCase):
         environment = patch.dict(os.environ, {"HOME": str(self.root), "XDG_DATA_HOME": str(self.root / "data")})
         environment.start()
         self.addCleanup(environment.stop)
+        for key in ("CLAUDE_CONFIG_DIR", "CODEX_HOME"):
+            # patch.dict restores the original environment on cleanup.
+            os.environ.pop(key, None)
 
     def package(self):
         package = self.root / "package with spaces"
