@@ -1,4 +1,5 @@
 """ECC adapter contracts. Synthetic tests are not evidence of hook trust/execution."""
+import hashlib
 import importlib
 import json
 import os
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 import context_policy
+import state_confinement
 
 
 class Vault:
@@ -37,12 +39,24 @@ class Vault:
 
 class ContextStateTests(unittest.TestCase):
     def setUp(self):
-        self.module = importlib.import_module('context_state')
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        state_confinement.guard_writes(self, self.temp.name)
+        state_confinement.isolate_env(self, self.temp.name)
+        self.module = importlib.import_module('context_state')
         self.instance = self.module.instance('codex-2', 'code', Path(self.temp.name), context_policy.resolve({}, 'code'))
         self.vault = Vault()
         self.state = {'plan': ['implement'], 'decisions': [], 'files': ['backend/a.py:1'],
                       'errors': [], 'pending': ['review'], 'safe_boundary': True}
+
+    def test_fixture_state_checkpoint_is_confined(self):
+        self.module.checkpoint(self.vault, self.instance, self.state)
+        folder = Path(self.temp.name)/'state/omarchy-ai-team/context-usage'/self.instance['id']
+        self.assertTrue((folder/'handoff_checkpoint.json').is_file())
+        with patch.dict(os.environ):
+            os.environ.pop('XDG_STATE_HOME')
+            self.module.checkpoint(self.vault, self.instance, self.state)
+        fallback = Path(self.temp.name)/'home/.local/state/omarchy-ai-team/context-usage'/self.instance['id']
+        self.assertTrue((fallback/'handoff_checkpoint.json').is_file())
 
     def test_checkpoint_is_saved_and_verified_through_ecc_not_local_files(self):
         result = self.module.checkpoint(self.vault, self.instance, self.state)
@@ -53,7 +67,11 @@ class ContextStateTests(unittest.TestCase):
         self.assertEqual(json.loads(saved['body'])['state'], self.state)
         self.assertEqual(saved['targetHarnesses'], ['all', 'project'])
         self.assertNotIn('project', self.vault.calls[1][1])  # cwd, never an ambiguous display name
-        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+        folder = Path(self.temp.name)/'state/omarchy-ai-team/context-usage'/self.instance['id']
+        self.assertEqual([p.name for p in folder.iterdir()], ['handoff_checkpoint.json'])
+        record = json.loads((folder/'handoff_checkpoint.json').read_text())
+        self.assertEqual((record['schema'], record['id']), (self.module.IDLE_SCHEMA, result['id']))
+        self.assertEqual(record['sha256'], hashlib.sha256(saved['body'].encode()).hexdigest())
 
     def test_checkpoint_rejects_incomplete_state_and_propagates_save_or_verification_errors(self):
         for invalid in ({}, {**self.state, 'plan': 'text'}, {**self.state, 'extra': 'log'}):
@@ -263,11 +281,13 @@ class RealECCContextTests(unittest.TestCase):
         if not runtime['installed'] or not runtime['node']:
             self.skipTest('Official ECC runtime not installed; no installation permitted')
         with tempfile.TemporaryDirectory(prefix='ai-team-context-ecc-') as directory:
-            root = Path(directory); (root/'home').mkdir(); (root/'project').mkdir()
+            root = Path(directory)
+            state_confinement.guard_writes(self, root)  # before any mkdir/checkpoint/precompact
+            state_confinement.isolate_env(self, root)   # HOME and every XDG base inside the temporary directory
+            (root/'home').mkdir(); (root/'project').mkdir()
             command = shared_memory.mcp_command
             capsule = context_state.instance('codex-2', 'code', root/'project', context_policy.resolve({}, 'code'))
-            with patch.dict(os.environ, {'HOME': str(root/'home'), 'XDG_DATA_HOME': str(root/'data')}), patch.object(
-                    shared_memory, 'mcp_command', side_effect=lambda r, a: command(r, a, root/'store')):
+            with patch.object(shared_memory, 'mcp_command', side_effect=lambda r, a: command(r, a, root/'store')):
                 client = context_state.ECC(capsule, runtime=runtime)
                 saved = context_state.checkpoint(client, capsule, {
                     'plan': ['synthetic checkpoint'], 'decisions': [], 'files': [], 'errors': [], 'pending': []})
@@ -278,6 +298,61 @@ class RealECCContextTests(unittest.TestCase):
                 self.assertEqual(context_state.precompact(client, capsule)['status'], 'incomplete')
                 index = context_state.brief(client)
                 self.assertNotIn('synthetic checkpoint', json.dumps(index))
+
+class RealECCConfinementTests(unittest.TestCase):
+    """Deterministic CI regression for RealECCContextTests: no Node, network or installed ECC is involved."""
+
+    def test_roundtrip_confines_inherited_xdg_state(self):
+        import atomic_files
+        import shared_memory
+        import context_state
+        outer = tempfile.TemporaryDirectory(); self.addCleanup(outer.cleanup)
+        outer_root = Path(outer.name)
+        created, outside, written = [], [], []
+
+        class Recorder(tempfile.TemporaryDirectory):  # remembers the fixture's own temporary directory
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                created.append(Path(self.name))
+
+        def inside(path):
+            return bool(created) and Path(os.path.abspath(path)).is_relative_to(created[-1])
+
+        real_mkdir, real_write = Path.mkdir, atomic_files.atomic_write
+
+        def mkdir(path, *args, **kwargs):  # independent of the fixture's own guard; checks before any I/O
+            if not inside(path):
+                outside.append(str(path))
+                raise AssertionError(f'mkdir outside the fixture: {path}')
+            return real_mkdir(path, *args, **kwargs)
+
+        def write(destination, content):
+            if not inside(destination):
+                outside.append(str(destination))
+                raise AssertionError(f'write outside the fixture: {destination}')
+            written.append(Path(destination))
+            return real_write(destination, content)
+
+        inherited = {name: str(outer_root / ('inherited-' + name.lower())) for name in (
+            'HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME')}
+        vault = Vault()
+        case = RealECCContextTests('test_installed_official_ecc_roundtrip_in_temporary_store')
+        result = unittest.TestResult()
+        with patch.dict(os.environ, inherited), patch.object(tempfile, 'tempdir', str(outer_root)), \
+                patch.object(tempfile, 'TemporaryDirectory', Recorder), \
+                patch.object(shared_memory, 'inspect_runtime', return_value={'installed': True, 'node': '/synthetic/node'}), \
+                patch.object(context_state, 'ECC', lambda capsule, runtime=None: vault), \
+                patch.object(Path, 'mkdir', mkdir), patch.object(atomic_files, 'atomic_write', write):
+            environment = dict(os.environ)
+            case.run(result)
+            self.assertEqual(dict(os.environ), environment)  # the fixture's cleanups restored what they changed
+        self.assertEqual(outside, [])
+        self.assertEqual((result.errors, result.failures, result.skipped), ([], [], []))
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual({path.name for path in written}, {'handoff_checkpoint.json', 'handoff_precompact.json'})
+        for path in written:
+            self.assertEqual(path.relative_to(created[-1]).parts[:3], ('state', 'omarchy-ai-team', 'context-usage'))
+
 
 class ContextActionTests(unittest.TestCase):
     def test_explicit_harness_actions_delegate_without_status_or_profile_writes(self):
