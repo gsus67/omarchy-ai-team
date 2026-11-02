@@ -111,25 +111,6 @@ ColumnLayout {
     }
   }
 
-  ColumnLayout {
-    objectName: "usage-summary"
-    Layout.fillWidth: true
-    visible: root.page === "" && (root.snapshot.usage || []).length > 0
-    spacing: Style.space(4)
-
-    Repeater {
-      model: root.snapshot.usage || []
-      delegate: UsageRow {
-        required property var modelData
-        Layout.fillWidth: true
-        row: modelData
-        fiveLabel: root.tr("5 h")
-        weeklyLabel: root.tr("Sem")
-        onOpened: { root.usageAccount = modelData.id; root.page = "usage" }
-      }
-    }
-  }
-
   QQC.ScrollView {
     id: scroll
     objectName: "harness-scroll"
@@ -189,6 +170,25 @@ ColumnLayout {
             onToggled: {
               const action = modelData.enabled ? "disable" : "enable"
               root.commandRequested(modelData.id === "quality" ? ["superpowers-all", action] : modelData.id === "memory" ? ["memory-all", action] : ["tool-group", modelData.id, action])
+            }
+          }
+        }
+
+        ColumnLayout {
+          objectName: "usage-summary"
+          Layout.fillWidth: true
+          visible: (root.snapshot.usage || []).length > 0
+          spacing: Style.space(4)
+
+          Repeater {
+            model: root.snapshot.usage || []
+            delegate: UsageRow {
+              required property var modelData
+              Layout.fillWidth: true
+              row: modelData
+              fiveLabel: root.tr("5 h")
+              weeklyLabel: root.tr("Sem")
+              onOpened: { root.usageAccount = modelData.id; root.page = "usage" }
             }
           }
         }

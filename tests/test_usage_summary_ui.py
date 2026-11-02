@@ -8,16 +8,18 @@ OLD_ICON = '\U000f06a9'              # AI Team's former robot, too close to the 
 
 
 class UsageSummaryUiTests(unittest.TestCase):
-    def test_the_front_page_lists_one_clickable_row_of_bars_per_account(self):
+    def test_the_front_page_lists_one_clickable_row_of_bars_per_account_below_the_switches(self):
         source = (ROOT / 'HarnessContent.qml').read_text()
-        block = re.search(r'objectName: "usage-summary".*?\n  \}\n', source, re.S)
+        block = re.search(r'objectName: "usage-summary".*?(?=\n        Ui\.PanelSeparator)', source, re.S)
         self.assertTrue(block, 'the usage summary is missing')
         block = block.group(0)
         self.assertIn('root.snapshot.usage', block)
-        self.assertIn('root.page === ""', block)
         self.assertIn('UsageRow {', block)
         self.assertRegex(block, r'onOpened:.*root\.usageAccount = ')
         self.assertIn('root.page = "usage"', block)
+        # order on the front page: the four switches, then the usage bars, then the launcher row
+        self.assertLess(source.index('objectName: "goal-"'), source.index('objectName: "usage-summary"'))
+        self.assertLess(source.index('objectName: "usage-summary"'), source.index('objectName: "launch-default"'))
 
     def test_the_detail_page_is_mounted_for_the_clicked_account(self):
         source = (ROOT / 'HarnessContent.qml').read_text()
