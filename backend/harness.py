@@ -945,7 +945,7 @@ def _main(argv=None):
     export=commands.add_parser("memory-export",help=tr('Exportar documentos nativos ECC'))
     export.add_argument("--project",default="all")
     diagnose=commands.add_parser("memory-diagnose",help=tr('Mostrar si la memoria está configurada, conectada y utilizable en un perfil, sin modelo'))
-    diagnose.add_argument('agent',choices=('claude','codex','pi'))
+    diagnose.add_argument('agent',choices=('claude','claude-2','codex','codex-2','pi'))
     commands.add_parser("memory-doctor",help=tr('Auditar almacén con las funciones oficiales de ECC'))
     for name in ("memory-preview","memory-restore"):
         restore=commands.add_parser(name,help=tr('Revisar o confirmar restauración sin sobrescribir'))
@@ -1020,7 +1020,8 @@ def _main(argv=None):
                 print(json.dumps(i18n.localize({'tools': [], 'error': tr('No se pudieron verificar las capacidades locales; no se ejecutó ningún agente.')}, i18n.current_language())))
                 return 1
         if args.command == 'memory-diagnose':
-            report = shared_memory.diagnose(args.agent)
+            with agent_profile(args.agent) as base:  # read-only: only selects which profile directory is read
+                report = shared_memory.diagnose(base, args.agent)
             print(json.dumps(report, ensure_ascii=False))
             return 0 if report['usable']['ok'] else 1
         config = load_config()
