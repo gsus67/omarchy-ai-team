@@ -216,8 +216,7 @@ def rows(agents):
             continue
         five = _window(limits, r'^(Session \(5|5h)')
         weekly = _window(limits, r'^Weekly \(7-day\)$')
-        if five is None and weekly is None:
-            continue
+        # An account whose limits could not be read this time stays listed with empty bars ("—"): vanishing looked like a removed account.
         tier = record.get('tierLabel')
         result.append({'id': agent_id, 'name': SHORT_NAMES[agent_id], 'tier': tier[:30] if isinstance(tier, str) else '',
                        'five': five, 'weekly': weekly, 'windows': _windows(limits), 'models': _models(record),
