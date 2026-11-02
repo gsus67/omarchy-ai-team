@@ -22,6 +22,7 @@ import native_plugins
 import shared_memory
 import native_launcher
 import context_policy
+import usage_summary
 import memory_archive
 import memory_backups
 import memory_mcp
@@ -639,6 +640,7 @@ def _status(config=None):
     team_component = next(row for row in components if row['id'] == 'team')
     result['team'] = {**team_state(config), **team_component}
     result['context'] = context_policy.snapshot(config)
+    result['usage'] = usage_summary.rows(agents)
     result['goals'] = goals.rows(result, config)
     result['summary'] = goals.summary(result, result['goals'])
     return result

@@ -34,7 +34,7 @@ Ui.Panel {
     objectName: "harness-icon"
     anchors.fill: parent
     bar: root.bar
-    text: "󰚩"
+    text: "󰀎"
     tooltipText: "AI Team"
     onPressed: button => {
       if (button === Qt.LeftButton) root.toggle()

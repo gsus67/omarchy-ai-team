@@ -45,7 +45,8 @@ ColumnLayout {
       }
     }
   }
-  RowLayout {
+  Flow {
+    Layout.fillWidth: true
     spacing: root.metrics.xxs
     Ui.Button {
       objectName: "pi-auth"
@@ -119,7 +120,8 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
   }
-  RowLayout {
+  Flow {
+    Layout.fillWidth: true
     spacing: root.metrics.xxs
     Ui.Button {
       objectName: "pi-check-nous"

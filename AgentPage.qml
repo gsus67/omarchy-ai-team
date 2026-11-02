@@ -45,7 +45,9 @@ ColumnLayout {
       navigationEnabled: false
     }
   }
-  RowLayout {
+  // Several text buttons never fit one line of a 380 px card: they flow onto the next line instead.
+  Flow {
+    Layout.fillWidth: true
     spacing: root.metrics.xxs
     Ui.Button {
       objectName: "authenticate-" + root.agent.id

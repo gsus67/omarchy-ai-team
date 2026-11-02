@@ -121,7 +121,7 @@ ColumnLayout {
           switchVisible: false
           navigationEnabled: false
         }
-        Ui.ButtonGroup {
+        WrapButtonGroup {
           objectName: "local-tool-" + preference.modelData.id
           spacing: root.metrics.xxs
           fontSize: root.fonts.caption

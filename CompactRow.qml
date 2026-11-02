@@ -5,7 +5,7 @@ import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 
-RowLayout {
+ColumnLayout {
   id: root
   property string icon: ""
   property string label: ""
@@ -19,88 +19,104 @@ RowLayout {
   signal opened()
   signal toggled()
   Layout.minimumWidth: 0
-  spacing: Style.space(2)
+  spacing: 0
+  property bool divider: true
 
-  Ui.Button {
-    id: entry
-    objectName: root.objectName + "-open"
+  RowLayout {
+    id: line
     Layout.fillWidth: true
     Layout.minimumWidth: 0
-    implicitWidth: labels.implicitWidth + Style.space(12)
-    implicitHeight: labels.implicitHeight + Style.space(12)
-    visible: root.navigationEnabled
-    focusable: root.navigationEnabled
-    onClicked: root.opened()
-  }
-  // Ui.Button keeps its hover state while disabled, so informational rows use a
-  // plain item: nothing under the pointer can highlight.
-  Item {
-    id: plain
-    visible: !root.navigationEnabled
-    Layout.fillWidth: true
-    Layout.minimumWidth: 0
-    implicitWidth: entry.implicitWidth
-    implicitHeight: entry.implicitHeight
+    spacing: Style.space(2)
 
-    RowLayout {
-      id: labels
-      parent: root.navigationEnabled ? entry : plain
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
+    Ui.Button {
+      id: entry
+      objectName: root.objectName + "-open"
+      Layout.fillWidth: true
+      Layout.minimumWidth: 0
+      implicitWidth: labels.implicitWidth + Style.space(12)
+      implicitHeight: labels.implicitHeight + Style.space(12)
+      visible: root.navigationEnabled
+      focusable: root.navigationEnabled
+      onClicked: root.opened()
+    }
+    // Ui.Button keeps its hover state while disabled, so informational rows use a
+    // plain item: nothing under the pointer can highlight.
+    Item {
+      id: plain
+      visible: !root.navigationEnabled
+      Layout.fillWidth: true
+      Layout.minimumWidth: 0
+      implicitWidth: entry.implicitWidth
+      implicitHeight: entry.implicitHeight
 
-      Text {
-        visible: root.icon !== ""
-        text: root.icon
-        textFormat: Text.PlainText
-        color: Commons.Color.foreground
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.title
-      }
-      Text {
-        text: root.label
-        textFormat: Text.PlainText
-        color: Commons.Color.foreground
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.body
-        elide: Text.ElideRight
-        Layout.minimumWidth: 0
-      }
-      Text {
-        Layout.fillWidth: true
-        Layout.minimumWidth: 0
-        text: root.status
-        textFormat: Text.PlainText
-        color: root.statusColor
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.caption
-        horizontalAlignment: Text.AlignRight
-        elide: Text.ElideRight
-      }
-      Text {
-        visible: !root.switchVisible && root.navigationEnabled
-        text: "›"
-        textFormat: Text.PlainText
-        color: Commons.Color.muted
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.body
+      RowLayout {
+        id: labels
+        parent: root.navigationEnabled ? entry : plain
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.space(6)
+        anchors.rightMargin: Style.space(6)
+        spacing: Style.space(8)
+
+        Text {
+          visible: root.icon !== ""
+          text: root.icon
+          textFormat: Text.PlainText
+          color: Commons.Color.foreground
+          font.family: root.fonts.family
+          font.pixelSize: root.fonts.title
+        }
+        Text {
+          text: root.label
+          textFormat: Text.PlainText
+          color: Commons.Color.foreground
+          font.family: root.fonts.family
+          font.pixelSize: root.fonts.body
+          elide: Text.ElideRight
+          Layout.minimumWidth: 0
+        }
+        Text {
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          text: root.status
+          textFormat: Text.PlainText
+          color: root.statusColor
+          font.family: root.fonts.family
+          font.pixelSize: root.fonts.caption
+          horizontalAlignment: Text.AlignRight
+          elide: Text.ElideRight
+        }
+        Text {
+          visible: !root.switchVisible && root.navigationEnabled
+          text: "›"
+          textFormat: Text.PlainText
+          color: Commons.Color.muted
+          font.family: root.fonts.family
+          font.pixelSize: root.fonts.body
+        }
       }
     }
+    Ui.ToggleSwitch {
+      objectName: root.objectName + "-switch"
+      visible: root.switchVisible
+      checked: root.checked
+      busy: root.busy
+      enabled: !root.busy
+      activeFocusOnTab: true
+      hasCursor: activeFocus
+      Keys.onReturnPressed: if (enabled) root.toggled()
+      Keys.onEnterPressed: if (enabled) root.toggled()
+      Keys.onSpacePressed: if (enabled) root.toggled()
+      onToggled: root.toggled()
+    }
   }
-  Ui.ToggleSwitch {
-    objectName: root.objectName + "-switch"
-    visible: root.switchVisible
-    checked: root.checked
-    busy: root.busy
-    enabled: !root.busy
-    activeFocusOnTab: true
-    hasCursor: activeFocus
-    Keys.onReturnPressed: if (enabled) root.toggled()
-    Keys.onEnterPressed: if (enabled) root.toggled()
-    Keys.onSpacePressed: if (enabled) root.toggled()
-    onToggled: root.toggled()
+
+  // Closes the row so neighbouring rows read as different things (discreet, tinted by the theme).
+  Ui.PanelSeparator {
+    visible: root.divider
+    Layout.fillWidth: true
+    Layout.topMargin: Style.space(2)
+    strength: 0.08
   }
 }
