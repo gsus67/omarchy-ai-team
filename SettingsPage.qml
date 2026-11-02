@@ -49,18 +49,27 @@ ColumnLayout {
         font.pixelSize: root.fonts.caption
         font.bold: true
       }
-      Repeater {
-        model: group.modelData.agents
-        delegate: CompactRow {
-          required property var modelData
-          objectName: "agent-row-" + modelData.id
-          Layout.fillWidth: true
-          label: modelData.name
-          status: modelData.installation === "installed" ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
-          switchVisible: false
-          onOpened: root.pageRequested(modelData.id)
+      // Chips that wrap: adding more agents grows the block by a line only when the row is full.
+      Flow {
+        Layout.fillWidth: true
+        spacing: root.metrics.xxs
+        Repeater {
+          model: group.modelData.agents
+          delegate: Ui.Button {
+            required property var modelData
+            objectName: "agent-row-" + modelData.id
+            readonly property bool installed: modelData.installation === "installed"
+            text: (installed ? "" : "○ ") + modelData.name
+            tooltipText: installed ? modelData.version || root.tr("Instalado") : root.tr("No instalado")
+            foreground: installed ? Color.foreground : Color.muted
+            bordered: true
+            focusable: true
+            fontSize: root.fonts.caption
+            onClicked: root.pageRequested(modelData.id)
+          }
         }
       }
+      Ui.PanelSeparator { Layout.fillWidth: true; strength: 0.08 }
     }
   }
   Ui.PanelSeparator { Layout.fillWidth: true }
