@@ -178,7 +178,7 @@ def set_usage_guard(config, enabled, percent):
     config['usageGuard'] = {'enabled': enabled, 'percent': percent}
 
 
-def effective(config, selected, catalog, free_pi):
+def effective(config, selected, catalog, free_pi, strict=False):
     recommendations, warnings = recommend(selected, catalog, free_pi)
     choices = options(selected, catalog, free_pi, config.get('piPaidApproved', False))
     warnings = [warning for warning in warnings if getattr(warning, 'source', str(warning)) != 'No hay revisión independiente: Programar y Revisar usan el mismo modelo.']
@@ -206,6 +206,13 @@ def effective(config, selected, catalog, free_pi):
         # A recommendation gives way to the plan the user chose; otherwise swapping both would be a deadlock.
         replacement = next(iter(alternatives('review', roles, choices)), None)
         if replacement: review = roles['review'] = {**replacement, 'manual': False, 'recommended': review['recommended']}
+    elif (not strict and same_family(plan, review) and review['manual'] and other_family(review['agent'], choices)):
+        # A saved choice that breaks the family rule is kept in the file but not used while another family exists.
+        replacement = next(iter(alternatives('review', roles, choices)), None)
+        if replacement:
+            warnings.append(tr('{papel}: {modelo} es de la misma familia que Planificar; se usa el recomendado y se conserva tu elección.',
+                               papel=LABELS['review'], modelo=review['model']))
+            review = roles['review'] = {**replacement, 'manual': False, 'recommended': review['recommended']}
     if same_model(roles.get('code'), roles.get('review')):
         warning = tr('No hay revisión independiente: Programar y Revisar usan el mismo modelo.')
         if warning not in warnings: warnings.append(warning)
@@ -239,7 +246,7 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
         raise TeamError(tr('Agente, modelo o razonamiento no disponible para la selección actual.'))
     candidate = copy.deepcopy(config)
     candidate.setdefault('team', {}).setdefault('roles', {})[role] = {**value, 'manual': True}
-    state = effective(candidate, selected, catalog, free_pi)
+    state = effective(candidate, selected, catalog, free_pi, strict=True)
     if check:
         _check_rules(state, role, agent, choices)
     config.setdefault('team', {}).setdefault('enabled', False)
@@ -264,7 +271,7 @@ def set_roles(config, assignments, *, selected, catalog, free_pi, paid_ok):
         set_role(work, role, agent, model, effort, selected=selected, catalog=catalog,
                  free_pi=free_pi, paid_ok=paid_ok, check=False)
     choices = [row for row in options(selected, catalog, free_pi, paid_ok) if not row['paid'] or paid_ok]
-    state = effective(work, selected, catalog, free_pi)
+    state = effective(work, selected, catalog, free_pi, strict=True)
     for role, agent, _model, _effort in assignments:
         if role in ('plan', 'review', 'code'):
             _check_rules(state, role, agent, choices)
