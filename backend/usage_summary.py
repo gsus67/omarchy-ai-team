@@ -191,6 +191,18 @@ def _spend(agent_id):
             'unpriced': ', '.join(data['unpricedModels'])[:120]}
 
 
+def total_tokens(agents):
+    """Tokens of every kind over the breakdown window, summed across the selected accounts (None without any record)."""
+    total = None
+    for agent in agents:
+        if agent.get('id') not in SHORT_NAMES or not agent.get('enabled'):
+            continue
+        data = _read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json'))
+        if _valid_breakdown(data):
+            total = (total or 0) + sum(data['byKind'][kind] for kind in ('input', 'output', 'cacheRead', 'cacheWrite'))
+    return total
+
+
 def rows(agents):
     """One row per selected account with a readable record: bar percentages plus the detail shown on click."""
     result = []
@@ -204,8 +216,7 @@ def rows(agents):
             continue
         five = _window(limits, r'^(Session \(5|5h)')
         weekly = _window(limits, r'^Weekly \(7-day\)$')
-        if five is None and weekly is None:
-            continue
+        # An account whose limits could not be read this time stays listed with empty bars ("—"): vanishing looked like a removed account.
         tier = record.get('tierLabel')
         result.append({'id': agent_id, 'name': SHORT_NAMES[agent_id], 'tier': tier[:30] if isinstance(tier, str) else '',
                        'five': five, 'weekly': weekly, 'windows': _windows(limits), 'models': _models(record),

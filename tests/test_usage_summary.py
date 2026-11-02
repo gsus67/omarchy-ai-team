@@ -49,10 +49,11 @@ class UsageSummaryTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in usage_summary.rows(self.agents('claude', 'codex', 'claude-2', 'pi'))], ['claude'])
         self.assertEqual(usage_summary.rows(self.agents('claude', enabled=False)), [])
 
-    def test_a_record_without_limits_or_with_bad_percentages_is_skipped(self):
+    def test_an_account_whose_limits_could_not_be_read_stays_listed_with_empty_bars(self):
         (self.records / 'claude.json').write_text(json.dumps({'id': 'claude', 'limits': []}))
         self.record('codex', ('5h window', 'lots'), ('Weekly (7-day)', None))
-        self.assertEqual(usage_summary.rows(self.agents('claude', 'codex')), [])
+        rows = usage_summary.rows(self.agents('claude', 'codex'))
+        self.assertEqual([(row['id'], row['five'], row['weekly']) for row in rows], [('claude', None, None), ('codex', None, None)])
 
     def test_a_window_that_already_reset_counts_as_zero(self):
         past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -65,7 +66,8 @@ class UsageSummaryTests(unittest.TestCase):
 
     def test_percentages_are_fractions_between_zero_and_one(self):
         self.record('claude', ('Session (5-hour)', 1.5), ('Weekly (7-day)', 10))
-        self.assertEqual(usage_summary.rows(self.agents('claude')), [])
+        row = usage_summary.rows(self.agents('claude'))[0]
+        self.assertEqual((row['five'], row['weekly']), (None, None))  # out of range is unknown, never clipped
         self.record('codex', ('5h window', 1), ('Weekly (7-day)', 0))
         row = usage_summary.rows(self.agents('codex'))[0]
         self.assertEqual((row['five'], row['weekly']), (100, 0))

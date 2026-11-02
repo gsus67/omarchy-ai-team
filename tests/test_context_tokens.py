@@ -115,6 +115,9 @@ class TaskSnapshotTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE((folder / name).stat().st_mode), 0o600)
             self.assertNotIn('PRIVATE', (folder / name).read_text())
         self.assertEqual(sorted(path.name for path in folder.iterdir()), ['after.json', 'before.json'])
+        (entry,) = (json.loads(line) for line in (self.root / 'state/omarchy-ai-team/role-usage.jsonl').read_text().splitlines())
+        self.assertEqual((entry['role'], entry['tokens']), ('code', 20000 + after['counters']['output']))
+        self.assertNotIn('PRIVATE', json.dumps(entry))
 
     def test_claude_result_counters_and_missing_counters_stay_unknown(self):
         fake = self.child([{**CLAUDE_RESULT, 'structured_output': REPORT}])

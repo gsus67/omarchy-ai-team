@@ -9,6 +9,9 @@ import qs.Commons as Commons
 ColumnLayout {
   id: root
   readonly property real labelColumn: Style.space(74)
+  readonly property var providers: ({claude: "Claude", codex: "Codex", pi: "Pi"})
+  function providerRank(agent) { const i = Object.keys(root.providers).indexOf(agent); return i === -1 ? 99 : i }
+  function providerName(agent) { return root.providers[agent] || agent }
   readonly property real effortColumn: Style.space(98)
   property var translations: ({})
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
@@ -59,7 +62,7 @@ ColumnLayout {
     Layout.fillWidth: true
     spacing: Style.space(4)
     Repeater {
-      model: [{text: root.tr("Papel"), width: root.labelColumn}, {text: root.tr("Modelo"), width: -1}, {text: root.tr("Esfuerzo"), width: root.effortColumn}]
+      model: [{text: root.tr("Papel"), width: root.labelColumn}, {text: root.tr("Proveedor"), width: -1}, {text: root.tr("Esfuerzo"), width: root.effortColumn}]
       delegate: Text {
         required property var modelData
         Layout.fillWidth: modelData.width < 0
@@ -75,15 +78,20 @@ ColumnLayout {
   Repeater {
     model: [{id: "plan", label: root.tr("Planificar")}, {id: "code", label: root.tr("Programar")},
       {id: "review", label: root.tr("Revisar")}, {id: "simple", label: root.tr("Sencillas")}]
-    delegate: RowLayout {
+    delegate: ColumnLayout {
       id: role
       required property var modelData
       readonly property var current: (root.info.roles || {})[role.modelData.id] || ({})
       readonly property var recommended: role.current.recommended || ({})
       readonly property var choice: (root.info.options || []).find(option => option.agent === role.current.agent && option.model === role.current.model) || ({})
-      readonly property var modelOptions: (root.info.options || []).map(option => ({
+      // Two short lists instead of one long one: the provider first, then only its models in alphabetical order.
+      readonly property var providerOptions: Array.from(new Set((root.info.options || []).map(option => option.agent)))
+        .sort((a, b) => root.providerRank(a) - root.providerRank(b)).map(agent => ({value: agent, label: root.providerName(agent)}))
+      readonly property var providerModels: (root.info.options || []).filter(option => option.agent === role.current.agent).slice()
+        .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
+      readonly property var modelOptions: role.providerModels.map(option => ({
         value: JSON.stringify([option.agent, option.model]),
-        label: option.agent === role.recommended.agent && option.model === role.recommended.model ? root.tr("★ {modelo}", {modelo: option.model}) : option.model
+        label: (option.agent === role.recommended.agent && option.model === role.recommended.model ? "★ " : "") + option.model
       }))
       readonly property var effortOptions: (role.choice.efforts || []).map(effort => ({
         value: effort,
@@ -97,40 +105,70 @@ ColumnLayout {
         root.commandRequested(["team-set", role.modelData.id, agent, model, "--effort", effort])
       }
 
-      Text {
-        objectName: "team-label-" + role.modelData.id
-        Layout.preferredWidth: root.labelColumn
-        Layout.preferredHeight: root.metrics.controlHeight
-        Layout.alignment: Qt.AlignTop
-        text: role.modelData.label
-        textFormat: Text.PlainText
-        color: Commons.Color.foreground
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
-        font.family: root.fonts.family
-        font.pixelSize: root.fonts.body
-      }
-      RoomyDropdown {
-        objectName: "team-role-" + role.modelData.id
+      RowLayout {
         Layout.fillWidth: true
         Layout.minimumWidth: 0
-        Layout.alignment: Qt.AlignTop
-        options: role.modelOptions
-        value: role.current.model ? JSON.stringify([role.current.agent, role.current.model]) : ""
-        enabled: !root.busy && options.length > 0
-        onChanged: value => {
-          const selected = JSON.parse(value)
-          role.choose(selected[0], selected[1], role.current.effort || "")
+        spacing: Style.space(4)
+        Text {
+          objectName: "team-label-" + role.modelData.id
+          Layout.preferredWidth: root.labelColumn
+          Layout.preferredHeight: root.metrics.controlHeight
+          Layout.alignment: Qt.AlignTop
+          text: role.modelData.label
+          textFormat: Text.PlainText
+          color: Commons.Color.foreground
+          verticalAlignment: Text.AlignVCenter
+          elide: Text.ElideRight
+          font.family: root.fonts.family
+          font.pixelSize: root.fonts.body
+        }
+        RoomyDropdown {
+          objectName: "team-provider-" + role.modelData.id
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          Layout.alignment: Qt.AlignTop
+          options: role.providerOptions
+          value: role.current.agent || ""
+          enabled: !root.busy && options.length > 1
+          onChanged: value => {
+            // The provider's recommended model when it has one, otherwise its first one alphabetically.
+            const models = (root.info.options || []).filter(option => option.agent === value)
+              .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
+            const target = models.find(option => option.agent === role.recommended.agent && option.model === role.recommended.model) || models[0]
+            if (target) role.choose(target.agent, target.model, (target.recommendedEfforts || {})[role.modelData.id] || "")
+          }
+        }
+        RoomyDropdown {
+          objectName: "team-effort-" + role.modelData.id
+          Layout.preferredWidth: root.effortColumn
+          Layout.alignment: Qt.AlignTop
+          options: role.effortOptions
+          value: role.current.effort || ""
+          enabled: !root.busy && options.length > 1
+          onChanged: value => role.choose(role.current.agent, role.current.model, value)
         }
       }
-      RoomyDropdown {
-        objectName: "team-effort-" + role.modelData.id
-        Layout.preferredWidth: root.effortColumn
-        Layout.alignment: Qt.AlignTop
-        options: role.effortOptions
-        value: role.current.effort || ""
-        enabled: !root.busy && options.length > 1
-        onChanged: value => role.choose(role.current.agent, role.current.model, value)
+      RowLayout {
+        Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        spacing: Style.space(4)
+        Item { Layout.preferredWidth: root.labelColumn }
+        RoomyDropdown {
+          objectName: "team-role-" + role.modelData.id
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          options: role.modelOptions
+          value: role.current.model ? JSON.stringify([role.current.agent, role.current.model]) : ""
+          enabled: !root.busy && options.length > 0
+          onChanged: value => {
+            const selected = JSON.parse(value)
+            role.choose(selected[0], selected[1], role.current.effort || "")
+          }
+        }
+      }
+      Ui.PanelSeparator {
+        Layout.fillWidth: true
+        strength: 0.08
       }
     }
   }

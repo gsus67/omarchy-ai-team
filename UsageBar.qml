@@ -10,9 +10,10 @@ RowLayout {
   property string label: ""
   property real labelWidth: Style.space(24)
   property var percent: null
+  property bool warn: true  // share meters are not limits: they never turn urgent
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
-  readonly property bool high: root.percent !== null && root.percent >= 90
+  readonly property bool high: root.warn && root.percent !== null && root.percent >= 90
   readonly property color fill: root.high ? Commons.Color.urgent : Commons.Color.foreground
   Layout.minimumWidth: 0
   spacing: Style.space(4)
