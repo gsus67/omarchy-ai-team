@@ -763,5 +763,6 @@
   "Por herramienta": "By tool",
   "Coste estimado a precio de API; entre herramientas el reparto es a partes iguales": "Estimated cost at API prices; across tools the split is equal",
   "Sin precio:": "No price:",
-  "{n} agentes": "{n} agents"
+  "{n} agentes": "{n} agents",
+  "Otros": "Other"
 }
