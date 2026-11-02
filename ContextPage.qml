@@ -56,6 +56,25 @@ ColumnLayout {
   Ui.PanelSectionHeader { text: root.tr("CONTEXTO") }
   Text {
     Layout.fillWidth: true
+    text: root.scope === "" ? root.tr("Valores base. Toca un papel para cambiar solo el suyo.") : root.tr("Editando solo este papel. Tócalo otra vez para volver a los valores base.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
+  WrapButtonGroup {
+    objectName: "context-scope"
+    spacing: root.metrics.xxs
+    fontSize: root.fonts.caption
+    options: [{value: "jefe", label: root.tr("Jefe")},
+              {value: "plan", label: root.tr("Planificar")}, {value: "code", label: root.tr("Programar")},
+              {value: "review", label: root.tr("Revisar")}, {value: "simple", label: root.tr("Sencillas")}]
+    value: root.scope
+    onChanged: value => root.scope = value === root.scope ? "" : value
+  }
+  Text {
+    Layout.fillWidth: true
     text: root.tr("Se aplica en sesiones nuevas.")
     textFormat: Text.PlainText
     color: Commons.Color.muted
@@ -137,25 +156,6 @@ ColumnLayout {
         strength: 0.08
       }
     }
-  }
-  Text {
-    Layout.fillWidth: true
-    text: root.scope === "" ? root.tr("Valores base. Toca un papel para cambiar solo el suyo.") : root.tr("Editando solo este papel. Tócalo otra vez para volver a los valores base.")
-    textFormat: Text.PlainText
-    color: Commons.Color.muted
-    font.family: root.fonts.family
-    font.pixelSize: root.fonts.caption
-    wrapMode: Text.WordWrap
-  }
-  WrapButtonGroup {
-    objectName: "context-scope"
-    spacing: root.metrics.xxs
-    fontSize: root.fonts.caption
-    options: [{value: "jefe", label: root.tr("Jefe")},
-              {value: "plan", label: root.tr("Planificar")}, {value: "code", label: root.tr("Programar")},
-              {value: "review", label: root.tr("Revisar")}, {value: "simple", label: root.tr("Sencillas")}]
-    value: root.scope
-    onChanged: value => root.scope = value === root.scope ? "" : value
   }
   // Global-only settings: a role row cannot override them, so they only show with the base values.
   CompactRow {
