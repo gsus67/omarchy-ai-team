@@ -10,7 +10,6 @@ from pathlib import Path
 import shlex
 import sys
 
-import memory_archive
 import native_plugins
 import native_skills
 import shared_memory
@@ -137,19 +136,7 @@ def inspect(agent,receipt=None,*,settings_file=None,groups=()):
 
 
 def prepare(paths,settings_file,*,groups=()):
-    source=memory_archive.safe_path(paths['source']);marker=source/'.ai-team-managed';file=source/'SKILL.md'
-    if source.exists() and any(source.iterdir()):
-        try:
-            record=json.loads(memory_archive.read_file(marker,4096))
-            if record.get('sha256')!=hashlib.sha256(memory_archive.read_file(file,32*1024)).hexdigest():raise ValueError()
-        except (ValueError,OSError,native_plugins.PluginError) as error:
-            raise native_plugins.PluginError(tr('La skill gestionada está modificada o es ajena; se conserva.')) from error
-    source.mkdir(parents=True,mode=0o700,exist_ok=True)
-    content=text(paths,settings_file,groups=groups)
-    # Config-owned generated files, never an upstream skill or original project.
-    from atomic_files import atomic_write
-    atomic_write(file,content)
-    atomic_write(marker,json.dumps({'schemaVersion':1,'sha256':hashlib.sha256(content.encode()).hexdigest()}))
+    native_skills.publish(paths['source'],text(paths,settings_file,groups=groups))
 
 
 def apply(agent,binary,action,receipt=None,*,settings_file=None,groups=()):

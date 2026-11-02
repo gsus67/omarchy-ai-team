@@ -116,6 +116,80 @@ class SharedMemoryTests(unittest.TestCase):
         self.assertNotIn("mcp_servers", edits)  # Do not replace other servers or their settings.
         self.assertNotIn(f"mcp_servers.{memory.SERVER}.startup_timeout_sec", edits)
 
+    def codex_write(self, runtime, profile, config, enabled, *, reply=None):
+        """Run the connection writer against a synthetic layer; return the batch write, if any."""
+        home = self.root / profile
+        layer = {"name": {"type": "user", "file": str(home / "config.toml")}, "version": "v1", "config": config}
+        with patch.dict(os.environ, {"CODEX_HOME": str(home)}), \
+             patch.object(memory.native_plugins, "codex_request", side_effect=[{"layers": [layer]}, reply or {}]) as request:
+            memory.set_codex_connection("/installed/codex", runtime, enabled, {})
+        return request.call_args_list[1].args[2] if request.call_count > 1 else None
+
+    def matching_server(self, runtime, **extra):
+        command = memory.mcp_command(runtime, "codex")
+        return {"command": command[0], "args": command[1:], "enabled": True,
+                "default_tools_approval_mode": "approve", **extra}
+
+    def test_matching_codex_connection_does_not_write(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        for profile in (".codex", ".codex-2"):
+            with self.subTest(profile=profile):
+                config = {"developer_instructions": memory.instructions("Keep.\n", True),
+                          "mcp_servers": {memory.SERVER: self.matching_server(runtime)}}
+                self.assertIsNone(self.codex_write(runtime, profile, config, True))
+
+    def test_absent_codex_config_writes_server_and_block_together(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        for profile in (".codex", ".codex-2"):
+            with self.subTest(profile=profile):
+                written = self.codex_write(runtime, profile, {}, True)
+                edits = {edit["keyPath"]: edit["value"] for edit in written["edits"]}
+                self.assertEqual(written["expectedVersion"], "v1")
+                self.assertEqual(edits[f"mcp_servers.{memory.SERVER}.enabled"], True)
+                self.assertIn(f"mcp_servers.{memory.SERVER}.command", edits)
+                self.assertEqual(memory.instructions(edits["developer_instructions"]), "")
+
+    def test_active_mcp_without_instructions_only_adds_the_block(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        for profile in (".codex", ".codex-2"):
+            with self.subTest(profile=profile):
+                config = {"developer_instructions": "Keep.\n", "mcp_servers": {memory.SERVER: self.matching_server(runtime)}}
+                written = self.codex_write(runtime, profile, config, True)
+                self.assertEqual([edit["keyPath"] for edit in written["edits"]], ["developer_instructions"])
+                self.assertTrue(written["edits"][0]["value"].startswith("Keep.\n"))
+
+    def test_repair_keeps_native_policy_filters_and_cwd(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        server = self.matching_server(runtime, default_tools_approval_mode="prompt",
+                                      enabled_tools=["memory_search", "memory_read"], cwd="/fixed")
+        written = self.codex_write(runtime, ".codex", {"mcp_servers": {memory.SERVER: server}}, True)
+        self.assertEqual([edit["keyPath"] for edit in written["edits"]], ["developer_instructions"])
+
+    def test_disable_keeps_disabled_declaration_and_second_disable_does_not_write(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        for profile in (".codex", ".codex-2"):
+            with self.subTest(profile=profile):
+                config = {"developer_instructions": memory.instructions("Keep.\n", True),
+                          "mcp_servers": {memory.SERVER: self.matching_server(runtime)}}
+                written = self.codex_write(runtime, profile, config, False)
+                edits = {edit["keyPath"]: edit["value"] for edit in written["edits"]}
+                self.assertEqual(edits, {f"mcp_servers.{memory.SERVER}.enabled": False, "developer_instructions": "Keep.\n"})
+                config = {"developer_instructions": "Keep.\n",
+                          "mcp_servers": {memory.SERVER: self.matching_server(runtime, enabled=False)}}
+                self.assertIsNone(self.codex_write(runtime, profile, config, False))
+
+    def test_codex_version_conflict_surfaces_without_retrying_the_write(self):
+        runtime = memory.runtime_at(self.package(), "/usr/bin/node")
+        home = self.root / ".codex"
+        layer = {"name": {"type": "user", "file": str(home / "config.toml")}, "version": "stale", "config": {}}
+        conflict = memory.native_plugins.PluginError("version conflict")
+        with patch.dict(os.environ, {"CODEX_HOME": str(home)}), \
+             patch.object(memory.native_plugins, "codex_request", side_effect=[{"layers": [layer]}, conflict]) as request:
+            with self.assertRaises(memory.native_plugins.PluginError):
+                memory.set_codex_connection("/installed/codex", runtime, True, {})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[1].args[2]["expectedVersion"], "stale")
+
     def test_conflicting_server_is_preserved_and_never_started(self):
         home = self.root / "claude"; home.mkdir()
         file = home / ".claude.json"

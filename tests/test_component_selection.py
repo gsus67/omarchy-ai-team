@@ -165,13 +165,18 @@ class ComponentSelectionTests(unittest.TestCase):
         self.assertTrue(self.component(reply)["enabled"])
         self.assertEqual(self.component(reply)["selectedCount"], 1)
 
-    def test_single_component_disable_disconnects_all_existing_connections(self):
+    def test_single_component_disable_disconnects_only_managed_connections(self):
         self.configured(["codex"])
         for state in self.native.values():state.update(installed=True, enabled=True)
         code, reply = self.command("superpowers-all", "disable")
         self.assertEqual(code, 0)
         self.assertFalse(self.component(reply)["enabled"])
-        self.assertTrue(all(s["installed"] and not s["enabled"] for s in self.native.values()))
+        self.assertTrue(self.native["codex"]["installed"])
+        self.assertFalse(self.native["codex"]["enabled"])
+        others = [state for agent, state in self.native.items() if agent != "codex"]
+        self.assertTrue(all(state["enabled"] for state in others))
+        self.assertEqual(self.component(reply)["activeCount"], 0)
+        self.assertNotIn("pendiente", self.component(reply)["detail"])
 
     def test_update_uses_only_selected_agent_and_preserves_disabled_component(self):
         self.configured(["codex"], enabled=False)
@@ -216,7 +221,12 @@ class ComponentSelectionTests(unittest.TestCase):
 
     def test_selecting_absent_second_profile_creates_empty_private_directory(self):
         (self.root / ".codex-2").rmdir()
-        code, reply = self.command("set-agent", "codex-2", "true")
+        original = harness.manage_component
+        # This fixture only fakes Superpowers; other components are covered in test_zero_touch.
+        with patch.object(harness, "manage_component",
+                               lambda config, key, action, **kw: original(config, key, action, **kw)
+                               if key == "superpowers" else None):
+            code, reply = self.command("set-agent", "codex-2", "true")
         self.assertEqual(code, 0)
         self.assertEqual((self.root / ".codex-2").stat().st_mode & 0o777, 0o700)
         self.assertEqual(list((self.root / ".codex-2").iterdir()), [])

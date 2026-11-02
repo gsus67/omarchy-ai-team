@@ -7,6 +7,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from file_snapshot import snapshot
+import native_local_tools
 import native_tools
 import shared_memory
 
@@ -46,6 +49,33 @@ class NativeToolTests(unittest.TestCase):
         with patch.object(shared_memory,'inspect_runtime',side_effect=[missing,ready]),patch.object(native_tools,'ensure_mise') as ensure,patch.object(shared_memory.subprocess,'run') as run:
             self.assertEqual(shared_memory.ensure_runtime(),ready)
             ensure.assert_called_once_with('node');run.assert_not_called()
+
+
+class LocalToolsSkillTests(unittest.TestCase):
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        env=patch.dict(os.environ,{'HOME':str(self.root),'XDG_DATA_HOME':str(self.root/'data'),
+                                   'XDG_CONFIG_HOME':str(self.root/'config'),'CLAUDE_CONFIG_DIR':str(self.root/'claude')})
+        env.start();self.addCleanup(env.stop)
+        self.settings=self.root/'config/settings.json'
+
+    def apply(self,receipt=None):
+        with patch('native_skills.loaded',return_value=True):
+            return native_local_tools.apply('claude','/claude','enable',receipt,settings_file=self.settings,groups=('tokens',))
+
+    def test_second_identical_apply_changes_no_file(self):
+        first=self.apply()
+        self.assertTrue((native_local_tools.layout('claude')['source']/'.ai-team-managed').is_file())
+        before=snapshot(self.root)
+        self.apply(first)
+        self.assertEqual(snapshot(self.root),before)
+
+    def test_a_modified_skill_is_still_rejected(self):
+        self.apply()
+        file=native_local_tools.layout('claude')['source']/'SKILL.md'
+        file.write_text('edited by hand\n')
+        with self.assertRaises(native_tools.native_plugins.PluginError):self.apply()
+        self.assertEqual(file.read_text(),'edited by hand\n')
 
 
 if __name__=='__main__':unittest.main()

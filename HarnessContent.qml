@@ -252,9 +252,11 @@ ColumnLayout {
         model: root.snapshot.agents || []
         delegate: AgentPage {
           required property var modelData
+          translations: root.translations
           visible: root.page === modelData.id
           Layout.fillWidth: true
           agent: modelData
+          hookTrustPending: ((root.snapshot.team || {}).usageGuardPending || []).indexOf(modelData.name) !== -1
           components: root.snapshot.components || []
           pi: root.snapshot.pi || ({})
           check: ((root.snapshot.aiCheck || {}).results || []).find(item => item.agent === modelData.id) || ({})
@@ -388,6 +390,8 @@ ColumnLayout {
         launcher: root.launcher
         team: root.snapshot.team || ({})
         aiCheck: root.snapshot.aiCheck || ({})
+        components: root.snapshot.components || []
+        lastReconcile: root.snapshot.lastReconcile || ({})
         busy: root.busy
         onCommandRequested: arguments => root.commandRequested(arguments)
         onPageRequested: id => root.page = id

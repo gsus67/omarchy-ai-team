@@ -5,6 +5,7 @@ from i18n import tr
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -29,6 +30,7 @@ def read(name):
 def write(name, original, value):
     path=home()/name
     if read(name)!=original:raise native_plugins.PluginError(tr('La configuración de Pi cambió durante la operación; se conserva.'))
+    if value==original:return
     memory_archive.safe_path(path)
     path.parent.mkdir(parents=True,mode=0o700,exist_ok=True)
     if read(name)!=original:raise native_plugins.PluginError(tr('La configuración de Pi cambió; se conserva.'))
@@ -356,8 +358,9 @@ def free_nous_catalog(value):
     for row in value['data']:
         if not isinstance(row,dict):continue
         identifier=row.get('id','');pricing=row.get('pricing',{})
+        # Third-party text that ends up in team instructions: an identifier, nothing that could read as a sentence.
         if (not isinstance(identifier,str) or not identifier.endswith(':free') or len(identifier)>160
-                or any(ord(char)<32 for char in identifier) or not isinstance(pricing,dict)
+                or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:-]*',identifier) or not isinstance(pricing,dict)
                 or not {'prompt','completion'}.issubset(pricing) or not isinstance(row.get('supported_parameters'),list) or 'tools' not in row['supported_parameters']):
             continue
         try:

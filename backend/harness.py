@@ -290,11 +290,26 @@ def apply_component(config, component, agent, action, tool):
         else:
             receipt = MANAGED[component][1].apply(cli, tool["binary"], action, config.get(component, {}).get(agent), **options)
     receipt.update(agentBinary=tool["binary"], agentVersion=tool["version"])
-    config.setdefault(component, {})[agent] = receipt
+    if action == "disable":
+        receipt["released"] = True
+    previous = config.setdefault(component, {}).get(agent, {})
+    undated = lambda row: {key: value for key, value in row.items() if key != "checkedAt"}
+    if undated(previous) == undated(receipt):
+        return  # Nothing really changed: a new timestamp is not a reason to rewrite settings.
+    config[component][agent] = receipt
     save_config(config)
 
 
-def manage_component(config, key, action):
+def plugin_manages(config, key, agent, selected):
+    """The plugin manages a selected profile or one with a receipt it has not released by disconnecting.
+
+    A connection without a receipt, or remade after that release, belongs to the user.
+    """
+    receipt = config.get(key, {}).get(agent)
+    return agent in selected or bool(receipt and not receipt.get("released"))
+
+
+def manage_component(config, key, action, *, only=None, previous_selected=frozenset()):
     current = status(config)
     component = next(c for c in current["components"] if c["id"] == key)
     wanted = action == "enable" if action in ("enable", "disable") else component["enabled"]
@@ -313,12 +328,14 @@ def manage_component(config, key, action):
     errors = []
     for target in component["targets"]:
         agent = target["agent"]
+        if only and agent != only:
+            continue
         desired = wanted and agent in selected
         operation = None
         if action in ("enable", "disable", "sync"):
             if desired and (not target.get("enabled") or not target.get("verified")):
                 operation = "enable"
-            elif not desired and target.get("enabled"):
+            elif not desired and target.get("enabled") and plugin_manages(config, key, agent, selected | set(previous_selected)):
                 operation = "disable"
         elif agent in selected:
             operation = action
@@ -333,6 +350,7 @@ def manage_component(config, key, action):
             except (HarnessError, native_plugins.PluginError, OSError, ValueError) as error:
                 record = config.setdefault(key, {}).setdefault(agent, {})
                 record.pop("digest", None)
+                record.pop("released", None)  # The plugin still owes this operation: keep retrying.
                 record["lastError"] = str(error)
                 save_config(config)
                 errors.append(f"{AGENTS[agent]}: {error}")
@@ -479,7 +497,8 @@ def component_status(key, config, agents):
             if receipt.get("lastError") and not plugin["verified"]:
                 plugin["detail"] = i18n.saved_message(receipt["lastError"], i18n.current_language()) + "\n" + plugin["detail"]
             targets.append({"agent": agent["id"], "name": agent["name"], **plugin,
-                            "available": agent["installation"] == "installed"})
+                            "available": agent["installation"] == "installed",
+                            **({"lastError": receipt["lastError"]} if receipt.get("lastError") and not plugin["verified"] else {})})
         except (native_plugins.PluginError, OSError, ValueError, TypeError, KeyError, AttributeError) as error:
             targets.append({"agent": agent["id"], "name": agent["name"], "available": agent["installation"] == "installed", "blocked": True,
                             "installed": False, "enabled": False, "version": "", "verified": False,
@@ -487,7 +506,7 @@ def component_status(key, config, agents):
     selected = {a["id"] for a in agents if a["enabled"]}
     wanted = config.get(key + "Enabled", key == "superpowers" and any(t.get("enabled") for t in targets))
     if key == 'team': wanted = config.get('team', {}).get('enabled', False)
-    active = sum(t.get("enabled", False) for t in targets)
+    active = sum(t.get("enabled", False) and plugin_manages(config, key, t["agent"], selected) for t in targets)
     connected = sum(t["agent"] in selected and t.get("enabled", False) and t.get("verified", False) for t in targets)
     if not selected:
         detail = tr('Elige los agentes en Modelos y agentes. Se conectará al seleccionarlos.') if wanted else tr('Desactivado. Se aplicará a los agentes que selecciones.')
@@ -543,11 +562,13 @@ def select_agents(config: dict, wanted: set[str], *, reconcile: bool = False) ->
     if applied == previous and errors and not reconcile:
         raise HarnessError('; '.join(errors))
     if applied != previous:
+        if applied and is_new_config(config):
+            initialize_goals(config)
         config["agents"] = {agent: agent in applied for agent in AGENTS}
         save_config(config)
     for key in MANAGED:
         try:
-            manage_component(config, key, 'sync')
+            manage_component(config, key, 'sync', previous_selected=previous)
         except (HarnessError, native_plugins.PluginError, OSError, ValueError,
                 subprocess.TimeoutExpired) as error:
             errors.append(tr('{nombre}: {error}', nombre=MANAGED[key][0], error=str(error)))
@@ -558,6 +579,80 @@ def select_agents(config: dict, wanted: set[str], *, reconcile: bool = False) ->
         errors.append(tr('Menú: {error}', error=str(error)))
     if errors:
         raise HarnessError('; '.join(errors))
+
+
+def is_new_config(config):
+    return not (any(config.get('agents', {}).values()) or 'enabled' in config.get('team', {})
+                or any(key + 'Enabled' in config for key in (*MANAGED, *local_catalog.GROUPS)))
+
+
+def initialize_goals(config):
+    """Only for the first explicit selection: later, a goal that is off was turned off on purpose."""
+    config.update({key + 'Enabled': True for key in MANAGED if key != 'team'})
+    config.setdefault('team', {})['enabled'] = True
+
+
+def prepare_agent(config, agent, *, make_default=False):
+    """Explicit single step: select one profile and connect only that profile."""
+    inventory, _ = mise_inventory()
+    tool = agent_tool(agent, inventory)
+    if tool['installation'] == 'missing-profile':
+        raise HarnessError(tr('Perfil {agent} no disponible.', agent=agent))
+    if tool['installation'] != 'installed':
+        manage_agent_runtime(agent, 'install')
+    before = json.dumps(config, sort_keys=True)
+    if is_new_config(config):
+        initialize_goals(config)
+    config.setdefault('agents', {})[agent] = True
+    if make_default:
+        config['defaultAgent'] = agent
+    if json.dumps(config, sort_keys=True) != before:
+        save_config(config)
+    errors = []
+    if config.get('team', {}).get('enabled') and agent in ('codex', 'codex-2'):
+        before = json.dumps(config, sort_keys=True)
+        refresh_team_models(config)
+        if json.dumps(config, sort_keys=True) != before:
+            save_config(config)
+    for key in MANAGED:
+        try:
+            manage_component(config, key, 'sync', only=agent)
+        except (HarnessError, native_plugins.PluginError, OSError, ValueError,
+                subprocess.TimeoutExpired) as error:
+            errors.append(tr('{nombre}: {error}', nombre=MANAGED[key][0], error=str(error)))
+    try:
+        sync_launcher_menu(config)
+    except (HarnessError, native_plugins.PluginError, OSError, ValueError,
+            subprocess.TimeoutExpired) as error:
+        errors.append(tr('Menú: {error}', error=str(error)))
+    if errors:
+        raise HarnessError('; '.join(errors))
+
+
+def reconcile_selected(config):
+    """Repair drift in marked profiles only; never installs, refreshes catalogs or touches backups."""
+    current = status(config)
+    repair, pending = goals.repair_plan(current['agents'], current['components'])
+    report = {'repaired': [], 'pending': pending, 'errors': []}
+    if not repair:
+        return report
+    inventory, _ = mise_inventory()
+    for row in repair:
+        agent, key = row['agent'], row['component']
+        try:
+            apply_component(config, key, agent, 'enable', agent_tool(agent, inventory))
+            report['repaired'].append(row)
+        except (HarnessError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            record = config.setdefault(key, {}).setdefault(agent, {})
+            if record.get('lastError') != str(error) or 'digest' in record:
+                record.pop('digest', None)
+                record['lastError'] = str(error)
+                save_config(config)
+            report['errors'].append({**row, 'detail': str(error)})
+    if report['repaired']:
+        config['lastReconcile'] = {'at': datetime.now(timezone.utc).isoformat(), 'repaired': report['repaired']}
+        save_config(config)
+    return report
 
 
 def launch_agent(config, agent, *, role='jefe', context_override=None, apply_context=True):
@@ -596,6 +691,17 @@ def restore_key(project):
     return memory_mcp.project_store(path,shared_memory.data_root()/"memory").name
 
 
+def restore_map(pairs):
+    """OLD=FOLDER pairs into archive key → store key, plus the folders to echo back to the panel."""
+    keys,folders={},{}
+    for pair in pairs:
+        old,separator,folder=pair.partition('=')
+        if not separator or not folder or old in keys:
+            raise HarnessError(tr('Cada proyecto se reasocia una vez a una carpeta existente.'))
+        keys[old]=restore_key(folder);folders[old]=folder
+    return keys,folders
+
+
 def status(config=None):
     config = config if config is not None else load_config()
     language = i18n.resolve(config.get('language', 'system'))
@@ -618,6 +724,9 @@ def _status(config=None):
                        "cliInstalled": detect_tool(CLI_NAME.get(key, key), inventory)['installation'] == 'installed',
                        "enabled": config.get("agents", {}).get(key, False), "integration": "pending"})
     components = [component_status(key, config, agents) for key in MANAGED]
+    models_missing = bool(config.get('team', {}).get('enabled') and not team_state(config)['roles'])
+    for agent in agents:
+        agent.update(goals.setup_state(agent, components, models_missing=models_missing))
     omarchy = shutil.which("omarchy")
     try:
         result = subprocess.run([omarchy, "version"], capture_output=True, text=True, timeout=3) if omarchy else None
@@ -648,6 +757,7 @@ def _status(config=None):
     result = {"schemaVersion": 1, "phase": 7, "omarchyVersion": version,
             "pluginVersion": manifest_version, "needsReconnect": config.get('pluginVersion') != manifest_version or team_agent_changed(config, agents),
             "agents": agents, "components": components,
+            "needsReconcile": bool(goals.repair_plan(agents, components)[0]), "lastReconcile": config.get('lastReconcile', {}),
             "deferred": ["Grok"], "warning": warning,
             "launcher": {"defaultAgent": default, "canLaunch": can_launch, "detail": launch_detail,
                          "menu": native_launcher.inspect_menu(config, AGENTS, Path(__file__).resolve())},
@@ -794,6 +904,10 @@ def _main(argv=None):
         return set(agents)
     setting_many = commands.add_parser("set-agents", help=tr('Seleccionar varios agentes para los componentes del plugin'))
     setting_many.add_argument("agents", type=parse_agents, metavar="ids|none")
+    commands.add_parser('reconcile-selected', help=tr('Reparar las conexiones de los perfiles marcados, sin instalar nada'))
+    prepare = commands.add_parser('prepare-agent', help=tr('Preparar un perfil y, si se pide, usarlo como predeterminado'))
+    prepare.add_argument('agent', choices=AGENTS)
+    prepare.add_argument('--default', action='store_true')
     group = commands.add_parser("superpowers-all", help=tr('Gestionar una sola función sobre los agentes seleccionados'))
     group.add_argument("action", choices=("enable", "disable", "verify", "update"))
     memory = commands.add_parser("memory-all", help=tr('Gestionar la única memoria de los perfiles seleccionados'))
@@ -838,6 +952,7 @@ def _main(argv=None):
         restore.add_argument("archive")
         if name=="memory-restore":restore.add_argument("token")
         restore.add_argument("--project-path",default="")
+        restore.add_argument("--project-map",action="append",default=[],metavar="CLAVE=CARPETA")
     commands.add_parser('team-models', help=tr('Actualizar catálogo nativo de modelos sin inferencia'))
     commands.add_parser('team-recommend', help=tr('Volver a los papeles recomendados'))
     usage_guard = commands.add_parser('usage-guard', help=tr('Guardar y parar al llegar a un porcentaje de consumo'))
@@ -1130,6 +1245,21 @@ def _main(argv=None):
         elif args.command == "set-agents":
             select_agents(config, args.agents)
             message = tr('Agentes guardados. Abre sesiones nuevas.')
+        elif args.command == 'reconcile-selected':
+            with after_update_lock():
+                config = load_config()
+                report = reconcile_selected(config)
+            if report['errors']:
+                raise HarnessError('; '.join(tr('{perfil} · {componente}: {error}', perfil=AGENTS[row['agent']],
+                                                componente=MANAGED[row['component']][0], error=row['detail'])
+                                             for row in report['errors']))
+            operation = {'reconcile': report}
+            if report['repaired']:
+                message = tr('Reparado: {lista}. Abre sesiones nuevas para usarlo.', lista=', '.join(
+                    AGENTS[row['agent']] + ' · ' + MANAGED[row['component']][0] for row in report['repaired']))
+        elif args.command == 'prepare-agent':
+            prepare_agent(config, args.agent, make_default=args.default)
+            message = tr('{nombre} preparado. Abre sesiones nuevas.', nombre=AGENTS[args.agent])
         elif args.command == "memory-configure":
             previous=memory_backups.settings(config)
             memory_backups.configure(config,args.destination,args.hours,args.keep,previous["enabled"])
@@ -1148,7 +1278,11 @@ def _main(argv=None):
             operation=memory_backups.run(config,shared_memory.inspect_runtime(),scheduled=args.scheduled)
             message=(tr('Respaldo verificado. {aviso}', aviso=operation.get('warning', ''))).strip() if "skipped" not in operation else tr('No corresponde crear una copia ahora.')
         elif args.command in ("memory-export","memory-doctor","memory-preview","memory-restore"):
-            runtime=shared_memory.inspect_runtime();store=shared_memory.data_root()/"memory"
+            # Reviewing a backup is an explicit action, so a new machine may install ECC here; no agent is involved.
+            restoring=args.command in ("memory-preview","memory-restore")
+            runtime=shared_memory.ensure_runtime() if restoring else shared_memory.inspect_runtime()
+            store=shared_memory.data_root()/"memory"
+            key_map,folders=restore_map(args.project_map) if restoring else ({},{})
             with memory_backups.lock():
                 if args.command=="memory-export":
                     import uuid
@@ -1161,12 +1295,14 @@ def _main(argv=None):
                     operation={"memoryCount":len(files)}
                     message=tr('ECC comprobó {cantidad} memorias sin problemas de integridad o secretos reconocidos.', cantidad=len(files))
                 elif args.command=="memory-preview":
-                    operation={"restorePreview":memory_archive.preview(Path(args.archive).expanduser(),store,runtime,restore_key(args.project_path))}
-                    operation["restorePreview"].update(requestedArchive=args.archive,projectPath=args.project_path)
+                    operation={"restorePreview":memory_archive.preview(Path(args.archive).expanduser(),store,runtime,restore_key(args.project_path),key_map=key_map)}
+                    operation["restorePreview"].update(requestedArchive=args.archive,projectPath=args.project_path,projectMap=folders)
                     message=tr('Vista previa preparada. Confirma para añadir solo las memorias nuevas.')
                 else:
-                    operation=memory_archive.restore(Path(args.archive).expanduser(),store,runtime,args.token,restore_key(args.project_path))
+                    operation=memory_archive.restore(Path(args.archive).expanduser(),store,runtime,args.token,restore_key(args.project_path),key_map=key_map)
                     message=tr('Restauración terminada: {cantidad} memorias nuevas; existentes conservadas. Abre sesiones nuevas para usarlas.', cantidad=operation['restoredCount'])
+                    if operation['unverifiedProjects']:
+                        message+=' '+tr('Siguen asociadas a su carpeta original: {lista}. Si cambió, restaura indicando la nueva.', lista=', '.join(operation['unverifiedProjects']))
         elif args.command == "set-default-agent":
             agent = "" if args.agent == "none" else args.agent
             if agent and not config.get("agents", {}).get(agent, False):

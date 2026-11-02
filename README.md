@@ -31,6 +31,14 @@ Remove it with `omarchy plugin remove gsus67.ai-team`. Disable each objective in
 2. Turn on the objectives you want. In **Settings → Team**, adjust the models.
 3. Open your agent from the panel and ask in natural language: "let's work on project X". It loads that project's memory, and several projects in one session stay separate.
 
+**Prepare an agent in one step:** in **Settings**, open the agent and press **Prepare and use as default**. On a new install this turns on every goal; if you already have preferences, it keeps them. It only touches that profile and never changes your session, your model or payments. Codex-2 must already exist: no other account is created.
+
+**Repair on opening:** each time you open the panel, what you marked is checked and anything missing is repaired, once. It installs nothing, queries no provider and leaves unmarked profiles alone. If a dependency is missing or there is a conflict, the agent says so in **Settings** and you can retry. An agent being **Ready** means its CLI loaded the configuration; it does not check your login or that the model answers. **Check with AI** is for that.
+
+**New or restored machine:** restore the backup in **Shared memory** before choosing agents; reviewing the file prepares ECC if needed and restoring connects no agent. If your projects moved to another folder, give the new folder of each one before confirming; otherwise their memories stay tied to the original path. `compartido` depends on no folder. Then mark your agents.
+
+**Only Pi:** with Pi and Nous as the only CLI, the free models cover every role, with Code and Review on different models when there is more than one. Turn on Nous in the Pi page first. **These models have no sandbox or per-tool approval: they can change files or run commands without asking.** Asking Review to only read is an instruction, not isolation. Work in a worktree and check the diff. They are used in catalog order: there is no data that would rank them by quality.
+
 Common rules live in a project called `compartido`. Only repositories directly under `~/Work` can be named from another folder.
 
 **Save and stop:** at 90 % of the 5-hour or weekly usage of Claude or Codex, sessions are told to stop and leave a detailed handoff in the project memory. Change the limit or turn it off in **Settings → Team**. Codex asks you to approve this once with `/hooks`.

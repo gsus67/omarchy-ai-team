@@ -31,6 +31,14 @@ Para quitarlo, usa `omarchy plugin remove gsus67.ai-team`. Antes, desactiva cada
 2. Activa los objetivos que quieras. En **Ajustes → Equipo** puedes ajustar los modelos.
 3. Abre tu agente desde el panel y habla con naturalidad: "vamos a trabajar en el proyecto X". Carga la memoria de ese proyecto, y varios proyectos en una misma sesión se mantienen separados.
 
+**Preparar un agente de un paso:** en **Ajustes**, abre el agente y pulsa **Preparar y usar como predeterminado**. En una instalación nueva activa todos los objetivos; si ya tienes preferencias, las conserva. Solo toca ese perfil y nunca cambia tu sesión, tu modelo ni los pagos. Codex-2 debe existir antes: no se crea otra cuenta.
+
+**Reparación al abrir:** cada vez que abres el panel se comprueba lo que marcaste y se repara lo que falte, una sola vez. No instala nada, no consulta proveedores y no toca los perfiles sin marcar. Si falta una dependencia o hay un conflicto, lo dice el agente en **Ajustes** y puedes reintentarlo. Que un agente esté **Listo** significa que su CLI cargó la configuración; no comprueba tu sesión ni que el modelo responda. Para eso está **Comprobar con IA**.
+
+**Equipo nuevo o restaurado:** restaura la copia en **Memoria compartida** antes de elegir agentes; revisar el archivo prepara ECC si hace falta y restaurar no conecta ningún agente. Si tus proyectos cambiaron de carpeta, indica la nueva de cada uno antes de confirmar; sin eso, sus memorias siguen ligadas a la ruta original. `compartido` no depende de ninguna carpeta. Después marca tus agentes.
+
+**Solo Pi:** con Pi y Nous como única CLI, los modelos gratuitos cubren todos los papeles, con Programar y Revisar en modelos distintos si hay más de uno. Activa antes Nous en la página de Pi. **Esos modelos no tienen sandbox ni aprobación por herramienta: pueden cambiar archivos o ejecutar comandos sin preguntar.** Pedir a Revisar que solo lea es una instrucción, no un aislamiento. Trabaja en un worktree y comprueba el diff. Se usan en el orden del catálogo: no hay datos que permitan clasificarlos por calidad.
+
 Las normas comunes van en un proyecto llamado `compartido`. Desde otra carpeta solo se pueden nombrar los repos que estén directamente en `~/Work`.
 
 **Guardar y parar:** al llegar al 90 % del consumo de Claude o Codex, de 5 horas o semanal, se ordena a las sesiones parar y dejar un relevo detallado en la memoria del proyecto. Cambia el límite o desactívalo en **Ajustes → Equipo**. Codex pide aprobarlo una vez con `/hooks`.

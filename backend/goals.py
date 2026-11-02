@@ -11,6 +11,7 @@ GOALS = (('quality', tr('Calidad'), 'superpowers'),
          ('memory', tr('Memoria compartida'), 'memory'),
          ('tokens', tr('Ahorro de tokens'), 'local-tools'),
          ('security', tr('Seguridad'), 'local-tools'))
+NEEDS_INSTALLER = ('superpowers', 'memory')
 
 
 def connection_line(component: dict, agents: list[dict]) -> str:
@@ -22,6 +23,44 @@ def connection_line(component: dict, agents: list[dict]) -> str:
         if not (target.get('enabled') and target.get('verified')):
             return tr('{nombre} sin conectar', nombre=agent['name'])
     return ''
+
+
+def setup_state(agent: dict, components: list[dict], *, models_missing: bool = False) -> dict:
+    """Preparation of one profile: an unselected profile has nothing to repair."""
+    if not agent.get('enabled'):
+        return {'setupState': 'disabled', 'missingComponents': [], 'setupIssues': []}
+    missing, issues, failed = [], [], False
+    if agent.get('installation') != 'installed':
+        missing.append('cli')
+    for component in components:
+        if not component.get('enabled'):
+            continue
+        target = next((row for row in component.get('targets', []) if row.get('agent') == agent.get('id')), {})
+        if target.get('enabled') and target.get('verified'):
+            continue
+        missing.append(component['id'])
+        issues.append({'component': component['id'], 'detail': target.get('detail', '')})
+        failed = failed or bool(target.get('blocked') or target.get('lastError'))
+    if models_missing:
+        missing.append('models')
+        issues.append({'component': 'team', 'detail': tr('El equipo no tiene modelos: activa Nous en la página de Pi y actualiza su catálogo.')})
+    state = 'error' if failed else 'pending' if missing else 'ready'
+    return {'setupState': state, 'missingComponents': missing, 'setupIssues': issues}
+
+
+def repair_plan(agents: list[dict], components: list[dict]) -> tuple[list[dict], list[dict]]:
+    """What opening the panel may repair, and what needs an explicit preparation instead."""
+    by_id = {component['id']: component for component in components}
+    repair, pending = [], []
+    for agent in agents:
+        for key in agent.get('missingComponents', []):
+            target = next((row for row in by_id.get(key, {}).get('targets', []) if row.get('agent') == agent['id']), {})
+            if (key not in by_id or target.get('available') is False or target.get('blocked')
+                    or (key in NEEDS_INSTALLER and not target.get('installed'))):
+                pending.append({'agent': agent['id'], 'component': key, 'detail': target.get('detail', '')})
+            else:
+                repair.append({'agent': agent['id'], 'component': key})
+    return repair, pending
 
 
 def memory_line(memory: dict) -> tuple[str, str]:
