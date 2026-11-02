@@ -43,7 +43,7 @@ import native_team
 import ai_check
 
 
-AGENTS = {"claude": "Claude Code", "codex": "Codex", "codex-2": "Codex-2", "claude-2": "Claude Code-2", "pi": "Pi"}
+AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi"}  # the order every list shows
 CLI_NAME = {"codex-2": "codex", "claude-2": "claude"}
 PROFILE_DIRS = {"codex-2": ".codex-2", "claude-2": ".claude-2"}
 MANAGED = {"superpowers": ("Superpowers", native_plugins),
