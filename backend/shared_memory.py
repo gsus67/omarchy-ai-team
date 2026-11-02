@@ -393,7 +393,32 @@ def apply(agent, binary, action, receipt=None):
 CODEX_STARTUP_SECONDS = 10  # Codex default when mcp_servers.<name>.startup_timeout_sec is absent.
 
 
-def diagnose(agent):
+def reconnect_steps(report, profile):
+    """Verified native steps only (`<cli> mcp list`, a new session); never edits permissions or configuration."""
+    causes = {cause for level in ("configured", "connected", "usable") for cause in report[level]["causes"]}
+    steps = []
+    if causes & {"not-declared", "disabled", "foreign-or-stale-command", "tool-filter-unsupported",
+                 "search-or-read-filtered", "native-cwd-overrides-project", "config-unreadable"}:
+        steps.append(tr('Reaplica la memoria compartida desde Team o Instalación para ese perfil; no se cambian permisos.'))
+    if causes & {"runtime-missing", "node-missing"}:
+        steps.append(tr('Instala el runtime ECC y Node desde Team y vuelve a diagnosticar.'))
+    if causes & {"timeout", "cannot-start", "exit-status", "protocol-error", "bad-reply", "slower-than-startup-timeout",
+                 "server-tools-missing", "doctor-failed"}:
+        steps.append(tr('El servidor no responde bien en local; revisa el runtime y repite el diagnóstico.'))
+    if profile in ("claude", "codex"):
+        steps.append(tr('Comprueba la lista nativa con `{cli} mcp list`.').format(cli=profile))
+    steps.append(tr('Abre una sesión nueva: las herramientas de una sesión ya iniciada no cambian.'))
+    return steps
+
+
+def diagnose(agent, profile=None):
+    report = _diagnose(agent, profile)
+    if not report["usable"]["ok"]:
+        report["reconnect"] = reconnect_steps(report, profile or agent)
+    return report
+
+
+def _diagnose(agent, profile):
     """Report configured / connected / usable separately, read-only and with no model.
 
     Each level lists a cause code (stable, for tests and UI) so a missing tool is never a silent mystery.
@@ -401,7 +426,7 @@ def diagnose(agent):
     """
     levels = {"configured": {"ok": False, "causes": []}, "connected": {"ok": False, "causes": []},
               "usable": {"ok": False, "causes": []}}
-    report = {"agent": agent, "server": SERVER, **levels}
+    report = {"agent": profile or agent, "server": SERVER, **levels}
     try:
         config = local_config(agent)
         server = server_config(config, agent)

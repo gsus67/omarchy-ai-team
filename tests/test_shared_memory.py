@@ -442,6 +442,24 @@ class DiagnoseTests(unittest.TestCase):
         with patch.object(memory, "exchange", return_value=(set(memory.TOOLS), True, 0.1)):
             memory.probe(self.RUNTIME, "codex")
 
+    def test_reconnect_steps_only_when_not_usable(self):
+        report = self.run_diagnose(server=None)
+        self.assertIn("not-declared", report["configured"]["causes"])
+        self.assertTrue(any("mcp list" in step for step in report["reconnect"]))
+        self.assertNotIn("reconnect", self.run_diagnose())
+
+    def test_profile_alias_is_reported_and_reads_selected_home(self):
+        from harness import agent_profile
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"HOME": home}), \
+             patch.object(Path, "home", return_value=Path(home)), \
+             patch.object(memory, "inspect_runtime", return_value=self.RUNTIME):
+            with agent_profile("codex-2") as base:
+                self.assertEqual(base, "codex")
+                self.assertEqual(os.environ["CODEX_HOME"], str(Path(home) / ".codex-2"))
+                report = memory.diagnose(base, "codex-2")
+        self.assertEqual(report["agent"], "codex-2")
+        self.assertIn("not-declared", report["configured"]["causes"])
+
 
 if __name__ == "__main__":
     unittest.main()
