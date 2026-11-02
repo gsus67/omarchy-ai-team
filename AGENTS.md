@@ -163,7 +163,7 @@ PASS ni aceptación completa por una implementación parcial.
 Mantener un único punto en [CONTINUIDAD.md](docs/CONTINUIDAD.md), con decisiones,
 cambios, pruebas, restricciones y siguiente paso. Consultar
 `python3 tools/session_usage.py` al iniciar y entre bloques; si falla, cuota
-desconocida, sin inventar porcentajes. Umbrales heredados: 90 % usado de ventana
+desconocida, sin inventar porcentajes ni asumir margen: no delegar trabajo nuevo. Umbrales heredados: 90 % usado de ventana
 5h y 98 % semanal. Guardar y avisar al alcanzarlos; esta tarea no autoriza otros
 escritores, subagentes, relevos automáticos ni timers. No copiar credenciales o
 transcripciones para continuidad.
