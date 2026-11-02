@@ -79,12 +79,21 @@ class FreshWorkerTests(unittest.TestCase):
                     ['codex', 'exec', '-C', 'resume', 'task'],
                     ['codex', 'exec', '-c', 'resume=1', 'resume the plan'],
                     ['codex', 'exec', '--', 'resume'],
-                    ['codex', 'exec', '--', 'fork']]
+                    ['codex', 'exec', '--', 'fork'],
+                    # -i takes several files: the word after the first one is another image, not a subcommand
+                    ['codex', 'exec', '-i', 'one.png', 'resume', '-m', 'chosen', 'task'],
+                    ['codex', 'exec', '--image', 'one.png', 'two.png', 'fork', '-m', 'chosen', 'task']]
         for command in accepted:
             with self.subTest(command=command):
                 prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
                 self.assertEqual(prepared.count('--ephemeral'), 1)
                 self.assertEqual(prepared[prepared.index('--ephemeral') - 1], 'exec')
+
+    def test_a_literal_ephemeral_prompt_after_the_delimiter_does_not_hide_the_real_option(self):
+        prepared, _, _ = self.run.prepare(['codex', 'exec', '--', '--ephemeral'], 'codex', 'code', {}, self.root)
+        self.assertEqual(prepared[prepared.index('exec') + 1], '--ephemeral')
+        self.assertEqual(prepared.index('--ephemeral'), prepared.index('exec') + 1)
+        self.assertLess(prepared.index('--ephemeral'), prepared.index('--'))
 
     def test_setting_off_keeps_the_previous_recipe_and_allows_continuation(self):
         config = {'context': {'fresh_worker_per_subtask': False}}
