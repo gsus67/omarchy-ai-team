@@ -3,6 +3,7 @@ import importlib
 import io
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -94,6 +95,106 @@ class FreshWorkerTests(unittest.TestCase):
         self.assertEqual(prepared[prepared.index('exec') + 1], '--ephemeral')
         self.assertEqual(prepared.index('--ephemeral'), prepared.index('exec') + 1)
         self.assertLess(prepared.index('--ephemeral'), prepared.index('--'))
+
+    def test_codex_context_rejects_protected_config_keys(self):
+        for agent in ('codex', 'codex-2'):
+            for key, value in (('model_auto_compact_token_limit', '123'), ('features.hooks', 'false'),
+                               ('features.hooks', 'true')):
+                command = ['codex', 'exec', '-c', f'{key}={value}', 'task']
+                with self.subTest(agent=agent, override=f'{key}={value}'), \
+                        self.assertRaisesRegex(ValueError, re.escape(key)):
+                    self.run.prepare(command, agent, 'code', {}, self.root)
+
+    def test_codex_context_preserves_unrelated_overrides(self):
+        command = ['codex', 'exec', '-c', 'model_reasoning_effort="high"', '-c', 'other.key=1', '-m', 'chosen', 'task']
+        for agent in ('codex', 'codex-2'):
+            prepared, _, _ = self.run.prepare(command, agent, 'code', {}, self.root)
+            tail = prepared[prepared.index('exec'):]
+            self.assertEqual([item for item in tail if item != '--ephemeral'][-len(command) + 1:], command[1:])
+            self.assertLess(prepared.index('-c'), prepared.index('exec'))  # injected ones stay in front
+
+    def test_codex_context_rejects_equivalent_config_forms(self):
+        key = 'model_auto_compact_token_limit'
+        forms = [['-c', f'{key}=1'], ['--config', f'{key}=1'], [f'-c{key}=1'], [f'-c={key}=1'], [f'--config={key}=1']]
+        for agent in ('codex', 'codex-2'):
+            for form in forms:
+                for command in (['codex', *form, 'exec', 'task'], ['codex', 'exec', *form, 'task'],
+                                ['codex', 'exec', 'task', *form], ['codex', 'e', *form, 'task']):
+                    with self.subTest(agent=agent, command=command), self.assertRaisesRegex(ValueError, key):
+                        self.run.prepare(command, agent, 'code', {}, self.root)
+
+    def test_codex_context_rejects_hook_feature_switches(self):
+        for agent in ('codex', 'codex-2'):
+            for flag in ('--enable', '--disable'):
+                for name in ('hooks', 'features.hooks'):
+                    for form in ([flag, name], [f'{flag}={name}']):
+                        for command in (['codex', *form, 'exec', 'task'], ['codex', 'exec', *form, 'task'],
+                                        ['codex', 'exec', 'task', *form], ['codex', 'e', *form, 'task']):
+                            with self.subTest(agent=agent, command=command), \
+                                    self.assertRaisesRegex(ValueError, re.escape('features.hooks')):
+                                self.run.prepare(command, agent, 'code', {}, self.root)
+
+    def test_codex_context_rejects_features_parent_overrides(self):
+        # `features={hooks=false}` replaces the whole table and drops the injected features.hooks.
+        values = ['features={hooks=false}', 'features = {hooks = false}', 'features={hooks=true}', 'features={}',
+                  'features={other=true}', 'features={other={hooks=false}}', 'features={hooks=false,}']
+        for agent in ('codex', 'codex-2'):
+            for value in values:
+                for command in (['codex', 'exec', '-c', value, 'task'], ['codex', 'exec', '--config', value, 'task'],
+                                ['codex', 'exec', f'-c{value}', 'task'], ['codex', 'exec', f'--config={value}', 'task']):
+                    with self.subTest(agent=agent, command=command), \
+                            self.assertRaisesRegex(ValueError, re.escape('features.hooks')):
+                        self.run.prepare(command, agent, 'code', {}, self.root)
+
+    def test_codex_context_config_key_boundaries(self):
+        rejected = ['features.hooks=false=extra', 'features.hooks=', ' features.hooks = false ',
+                    ' model_auto_compact_token_limit = 123 ']
+        for value in rejected:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.run.prepare(['codex', 'exec', '-c', value, 'task'], 'codex', 'code', {}, self.root)
+        accepted = ['other="features.hooks=false"', 'FEATURES.HOOKS=false', 'features.Hooks=false',
+                    'MODEL_AUTO_COMPACT_TOKEN_LIMIT=1', 'features . hooks=false',
+                    'model_auto_compact_token_limit_scope="x"', 'features.hooks_extra=1',
+                    'features.hooks']
+        for value in accepted:
+            with self.subTest(value=value):
+                command = ['codex', 'exec', '-c', value, 'task']
+                prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+                self.assertEqual(prepared[-3:], command[2:])
+        for command in (['codex', 'exec', 'task', '-c'], ['codex', 'exec', '--config=', 'task'],
+                        ['codex', 'exec', 'task', '--enable'], ['codex', 'exec', 'task', '--disable']):
+            with self.subTest(command=command):
+                self.run.prepare(command, 'codex', 'code', {}, self.root)  # a syntax error is left to Codex
+
+    def test_codex_context_checks_every_repeated_override(self):
+        for command in (['codex', 'exec', '-c', 'features.hooks=false', '-c', 'other=1', 'task'],
+                        ['codex', 'exec', '-c', 'other=1', '-c', 'features.hooks=false', 'task'],
+                        ['codex', 'exec', '-c', 'features.hooks=true', '-c', 'features.hooks=false', 'task'],
+                        ['codex', 'exec', '-c', 'features.hooks=false', '-c', 'features.hooks=true', 'task'],
+                        ['codex', 'exec', '-c', 'model_auto_compact_token_limit=1', '--enable', 'hooks', 'task']):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                self.run.prepare(command, 'codex', 'code', {}, self.root)
+
+    def test_codex_context_ignores_prompt_and_option_values(self):
+        accepted = [['codex', 'exec', 'explica -c features.hooks=false'],
+                    ['codex', 'exec', '--', '-c', 'features.hooks=false'],
+                    ['codex', 'exec', 'task', '--', '--enable', 'hooks'],
+                    ['codex', 'exec', '--model', '-cfeatures.hooks=false', 'task'],
+                    ['codex', 'exec', '-m=features.hooks=false', 'task'],
+                    ['codex', 'exec', '--output-last-message', '--enable', 'task'],
+                    ['codex', 'exec', '-o', 'features.hooks=false', 'task'],
+                    ['codex', 'exec', '-c', 'other=1', 'task', '-c', 'k=-cfeatures.hooks=false'],
+                    ['codex', 'exec', '--config', '-cmodel_auto_compact_token_limit=1', 'task'],
+                    ['codex', 'exec', '-i', 'one.png', 'two.png', '--', '--enable', 'hooks']]
+        for command in accepted:
+            with self.subTest(command=command):
+                prepared, _, _ = self.run.prepare(command, 'codex', 'code', {}, self.root)
+                self.assertEqual(prepared[-len(command) + 2:], command[2:])
+        for command in (['codex', 'exec', '-i', 'one.png', '-c', 'features.hooks=false', 'task'],
+                        ['codex', 'exec', '--image', 'one.png', 'two.png', '--enable', 'hooks', 'task'],
+                        ['codex', 'exec', '-m', 'chosen', 'task', '-cfeatures.hooks=false']):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                self.run.prepare(command, 'codex', 'code', {}, self.root)
 
     def test_setting_off_keeps_the_previous_recipe_and_allows_continuation(self):
         config = {'context': {'fresh_worker_per_subtask': False}}
