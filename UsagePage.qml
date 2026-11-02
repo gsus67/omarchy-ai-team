@@ -73,11 +73,12 @@ ColumnLayout {
       UsageBar {
         Layout.fillWidth: true
         label: windowRow.modelData.label
+        labelWidth: Style.space(96)
         percent: windowRow.modelData.percent
       }
       Text {
         visible: windowRow.modelData.reset !== ""
-        Layout.leftMargin: Style.space(28)
+        Layout.leftMargin: Style.space(96 + 4)
         text: windowRow.modelData.reset
         textFormat: Text.PlainText
         color: Commons.Color.muted

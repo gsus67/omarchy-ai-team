@@ -16,6 +16,8 @@ from i18n import tr
 # Only these accounts have limit windows; the short names fit a 380 px screen.
 SHORT_NAMES = {'claude': 'Claude', 'claude-2': 'Claude 2', 'codex': 'Codex', 'codex-2': 'Codex 2'}
 MAX_BYTES = 1024 * 1024
+# The only counters that are usage; a record may also carry capacity metadata such as maxOutputTokens.
+USAGE_BUCKETS = ('inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens')
 
 
 def _directory():
@@ -126,7 +128,8 @@ def _window(limits, pattern):
 
 
 def _number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A usable count or cost: finite and far below anything that could overflow a format."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) < 1e15  # False for nan, inf and huge ints without converting them
 
 
 def _windows(limits):
@@ -153,7 +156,7 @@ def _models(record):
     rows_ = []
     for name, bucket in (usage.items() if isinstance(usage, dict) else []):
         if isinstance(bucket, dict):
-            total = sum(value for key, value in bucket.items() if _number(value) and key.endswith('Tokens'))
+            total = sum(bucket[key] for key in USAGE_BUCKETS if _number(bucket.get(key)))
             rows_.append((total, str(name)[:40]))
     rows_.sort(key=lambda item: (-item[0], item[1]))
     return [{'name': name, 'tokens': tokens_text(total)} for total, name in rows_[:4]]

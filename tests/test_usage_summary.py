@@ -146,6 +146,22 @@ class DetailTests(unittest.TestCase):
         self.assertEqual(spend['tools'][0], {'name': 'Bash', 'tokens': '9.0K', 'cost': '<$0.01'})
         self.assertEqual(spend['unpriced'], 'gpt-6.1-sol')
 
+    def test_a_breakdown_with_non_finite_or_absurd_numbers_is_skipped_not_fatal(self):
+        base = {'schemaVersion': 1, 'byKind': {'input': 1, 'output': 1, 'cacheRead': 1, 'cacheWrite': 1},
+                'byProject': [], 'byTool': [], 'byModel': [], 'costUsd': None, 'unpricedModels': []}
+        record = {'limits': [{'label': 'Weekly (7-day)', 'percent': 0.1}]}
+        (self.usage / 'claude.json').write_text(json.dumps(record))
+        for bad in (float('nan'), float('inf'), 10 ** 400):
+            data = {**base, 'byKind': {**base['byKind'], 'input': bad}}
+            (self.breakdown / 'claude.json').write_text(json.dumps(data))
+            row = usage_summary.rows([{'id': 'claude', 'name': 'Claude', 'enabled': True}])[0]
+            self.assertIsNone(row['spend'], repr(bad))
+
+    def test_model_tokens_count_only_the_four_usage_buckets_not_capacity_metadata(self):
+        usage = {'m': {'inputTokens': 100, 'outputTokens': 50, 'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 0, 'maxOutputTokens': 32000}}
+        row = self.row({'limits': [{'label': 'Weekly (7-day)', 'percent': 0.1}], 'modelUsage': usage})
+        self.assertEqual(row['models'], [{'name': 'm', 'tokens': '150'}])
+
     def test_an_invalid_or_missing_breakdown_gives_no_spend_section(self):
         record = {'limits': [{'label': 'Weekly (7-day)', 'percent': 0.1}]}
         self.assertIsNone(self.row(record)['spend'])
