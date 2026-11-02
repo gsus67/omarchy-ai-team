@@ -160,11 +160,12 @@ ColumnLayout {
   // text here, never JavaScript numbers (which round above 2^53).
   Repeater {
     model: root.numbers
-    delegate: RowLayout {
+    delegate: ColumnLayout {
       id: limit
       required property var modelData
       Layout.fillWidth: true
       spacing: root.metrics.xxs
+      // The label wraps instead of being cut; the field and its save button sit on the next line.
       Text {
         Layout.fillWidth: true
         text: limit.modelData.label + " · " + root.modeText(limit.modelData.native)
@@ -172,21 +173,30 @@ ColumnLayout {
         color: Commons.Color.foreground
         font.family: root.fonts.family
         font.pixelSize: root.fonts.caption
-        elide: Text.ElideRight
+        wrapMode: Text.WordWrap
       }
-      Ui.TextField {
-        id: field
-        objectName: "context-" + limit.modelData.key
-        Layout.preferredWidth: Style.space(70)
-        text: typeof root.values[limit.modelData.key] === "string" ? root.values[limit.modelData.key] : ""
-        enabled: !root.busy
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: root.metrics.xxs
+        Ui.TextField {
+          id: field
+          objectName: "context-" + limit.modelData.key
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          text: typeof root.values[limit.modelData.key] === "string" ? root.values[limit.modelData.key] : ""
+          enabled: !root.busy
+        }
+        Ui.Button {
+          objectName: "context-save-" + limit.modelData.key
+          text: root.tr("Guardar")
+          focusable: true
+          enabled: !root.busy && /^[0-9]+$/.test(field.text)
+          onClicked: root.command("context-set", limit.modelData.key, field.text)
+        }
       }
-      Ui.Button {
-        objectName: "context-save-" + limit.modelData.key
-        text: root.tr("Guardar")
-        focusable: true
-        enabled: !root.busy && /^[0-9]+$/.test(field.text)
-        onClicked: root.command("context-set", limit.modelData.key, field.text)
+      Ui.PanelSeparator {
+        Layout.fillWidth: true
+        strength: 0.08
       }
     }
   }
