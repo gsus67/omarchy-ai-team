@@ -43,6 +43,14 @@ ColumnLayout {
     if (root.scope !== "") args.push("--role", root.scope)
     root.commandRequested(args)
   }
+  readonly property var roleNames: ({jefe: root.tr("Jefe"), plan: root.tr("Planificar"), code: root.tr("Programar"),
+                                     review: root.tr("Revisar"), simple: root.tr("Sencillas")})
+  function roleOverrides(key) {
+    if (root.scope !== "") return ""
+    const roles = (root.info.settings || {}).roles || {}
+    return Object.keys(roles).filter(role => roles[role] && roles[role][key] !== undefined)
+      .map(role => (root.roleNames[role] || role) + ": " + roles[role][key]).join(" · ")
+  }
   function modeText(native) { return native ? root.tr("Nativo") : root.tr("Cooperativo") }
 
   Ui.PanelSectionHeader { text: root.tr("CONTEXTO") }
@@ -171,6 +179,17 @@ ColumnLayout {
         text: limit.modelData.label + " · " + root.modeText(limit.modelData.native)
         textFormat: Text.PlainText
         color: Commons.Color.foreground
+        font.family: root.fonts.family
+        font.pixelSize: root.fonts.caption
+        wrapMode: Text.WordWrap
+      }
+      // In "Todos" the roles that override this limit are listed so no value stays hidden.
+      Text {
+        Layout.fillWidth: true
+        visible: text !== ""
+        text: root.roleOverrides(limit.modelData.key)
+        textFormat: Text.PlainText
+        color: Commons.Color.muted
         font.family: root.fonts.family
         font.pixelSize: root.fonts.caption
         wrapMode: Text.WordWrap
