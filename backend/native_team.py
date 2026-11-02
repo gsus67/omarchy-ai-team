@@ -265,6 +265,6 @@ def text(paths, settings_file, team=None):
                 # One model can take one line per Codex account: the number marks the alternative.
                 lines += ['# '+str(number)+': '+option['model'], *role_commands(key, option, profiles, settings_file=settings_file, only_pi=only_pi)]
             lines += ['```', '']
-        elif key == 'review':
-            lines += ['Revisar no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', '']
+        else:
+            lines += [roles.LABELS[key]+' no tiene alternativa permitida: si su modelo falla, queda pendiente; dilo.', '']
     return '\n'.join(lines)+'\n'
