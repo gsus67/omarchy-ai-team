@@ -447,6 +447,9 @@ class DiagnoseTests(unittest.TestCase):
         self.assertIn("not-declared", report["configured"]["causes"])
         self.assertTrue(any("mcp list" in step for step in report["reconnect"]))
         self.assertNotIn("reconnect", self.run_diagnose())
+        steps = memory.reconnect_steps({"configured": {"causes": []}, "connected": {"causes": []},
+                                        "usable": {"causes": []}}, "codex-2")
+        self.assertTrue(any("CODEX_HOME=~/.codex-2 codex mcp list" in step for step in steps))
 
     def test_profile_alias_is_reported_and_reads_selected_home(self):
         from harness import agent_profile
