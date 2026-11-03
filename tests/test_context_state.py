@@ -1,10 +1,12 @@
 """ECC adapter contracts. Synthetic tests are not evidence of hook trust/execution."""
+from datetime import datetime, timezone
 import hashlib
 import importlib
 import json
 import os
 from pathlib import Path
 import sys
+import time
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -72,6 +74,16 @@ class ContextStateTests(unittest.TestCase):
         record = json.loads((folder/'handoff_checkpoint.json').read_text())
         self.assertEqual((record['schema'], record['id']), (self.module.IDLE_SCHEMA, result['id']))
         self.assertEqual(record['sha256'], hashlib.sha256(saved['body'].encode()).hexdigest())
+
+    def test_usage_threshold_message_points_to_a_handoff_that_is_saved_and_reread(self):
+        import usage_guard
+        self.assertIn('context_state.py', usage_guard.USAGE_GUARD_MESSAGE)
+        self.assertIn('status=saved', usage_guard.USAGE_GUARD_MESSAGE)
+        since = time.time() - 60
+        result = self.module.checkpoint(self.vault, self.instance, self.state)
+        self.assertEqual(result['status'], 'saved')
+        self.vault.memories[result['id']]['createdAt'] = datetime.now(timezone.utc).isoformat()
+        self.assertEqual(self.module._verified_handoff(self.vault, self.instance, since), result['id'])
 
     def test_checkpoint_rejects_incomplete_state_and_propagates_save_or_verification_errors(self):
         for invalid in ({}, {**self.state, 'plan': 'text'}, {**self.state, 'extra': 'log'}):

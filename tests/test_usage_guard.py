@@ -17,6 +17,8 @@ import team
 
 
 class GuardScriptTests(unittest.TestCase):
+    agent = 'claude'
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.root = Path(temp.name)
         self.settings = self.root / 'settings.json'
@@ -50,8 +52,30 @@ class GuardScriptTests(unittest.TestCase):
     def test_message_orders_stopping_and_a_detailed_handoff(self):
         self.usage(session=0.93)
         text = self.context(self.run_guard())
-        for wanted in ('Session (5-hour)', '93', 'Deja de avanzar', 'memory_save', 'handoff', 'siguiente paso', 'archivos', 'rama', 'avisa al usuario'):
+        for wanted in ('Session (5-hour)', '93', 'Para ya', 'memory_save', 'handoff'):
             self.assertIn(wanted, text)
+
+    def test_threshold_forbids_delegation_and_asks_for_a_checked_checkpoint(self):
+        self.usage(session=0.95)
+        text = self.context(self.run_guard())
+        for wanted in ('no delegues', 'context_state.py checkpoint', 'status=saved'):
+            self.assertIn(wanted, text)
+
+    def test_unknown_quota_is_explicit_once_per_prompt_and_exits_zero(self):
+        cases = {'tool falla': "#!/bin/sh\nexit 3\n", 'json roto': "#!/bin/sh\necho nope\n", 'sin limites': "#!/bin/sh\necho '{}'\n",
+                 'limites None': "#!/bin/sh\necho '{\"limits\":null}'\n", 'lista vacia': "#!/bin/sh\necho '{\"limits\":[]}'\n"}
+        for name, body in cases.items():
+            with self.subTest(name):
+                (self.bin / ('omarchy-agent-usage-' + self.agent)).write_text(body)
+                for stale in (self.root / 'state/omarchy-ai-team').glob('usage-guard*.json'): stale.unlink()
+                text = self.context(self.run_guard('UserPromptSubmit'))
+                self.assertIn('cuota desconocida', text); self.assertIn('no delegar trabajo nuevo', text)
+                self.assertEqual(self.context(self.run_guard('PostToolUse')), '')
+
+    def test_broken_row_before_the_one_over_the_limit_is_ignored(self):
+        tool = self.bin / ('omarchy-agent-usage-' + self.agent)
+        tool.write_text("#!/bin/sh\necho '{\"limits\":[{\"label\":\"A\"},{\"label\":\"B\",\"percent\":\"x\"},{\"label\":\"Weekly (7-day)\",\"percent\":0.95}]}'\n")
+        self.assertIn('Weekly (7-day)', self.context(self.run_guard()))
 
     def test_weekly_window_also_counts(self):
         self.usage(session=0.1, weekly=0.95)
@@ -104,6 +128,7 @@ class GuardScriptTests(unittest.TestCase):
 
 class CodexGuardScriptTests(GuardScriptTests):
     """The same behaviour, reading the usage of the Codex account that runs the hook."""
+    agent = 'codex'
 
     def usage(self, session=0.5, weekly=0.2):
         payload = json.dumps({'limits': [{'label': 'Session (5-hour)', 'percent': session}, {'label': 'Weekly (7-day)', 'percent': weekly}]})
