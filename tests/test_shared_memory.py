@@ -346,5 +346,120 @@ class SharedMemoryTests(unittest.TestCase):
             install.assert_not_called()
 
 
+class DiagnoseTests(unittest.TestCase):
+    RUNTIME = {"installed": True, "path": "/rt", "version": "2.2.3", "node": "/usr/bin/node", "digest": "d"}
+
+    def run_diagnose(self, agent="codex", server="expected", exchange=None, runtime=None):
+        runtime = runtime or self.RUNTIME
+        declared = ({"command": memory.expected_server(runtime, agent)["command"],
+                     "args": memory.expected_server(runtime, agent)["args"]} if server == "expected" else server)
+        config = {"mcp_servers": {memory.SERVER: declared}} if declared is not None else {}
+        exchange = exchange or (lambda *a, **k: (set(memory.TOOLS), True, 0.5))
+        with patch.object(memory, "local_config", return_value=config), \
+             patch.object(memory, "inspect_runtime", return_value=runtime), \
+             patch.object(memory, "exchange", side_effect=exchange):
+            return memory.diagnose(agent)
+
+    def test_all_levels_ok(self):
+        report = self.run_diagnose()
+        self.assertTrue(all(report[key]["ok"] for key in ("configured", "connected", "usable")))
+
+    def test_not_declared_skips_probe_and_names_cause(self):
+        report = self.run_diagnose(server=None, exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertEqual(report["configured"]["causes"], ["not-declared"])
+        self.assertFalse(report["connected"]["ok"])
+
+    def test_disabled_and_foreign_command_never_start_the_server(self):
+        for server, cause in (({"command": "x", "args": [], "enabled": False}, "disabled"),
+                              ({"command": "x", "args": []}, "foreign-or-stale-command")):
+            report = self.run_diagnose(server=server, exchange=lambda *a, **k: self.fail("must not start"))
+            self.assertIn(cause, report["configured"]["causes"])
+            self.assertEqual(report["usable"]["causes"], ["skipped-not-configured"])
+
+    def test_configured_but_server_does_not_answer(self):
+        def broken(*a, **k):
+            raise ValueError("timeout")
+        report = self.run_diagnose(exchange=broken)
+        self.assertTrue(report["configured"]["ok"])
+        self.assertEqual(report["connected"]["causes"], ["timeout"])
+        self.assertFalse(report["usable"]["ok"])
+
+    def test_slow_start_over_codex_timeout_is_connected_but_not_ok(self):
+        report = self.run_diagnose(exchange=lambda *a, **k: (set(memory.TOOLS), True, 11.0))
+        self.assertIn("slower-than-startup-timeout", report["connected"]["causes"])
+        self.assertFalse(report["usable"]["ok"])
+
+    def test_missing_server_tools_and_failed_doctor(self):
+        report = self.run_diagnose(exchange=lambda *a, **k: ({"memory_search"}, False, 0.1))
+        self.assertEqual(report["usable"]["causes"], ["server-tools-missing", "doctor-failed"])
+
+    def test_missing_runtime_is_reported(self):
+        report = self.run_diagnose(runtime={**self.RUNTIME, "installed": False},
+                                   exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertIn("runtime-missing", report["configured"]["causes"])
+
+    def test_malformed_config_is_reported_not_raised(self):
+        for config in ({"mcp_servers": None}, {"mcp_servers": {memory.SERVER: "x"}}, {"mcp_servers": []}):
+            with patch.object(memory, "local_config", return_value=config), \
+                 patch.object(memory, "inspect_runtime", return_value=self.RUNTIME):
+                report = memory.diagnose("codex")
+            self.assertEqual(report["configured"]["causes"], ["config-unreadable"])
+            self.assertEqual(report["usable"]["causes"], ["skipped-not-configured"])
+
+    def test_node_missing_is_not_also_foreign(self):
+        report = self.run_diagnose(runtime={**self.RUNTIME, "node": ""}, server={"command": "x", "args": []},
+                                   exchange=lambda *a, **k: self.fail("must not start"))
+        self.assertEqual(report["configured"]["causes"], ["node-missing"])
+
+    def exchange_with(self, **run):
+        with patch.object(memory.subprocess, "run", **run):
+            return memory.exchange(self.RUNTIME, "codex")
+
+    def completed(self, stdout="", code=0):
+        return subprocess.CompletedProcess([], code, stdout, "")
+
+    def test_exchange_cause_codes(self):
+        good = "".join(json.dumps(x) + "\n" for x in (
+            {"id": 1, "result": {}}, {"id": 2, "result": {"tools": [{"name": n} for n in memory.TOOLS]}},
+            {"id": 3, "result": {"content": [{"text": json.dumps({"ok": True})}]}}))
+        tools, ok, _ = self.exchange_with(return_value=self.completed(good))
+        self.assertEqual((tools, ok), (memory.TOOLS, True))
+        cases = ((dict(side_effect=subprocess.TimeoutExpired("x", 1)), "timeout"),
+                 (dict(side_effect=FileNotFoundError()), "cannot-start"),
+                 (dict(return_value=self.completed("not json", 1)), "exit-status"),
+                 (dict(return_value=self.completed("not json")), "bad-reply"),
+                 (dict(return_value=self.completed(json.dumps({"id": 1, "error": {"code": -1}}))), "protocol-error"))
+        for run, cause in cases:
+            with self.assertRaises(ValueError) as caught:
+                self.exchange_with(**run)
+            self.assertEqual(str(caught.exception), cause)
+
+    def test_probe_still_raises_memory_error(self):
+        with patch.object(memory, "exchange", side_effect=ValueError("timeout")), self.assertRaises(memory.MemoryError):
+            memory.probe(self.RUNTIME, "codex")
+        with patch.object(memory, "exchange", return_value=({"memory_search"}, True, 0.1)), self.assertRaises(memory.MemoryError):
+            memory.probe(self.RUNTIME, "codex")
+        with patch.object(memory, "exchange", return_value=(set(memory.TOOLS), True, 0.1)):
+            memory.probe(self.RUNTIME, "codex")
+
+    def test_reconnect_steps_only_when_not_usable(self):
+        report = self.run_diagnose(server=None)
+        self.assertIn("not-declared", report["configured"]["causes"])
+        self.assertTrue(any("mcp list" in step for step in report["reconnect"]))
+        self.assertNotIn("reconnect", self.run_diagnose())
+
+    def test_profile_alias_is_reported_and_reads_selected_home(self):
+        from harness import agent_profile
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"HOME": home}), \
+             patch.object(Path, "home", return_value=Path(home)), \
+             patch.object(memory, "inspect_runtime", return_value=self.RUNTIME):
+            with agent_profile("codex-2") as base:
+                self.assertEqual(base, "codex")
+                self.assertEqual(os.environ["CODEX_HOME"], str(Path(home) / ".codex-2"))
+                report = memory.diagnose(base, "codex-2")
+        self.assertEqual(report["agent"], "codex-2")
+        self.assertIn("not-declared", report["configured"]["causes"])
+
+
 if __name__ == "__main__":
     unittest.main()
