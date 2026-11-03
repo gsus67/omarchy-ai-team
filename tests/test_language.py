@@ -149,10 +149,10 @@ class LanguageTests(unittest.TestCase):
     def test_saved_team_notice_translates_role_but_preserves_user_model(self):
         import i18n
         import team
-        source = '{papel}: el agente, modelo o esfuerzo ya no está disponible; se usa el recomendado.'
+        source = '{papel}: {modelo} ya no está disponible (agente, modelo o esfuerzo); se usa el recomendado y se conserva tu elección.'
         for language, role, target, expected in [('es', 'Programar', 'en', 'Code:'), ('en', 'Programar', 'es', 'Programar:')]:
             with i18n.using(language):
-                text = json.loads(json.dumps(i18n.tr(source, papel=i18n.tr(role))))
+                text = json.loads(json.dumps(i18n.tr(source, papel=i18n.tr(role), modelo='haiku')))
             self.assertTrue(i18n.saved_message(text, target).startswith(expected))
         self.assertEqual(i18n.saved_message('El modelo Idioma no aparece en el catálogo; se usa el predeterminado Calidad.', 'en'),
                          'Model Idioma is not in the catalog; using the default Calidad.')
@@ -193,7 +193,7 @@ class LanguageTests(unittest.TestCase):
         import harness
         import i18n
         source = 'La configuración no puede ser un enlace simbólico.'
-        def blocked(config, key, action):
+        def blocked(config, key, action, **options):
             if key == 'memory':
                 raise harness.HarnessError(i18n.tr(source))
         with i18n.using('en'), patch.object(harness, 'manage_component', side_effect=blocked), patch.object(harness, 'sync_launcher_menu'):

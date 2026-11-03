@@ -268,14 +268,18 @@ def set_codex_connection(binary, runtime, enabled, receipt):
     check_owned(current, runtime, "codex", receipt)
     original = config.get("developer_instructions", "")
     updated = instructions(original, enabled)
-    edits = []
+    declared = current or {}
+    wanted = {}
     if enabled:
-        edits.extend({"keyPath": f"mcp_servers.{SERVER}.{key}", "value": value, "mergeStrategy": "replace"}
-                     for key, value in expected_server(runtime, "codex").items())
+        wanted.update(expected_server(runtime, "codex"))
         # Tasks run without anyone to answer a prompt; this covers only this server, and a relay must be able to save.
-        edits.append({"keyPath": f"mcp_servers.{SERVER}.default_tools_approval_mode", "value": "approve", "mergeStrategy": "replace"})
+        # An explicit native policy stays: the user chose it.
+        wanted.setdefault("default_tools_approval_mode", declared.get("default_tools_approval_mode", "approve"))
     if enabled or current is not None:
-        edits.append({"keyPath": f"mcp_servers.{SERVER}.enabled", "value": enabled, "mergeStrategy": "replace"})
+        wanted["enabled"] = enabled
+    edits = [{"keyPath": f"mcp_servers.{SERVER}.{key}", "value": value, "mergeStrategy": "replace"}
+             for key, value in wanted.items()
+             if key not in declared or declared[key] != value]
     if updated != original:
         edits.append({"keyPath": "developer_instructions", "value": updated or None, "mergeStrategy": "replace"})
     if edits:

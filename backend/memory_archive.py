@@ -22,6 +22,7 @@ class ArchiveError(native_plugins.PluginError):
 
 
 FORMAT = 'ai-team-ecc-backup-v1'
+SHARED_KEY = hashlib.sha256(b'ai-team-shared-memory').hexdigest()  # Fixed identity of `compartido` in memory_projects.mjs.
 MAX_FILES = 10000
 MAX_BYTES = 64*1024*1024
 MAX_DOCUMENT = 128*1024
@@ -58,13 +59,25 @@ def read_file(path, limit):
         raise ArchiveError(tr('No se pudo leer un archivo de memoria.')) from error
 
 
+def unsafe_char(c):
+    # Controls, line/paragraph separators and bidi overrides can disguise text in the panel or the manifest.
+    n=ord(c)
+    return n<32 or 127<=n<160 or n in (0x2028,0x2029,0x061C,0xFEFF) or 0x200B<=n<=0x200F or 0x202A<=n<=0x202E or 0x2060<=n<=0x2064 or 0x2066<=n<=0x2069
+
+
+def clean_name(value,limit=120):
+    return ''.join(c for c in value if not unsafe_char(c)).strip()[:limit].strip()
+
+
 def project_name(directory):
     metadata=directory/'.ai-team-project.json'
     if not metadata.is_file() or metadata.is_symlink():return None
     try:
         value=json.loads(read_file(metadata,4096))
         if isinstance(value,dict) and value.get('schemaVersion')==1 and isinstance(value.get('name'),str):
-            return value['name']
+            # Same limits as restore and the MCP bridge: this text reaches the panel and the manifest.
+            name=clean_name(value['name'])
+            return name or None
     except (OSError,ValueError,ArchiveError):pass
     return None
 
@@ -229,16 +242,32 @@ def load(archive, runtime, include_manifest=False):
     return (files,digest(raw),manifest) if include_manifest else (files,digest(raw))
 
 
-def _plan(archive, store, runtime, target_key=None):
+def check_map(key_map, keys, target_key):
+    """Every move must be explicit and leave each project with its own destination."""
+    invalid=ArchiveError(tr('La reasociación no es válida: cada proyecto del archivo necesita una carpeta propia.'))
+    if target_key:raise invalid
+    new=list(key_map.values())
+    if (any(old not in keys or old==SHARED_KEY for old in key_map)
+            or any(not re.fullmatch('[a-f0-9]{64}',key) or key==SHARED_KEY for key in new)
+            or len(new)!=len(set(new)) or set(new)&(keys-set(key_map))):
+        raise invalid
+
+
+def _plan(archive, store, runtime, target_key=None, key_map=None):
     store=safe_path(store);files,archive_hash,manifest=load(archive,runtime,include_manifest=True)
     keys={name.split('/')[1] for name in files}
     names=manifest.get('projectNames',{})
     names={key:name for key,name in names.items() if key in keys} if isinstance(names,dict) else {}
+    original=sorted(keys);labels=dict(names)
+    if key_map:check_map(key_map,keys,target_key)
     if target_key:
         if len(keys)!=1 or not re.fullmatch('[a-f0-9]{64}',target_key):
             raise ArchiveError(tr('Solo se puede reasociar un respaldo de un único proyecto.'))
-        files={'projects/'+target_key+'/'+name.split('/',2)[2]:data for name,data in files.items()}
-        names={target_key:name for name in names.values()}
+        key_map={original[0]:target_key}
+    if key_map:
+        files={'projects/'+key_map.get(name.split('/')[1],name.split('/')[1])+'/'+name.split('/',2)[2]:data for name,data in files.items()}
+        names={key_map.get(key,key):name for key,name in names.items()}
+    key_map=key_map or {}
     current={}
     for key in {name.split('/')[1] for name in files}:current.update(collect(store,key))
     new=[];same=[];conflicts=[]
@@ -250,20 +279,22 @@ def _plan(archive, store, runtime, target_key=None):
     merged={**current,**files}
     if not conflicts:validate_documents(merged,runtime)
     value={'archive':str(safe_path(archive)),'archiveSha256':archive_hash,'store':str(store),'targetKey':target_key,
-           'new':sorted(new),'identical':sorted(same),'conflicts':sorted(conflicts),
+           'keyMap':key_map,'new':sorted(new),'identical':sorted(same),'conflicts':sorted(conflicts),
            'current':{n:digest(b) for n,b in sorted(current.items())}}
     token=digest(json.dumps(value,sort_keys=True).encode())
     return files,{'archive':value['archive'],'token':token,'newCount':len(new),'identicalCount':len(same),
                   'conflictCount':len(conflicts),'projectCount':len({n.split('/')[1] for n in files}),
-                  'targetKey':target_key},new,names
+                  'targetKey':target_key,
+                  'projects':[{'key':key,'name':labels[key] if isinstance(labels.get(key),str) else '','shared':key==SHARED_KEY,'newKey':key_map.get(key,'')}
+                              for key in original]},new,names
 
 
-def preview(archive, store, runtime, target_key=None):
-    return _plan(archive,store,runtime,target_key)[1]
+def preview(archive, store, runtime, target_key=None, *, key_map=None):
+    return _plan(archive,store,runtime,target_key,key_map)[1]
 
 
-def restore(archive, store, runtime, token, target_key=None):
-    files,plan,new,names=_plan(archive,store,runtime,target_key)
+def restore(archive, store, runtime, token, target_key=None, *, key_map=None):
+    files,plan,new,names=_plan(archive,store,runtime,target_key,key_map)
     if plan['token']!=token or plan['conflictCount']:
         raise ArchiveError(tr('El plan cambió o hay conflictos. Revisa la vista previa; no se sobrescribió memoria.'))
     written=[]
@@ -288,7 +319,7 @@ def restore(archive, store, runtime, token, target_key=None):
                 pass  # Preserve changes or files we can no longer inspect.
         raise ArchiveError(tr('La restauración no pudo completarse; se retiraron solo las altas propias intactas.')) from error
     for key,name in names.items():
-        if not isinstance(name,str) or any(ord(c)<32 or 127<=ord(c)<160 for c in name):continue
+        if not isinstance(name,str) or any(unsafe_char(c) for c in name):continue
         name=name.strip()
         if not name or len(name)>120:continue
         # Optional display metadata: preserve existing files, as the MCP bridge does.
@@ -297,7 +328,9 @@ def restore(archive, store, runtime, token, target_key=None):
             fd=os.open(metadata,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
             with os.fdopen(fd,'w') as out:json.dump({'schemaVersion':1,'name':name},out)
         except (OSError,ArchiveError):pass
-    return {'restoredCount':len(new),'identicalCount':plan['identicalCount']}
+    # A backup keeps no folder paths: without a move, nothing proves these projects exist here.
+    return {'restoredCount':len(new),'identicalCount':plan['identicalCount'],
+            'unverifiedProjects':[row['name'] or row['key'][:10] for row in plan['projects'] if not row['shared'] and not row['newKey']]}
 
 
 def inventory(store):

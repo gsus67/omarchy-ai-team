@@ -9,6 +9,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'backend'))
+import memory_mcp
 RUNTIME = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'omarchy-ai-team/tools/ecc-memory/node_modules/ecc-universal'
 NODE = shutil.which('node')
 
@@ -76,6 +78,27 @@ class MemoryProjectsTests(unittest.TestCase):
         label = json.loads((self.store / 'projects' / key / '.ai-team-project.json').read_text())
         self.assertEqual(label, {'schemaVersion': 1, 'name': 'alpha'})
         self.assertEqual((self.store / 'projects' / key / '.ai-team-project.json').stat().st_mode & 0o777, 0o600)
+
+    def test_two_homonymous_projects_restored_in_new_folders_keep_their_own_memory(self):
+        import memory_archive
+        import shared_memory
+        old = [self.home / 'one/app', self.home / 'two/app']
+        new = [self.home / 'moved/one/app', self.home / 'moved/two/app']
+        for path in (*old, *new):
+            path.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(path)], check=True)
+        self.session(old[0], self.save('dato uno'))
+        self.session(old[1], self.save('dato dos'))
+        runtime = shared_memory.runtime_at(RUNTIME, NODE)
+        archive = self.root / 'backup.zip'
+        memory_archive.export(self.store, archive, runtime)
+        moved = {key.name: memory_mcp.project_store(path, self.root / 'x').name
+                 for key, path in ((memory_mcp.project_store(a, self.store), b) for a, b in zip(old, new))}
+        self.store = self.root / 'other-machine'
+        preview = memory_archive.preview(archive, self.store, runtime, key_map=moved)
+        memory_archive.restore(archive, self.store, runtime, preview['token'], key_map=moved)
+        self.assertEqual(self.found(self.session(new[0], ('memory_search', {'query': 'dato'}))[0]), ['dato uno'])
+        self.assertEqual(self.found(self.session(new[1], ('memory_search', {'query': 'dato'}))[0]), ['dato dos'])
 
     def test_saving_outside_a_project_asks_which_one_and_stores_nothing(self):
         reply = self.session(self.home, self.save('sin dueño'))[0]

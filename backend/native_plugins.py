@@ -119,11 +119,14 @@ def set_codex_connection(binary, plugin_id, enabled, path):
     file, layer = codex_user_layer(binary)
     original = layer["config"].get("developer_instructions", "")
     updated = codex_instructions(original, path if enabled else None)
-    edits = [{"keyPath": f"plugins.{plugin_id}.enabled", "value": enabled, "mergeStrategy": "replace"}]
+    edits = []
+    if layer["config"].get("plugins", {}).get(plugin_id, {}).get("enabled") != enabled:
+        edits.append({"keyPath": f"plugins.{plugin_id}.enabled", "value": enabled, "mergeStrategy": "replace"})
     if updated != original:
         edits.append({"keyPath": "developer_instructions", "value": updated or None, "mergeStrategy": "replace"})
-    codex_request(binary, "config/batchWrite", {"filePath": file, "expectedVersion": layer["version"],
-                                              "edits": edits, "reloadUserConfig": False})
+    if edits:
+        codex_request(binary, "config/batchWrite", {"filePath": file, "expectedVersion": layer["version"],
+                                                  "edits": edits, "reloadUserConfig": False})
 
 
 def inspect(agent, receipt=None):

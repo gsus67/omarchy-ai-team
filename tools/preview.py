@@ -54,6 +54,11 @@ SMOKE = r'''
   property int selectionCommands: 0
   property int missingSelectionCommands: 0
   property int messageStep: 0
+  property int zeroTouchStep: 0
+  property int persistWaits: 0
+  property int zeroTouchWaits: 0
+  property bool zeroTouchExpectError: false
+  property string zeroTouchRepairedAt: ""
   property double firstMessageAt: 0
   property double secondMessageAt: 0
   property string secondMessage: ""
@@ -198,13 +203,13 @@ SMOKE = r'''
     running: true
     repeat: true
     onTriggered: {
-      if (++ticks > 340) { fail("Timeout"); return }
+      if (++ticks > 520) { fail("Timeout"); return }
       if (Quickshell.env("AI_HARNESS_WINDOW_SMOKE") === "1") {  // only the window-selection probe
         if (windowProbeDone) { console.log("HARNESS_SMOKE_PASS"); Qt.quit() }
         return
       }
-      if (harness.errorText && messageStep !== 6 && messageStep !== 7) { fail(harness.errorText); return }
-      if (step < 15 && !harness.opened) { harness.open(); return }
+      if (harness.errorText && messageStep !== 6 && messageStep !== 7 && !zeroTouchExpectError) { fail(harness.errorText); return }
+      if (step < 15 && !harness.opened && !(step === 14 && zeroTouchStep < 13)) { harness.open(); return }
       if (harness.busy || capturing || !harness.snapshot.agents.length) return
       var agent = null
       for (var i = 0; i < harness.snapshot.agents.length; i++) {
@@ -289,17 +294,20 @@ SMOKE = r'''
           selector.changed([])
         } else if (navigationStep === 2) {
           if (agent.enabled || harness.page !== "") { fail("Selector did not deselect independently"); return }
-          if (second.installation !== "missing-profile" || second.enabled) { fail("Second profile must initially be missing and unselected"); return }
+          // claude-2 has no CLI in the fixture (its launcher is a stub), so it cannot be created by selecting it.
+          // codex-2 may be selected: its CLI is present and selecting it creates the empty profile.
+          var missing = harness.snapshot.agents.find(a => a.id === "claude-2")
+          if (!missing || missing.installation !== "missing-profile" || missing.cliInstalled || missing.enabled) { fail("Profile without CLI must initially be missing and unselected"); return }
           missingSelectionCommands=selectionCommands
           // Match the native widget, which writes values before emitting changed.
-          selector.values=["codex-2"]
-          selector.changed(["codex-2"])
+          selector.values=["claude-2"]
+          selector.changed(["claude-2"])
         } else if (navigationStep === 3) {
-          if (selectionCommands !== missingSelectionCommands || second.enabled || selector.values.length || harness.page !== "") { fail("Missing profile was submitted or kept selected"); return }
+          if (selectionCommands !== missingSelectionCommands || harness.snapshot.agents.find(a => a.id === "claude-2").enabled || selector.values.length || harness.page !== "") { fail("Missing profile was submitted or kept selected"); return }
           click("open-settings")
         } else if (navigationStep === 4) {
           if (harness.page !== "settings") { fail("Settings did not open"); return }
-          click("agent-row-codex-open")
+          click("agent-row-codex")
         } else if (navigationStep === 5) {
           if (harness.page !== "codex" || agent.enabled || !find(harness,"update-agent-codex",[]).visible) { fail("Agent settings changed selection or failed to open"); return }
           // The mouse back button behaves like ‹ Volver.
@@ -402,7 +410,9 @@ SMOKE = r'''
           if (!idleField || !idleField.visible || idleField.value !== 55 || !handoffRow || !handoffRow.visible || !handoffRow.checked || !find(harness,"context-suggest_resume_after_idle",[]) || !find(harness,"context-group_related_subtasks",[]) || !find(harness,"context-explore_with_simple_role",[])) { fail("Context page lacks the long-session settings at their defaults"); return }
           harness.run(["context-set","read_window_lines","200"])
         } else if (navigationStep === 20) {
-          if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { fail("Context setting was not persisted"); return }
+          // The process can exit before its output reaches the snapshot: wait a few ticks, still fail if it never persists.
+          if (harness.page !== "context" || harness.snapshot.context.settings.read_window_lines !== 200) { if (++persistWaits > 12) fail("Context setting was not persisted"); return }
+          persistWaits = 0
           click("navigation-back")
         } else if (navigationStep === 21) {
           if (harness.page !== "settings") { fail("Context back did not return to settings"); return }
@@ -658,15 +668,18 @@ SMOKE = r'''
           saveBackup.clicked(); backupSetupStep++; return
         }
         if (backupSetupStep === 2) {
-          if (harness.snapshot.memory.backupSettings.destination !== destination.text || harness.snapshot.memory.backupSettings.hours !== 24) { fail("Backup settings not persisted"); return }
+          if (harness.snapshot.memory.backupSettings.destination !== destination.text || harness.snapshot.memory.backupSettings.hours !== 24) { if (++persistWaits > 12) fail("Backup settings not persisted"); return }
+          persistWaits = 0
           automatic.toggled(); backupSetupStep++; return
         }
         if (backupSetupStep === 3) {
-          if (!harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { fail("Timer not configured"); return }
+          if (!harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { if (++persistWaits > 12) fail("Timer not configured"); return }
+          persistWaits = 0
           automatic.toggled(); backupSetupStep++; return
         }
         if (backupSetupStep === 4) {
-          if (harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { fail("Timer not removed"); return }
+          if (harness.snapshot.memory.backupSettings.enabled || !harness.snapshot.memory.timer.prepared) { if (++persistWaits > 12) fail("Timer not removed"); return }
+          persistWaits = 0
           harness.page = "codex-2"
           if (!find(harness,"authenticate-codex-2",[]).visible) { fail("Native profile authentication action absent"); return }
           harness.page = ""; backupSetupStep++; return
@@ -843,8 +856,12 @@ SMOKE = r'''
           if (teamScroll.contentItem.contentY !== teamContentY) { if (++teamWaits < 20) return; fail("Opening a team popup scrolled the page"); return }
           // Native selection writes value before emitting changed; reset below
           // must restore the label as well as the backend preference.
+          // The list is alphabetical, so walk from the current model to fixture-medium instead of assuming its neighbour.
+          var fromIndex = reviewModel.options.findIndex(option => option.value === reviewModel.value)
+          var toIndex = reviewModel.options.findIndex(option => option.value === JSON.stringify(["codex","fixture-medium"]))
+          if (fromIndex < 0 || toIndex < 0) { fail("Review model options lack the current or fixture-medium entry"); return }
           teamKeying=true
-          pointer.keyClick(Qt.Key_Down)
+          for (var move = 0; move < Math.abs(toIndex - fromIndex); move++) pointer.keyClick(toIndex > fromIndex ? Qt.Key_Down : Qt.Key_Up)
           pointer.keyClick(Qt.Key_Return)
           teamKeying=false
           teamStep++;return
@@ -877,7 +894,8 @@ SMOKE = r'''
           teamStep++;return
         }
         if (teamStep === 9) {
-          if (Object.values(teamInfo.roles).some(role => role.manual) || teamInfo.roles.plan.effort !== "xhigh" || teamInfo.warnings.length || teamModelCommands !== 1) { fail("Team recommendations did not reset manual choices"); return }
+          if (Object.values(teamInfo.roles).some(role => role.manual) || teamInfo.roles.plan.effort !== "xhigh" || teamInfo.warnings.some(warning => !warning.startsWith("Solo hay una familia disponible")) || teamModelCommands !== 1) { if (++persistWaits > 12) fail("Team recommendations did not reset manual choices"); return }
+          persistWaits = 0
           for (var resetRole of ["plan","code","review","simple"]) {
             var resetValue = teamInfo.roles[resetRole]
             if (find(harness,"team-role-" + resetRole,[]).value !== JSON.stringify([resetValue.agent,resetValue.model]) || find(harness,"team-effort-" + resetRole,[]).value !== resetValue.effort) { fail("Team selector labels did not reset to recommended values"); return }
@@ -900,12 +918,92 @@ SMOKE = r'''
         }
         var aiResults = harness.snapshot.aiCheck.results || []
         if (aiResults.length !== 1 || !aiResults[0].ok || aiResults[0].tokens !== 12 || !harness.snapshot.aiCheck.checkedAt) { fail("Explicit AI check did not report the synthetic native result"); return }
+        if (harness.page !== aiResults[0].agent) { harness.page = aiResults[0].agent; return }
         var aiResultRow = find(harness,"ai-check-" + aiResults[0].agent,[])
-        if (!aiResultRow || !aiResultRow.visible || aiResultRow.status !== "Funciona") { fail("AI check result row missing"); return }
+        if (!aiResultRow || !aiResultRow.visible || aiResultRow.status !== "Funciona") { if (++persistWaits > 12) fail("AI check result row missing"); return }
+        persistWaits = 0
         if (find(aiResultRow,"ai-check-" + aiResults[0].agent + "-open",[]).visible) { fail("Informational row still reacts to the pointer"); return }
         console.log("HARNESS_TEAM_PASS")
         harness.page = ""
         step++
+      } else if (step === 14 && zeroTouchStep === 11) {
+        // Restoring: ECC may be missing, and each project moves on its own; `compartido` never asks for a folder.
+        harness.page="memory"
+        harness.operation={restorePreview:{token:"fixture",newCount:3,conflictCount:0,projectCount:3,requestedArchive:"",projectPath:"",projectMap:{},
+          projects:[{key:"a".repeat(64),name:"app",shared:false,newKey:""},{key:"b".repeat(64),name:"app",shared:false,newKey:""},{key:"c".repeat(64),name:"",shared:true,newKey:""}]}}
+        zeroTouchStep++; return
+      } else if (step === 14 && zeroTouchStep === 12) {
+        var first=find(harness,"memory-map-aaaaaaaa",[]);var last=find(harness,"memory-map-bbbbbbbb",[]);var restoreButton=find(harness,"memory-restore",[])
+        if (!first||!first.visible||!last||!last.visible||find(harness,"memory-map-cccccccc",[])) { fail("Restore must ask one folder per project, none for compartido"); return }
+        if (!restoreButton.enabled) { fail("Restore must follow a current preview"); return }
+        first.text="/new/folder"
+        if (restoreButton.enabled) { fail("A changed folder must require a new preview"); return }
+        first.text=""
+        var archiveField=find(harness,"memory-archive",[]);archiveField.text="/backup.zip"
+        if (!find(harness,"memory-preview",[]).enabled) { fail("Reviewing a backup must not need ECC already installed"); return }
+        archiveField.text=""
+        if (harness.snapshot.memory.runtime.installed) { fail("The smoke must run without ECC installed"); return }
+        harness.operation={}; harness.page=""; harness.run(["set-agents","none"]); zeroTouchStep++; return
+      } else if (step === 14 && zeroTouchStep < 11) {
+        // Drift, repair, no second repair, conflict and explicit retry, always on the marked profile.
+        var profileHome=Quickshell.env("HOME")+"/.codex"
+        var localMissing=function() { return (agent.missingComponents||[]).indexOf("local-tools")!==-1 }
+        var waitFor=function(ready,what) {
+          if (ready) { zeroTouchWaits=0; return true }
+          if (++zeroTouchWaits>40) fail("Zero-touch: "+what)
+          return false
+        }
+        if (zeroTouchStep===0) { harness.page="codex"; zeroTouchStep++; return }
+        if (zeroTouchStep===1) {
+          var prepare=find(harness,"prepare-agent-codex",[])
+          if (!prepare||!prepare.visible) { fail("Prepare action missing"); return }
+          prepare.clicked(); zeroTouchStep++; return
+        }
+        if (zeroTouchStep===2) {
+          if (!agent.enabled||harness.snapshot.launcher.defaultAgent!=="codex") { fail("Prepare did not mark and set the default"); return }
+          harness.run(["local-tools-all","enable"]); zeroTouchStep++; return
+        }
+        if (zeroTouchStep===3) {
+          if (localMissing()) { fail("Local tools not connected before the drift"); return }
+          Quickshell.execDetached(["rm","-f",profileHome+"/config.toml"]); harness.close(); zeroTouchStep++; return
+        }
+        if (zeroTouchStep===4) {
+          if (!harness.opened) { harness.open(); return }
+          if (!waitFor(!!harness.operation.reconcile,"opening did not repair the drift")) return
+          if (localMissing()||!harness.snapshot.lastReconcile.at) { fail("Repair was not applied or recorded"); return }
+          zeroTouchRepairedAt=harness.snapshot.lastReconcile.at
+          harness.close(); zeroTouchStep++; return
+        }
+        if (zeroTouchStep===5) {
+          if (harness.opened) return
+          harness.open(); zeroTouchWaits=0; zeroTouchStep++; return
+        }
+        if (zeroTouchStep===6) {
+          if (++zeroTouchWaits<6) return
+          zeroTouchWaits=0
+          if (harness.operation.reconcile||harness.snapshot.lastReconcile.at!==zeroTouchRepairedAt||harness.snapshot.needsReconcile) { fail("Second opening repaired again"); return }
+          var foreign=profileHome+"/skills/ai-team-local-tools"
+          Quickshell.execDetached(["sh","-c",'rm -rf "$0" && mkdir "$0"',foreign])
+          zeroTouchExpectError=true; harness.close(); zeroTouchStep++; return
+        }
+        if (zeroTouchStep===7) {
+          if (!harness.opened) { harness.open(); return }
+          if (!waitFor(harness.errorText!=="","a conflict did not show an error")) return
+          if (agent.setupState!=="error"||!localMissing()) { fail("Conflict is not visible in the profile"); return }
+          harness.page="codex"; zeroTouchStep++; return
+        }
+        if (zeroTouchStep===8) {
+          var issue=find(harness,"setup-issues-codex",[])
+          if (!issue||!issue.visible||issue.text.indexOf("skill")===-1) { fail("Profile page does not explain the pending component"); return }
+          shot("zero-touch-error",true)
+          Quickshell.execDetached(["rm","-rf",profileHome+"/skills/ai-team-local-tools"])
+          zeroTouchStep++; return
+        }
+        if (zeroTouchStep===9) {
+          find(harness,"prepare-agent-codex",[]).clicked(); zeroTouchExpectError=false; zeroTouchStep++; return
+        }
+        if (localMissing()) { fail("Retry did not repair the conflict"); return }
+        zeroTouchStep++; return
       } else if (step === 14) {
         shot("main")
       } else if (step === 15) {
@@ -983,7 +1081,7 @@ def main():
             binaries.mkdir()
             settings_file = directory / "config/omarchy-ai-team/settings.json"
             settings_file.parent.mkdir(parents=True)
-            settings_file.write_text('{"schemaVersion":1,"pluginVersion":"previous","language":"es","agents":{},"catalogInstalls":{"rg":{"deps":[]}}}\n')
+            settings_file.write_text('{"schemaVersion":1,"pluginVersion":"previous","language":"es","agents":{},"superpowersEnabled":false,"memoryEnabled":false,"local-toolsEnabled":false,"catalogInstalls":{"rg":{"deps":[]}}}\n')
             for agent in ("claude", "codex", "pi"):
                 binary = binaries / agent
                 binary.write_text("#!/bin/sh\nexit 99\n")

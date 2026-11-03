@@ -9,7 +9,7 @@ SMOKE = (Path(__file__).resolve().parents[1] / 'tools' / 'preview.py').read_text
 class SmokeTeamKeysTest(unittest.TestCase):
     def test_every_team_key_burst_is_guarded(self):
         # keyClick spins the event loop; an unguarded burst lets the timer skip a step.
-        bursts = re.findall(r'teamKeying=true\n(?:\s*pointer\.keyClick\([^)]*\)\n)+\s*teamKeying=false', SMOKE)
+        bursts = re.findall(r'teamKeying=true\n(?:\s*(?:for \([^\n]*\) )?pointer\.keyClick\([^)]*\)\n)+\s*teamKeying=false', SMOKE)
         self.assertEqual(len(bursts), 2)
         self.assertIn('if (teamKeying) return', SMOKE)
         section = SMOKE[SMOKE.index('if (teamStep === 4)'):SMOKE.index('if (teamStep === 7)')]

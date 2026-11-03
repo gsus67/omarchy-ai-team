@@ -190,9 +190,9 @@ class CodexGuardHookTests(unittest.TestCase):
 
     def test_the_command_does_not_change_between_runs_so_approval_stays_valid(self):
         native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root)
-        before = self.file.read_text()
+        before = (self.file.read_text(), self.file.stat().st_mtime_ns, self.file.stat().st_ino)
         native_team.set_guard_hook(self.file, self.config, True, agent='codex', home=self.root)
-        self.assertEqual(self.file.read_text(), before)
+        self.assertEqual((self.file.read_text(), self.file.stat().st_mtime_ns, self.file.stat().st_ino), before)
 
     def test_a_foreign_hook_keeps_its_place_so_its_approval_stays_valid(self):
         foreign = {'hooks': [{'type': 'command', 'command': 'ajeno'}]}

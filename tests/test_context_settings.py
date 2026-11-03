@@ -121,11 +121,10 @@ class ContextSettingsStoreTests(unittest.TestCase):
         config.update(foreign={'keep': [1, 2]}, language='es')
         harness.save_config(config)
         with patch.object(harness, 'manage_component') as manage, \
-                patch.object(harness.team, 'reconcile') as reconcile, \
                 patch.object(harness, 'select_agents') as select:
             self.assertEqual(self.run_cli('context-set', 'stable_prompt_prefix', 'false')[0], 0)
             self.assertEqual(self.run_cli('context-reset')[0], 0)
-        for mocked in (manage, reconcile, select):
+        for mocked in (manage, select):
             mocked.assert_not_called()
         saved = self.saved()
         self.assertEqual((saved['foreign'], saved['language']), ({'keep': [1, 2]}, 'es'))

@@ -19,13 +19,16 @@ Ui.Panel {
   property bool launchRequested: false
   property bool reconnectAttempted: false
   property bool reconnectPending: false
+  // One repair per opening: a failure stays visible instead of looping.
+  property bool reconcileAttempted: false
+  property bool reconcilePending: false
   property var operation: ({})
   property alias page: content.page
   readonly property bool busy: backend.running
   implicitWidth: icon.implicitWidth
   implicitHeight: icon.implicitHeight
 
-  onOpenedChanged: if (opened) run(["status"])
+  onOpenedChanged: if (opened) { reconcileAttempted = false; run(["status"]) }
   // `omarchy plugin update` has no hook: notice a new version as soon as the plugin loads.
   Component.onCompleted: run(["status"])
 
@@ -50,7 +53,7 @@ Ui.Panel {
     if (arguments[0] === "agent-update" || arguments[0] === "runtime-update") message = root.tr("Comprobando y actualizando mediante el gestor oficial…")
     else if (arguments[0] === "agent-install") message = root.tr("Instalando la CLI con el gestor oficial…")
     else if (arguments[0] === "agent-uninstall") message = root.tr("Desinstalando la CLI; tus cuentas y sesiones se conservan…")
-    else if (arguments[0] === "set-agent" && arguments[2] === "true") message = root.tr("Preparando agente e integraciones; se instalará únicamente lo que falte…")
+    else if (arguments[0] === "prepare-agent" || (arguments[0] === "set-agent" && arguments[2] === "true")) message = root.tr("Preparando agente e integraciones; se instalará únicamente lo que falte…")
     launchRequested = arguments[0] === "launch-default"
     var script = decodeURIComponent(String(Qt.resolvedUrl("backend/harness.py")).replace(/^file:\/\//, ""))
     backend.command = ["python3", script].concat(arguments)
@@ -73,6 +76,8 @@ Ui.Panel {
           if (result.data) root.snapshot = result.data
           if (result.data && backend.command[2] === "status" && root.snapshot.needsReconnect && !root.reconnectAttempted)
             root.reconnectPending = true
+          else if (result.data && backend.command[2] === "status" && root.opened && root.snapshot.needsReconcile && !root.reconcileAttempted)
+            root.reconcilePending = true
           root.operation = result.operation || ({})
           if (result.ok) {
             root.message = result.message || ""
@@ -97,6 +102,10 @@ Ui.Panel {
         root.reconnectPending = false
         root.reconnectAttempted = true
         Qt.callLater(() => root.run(["after-update"]))
+      } else if (root.reconcilePending) {
+        root.reconcilePending = false
+        root.reconcileAttempted = true
+        Qt.callLater(() => root.run(["reconcile-selected"]))
       }
     }
   }

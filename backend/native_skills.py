@@ -2,12 +2,31 @@
 
 from i18n import tr
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 import tempfile
 
+from atomic_files import atomic_write
+import memory_archive
 import native_plugins
+
+
+def publish(source,content):
+    """Write our generated skill only when it differs; a skill edited by hand is never replaced."""
+    source=memory_archive.safe_path(source);marker=source/'.ai-team-managed';file=source/'SKILL.md'
+    if source.exists() and any(source.iterdir()):
+        try:
+            record=json.loads(memory_archive.read_file(marker,4096))
+            if record.get('sha256')!=hashlib.sha256(memory_archive.read_file(file,32*1024)).hexdigest():raise ValueError()
+        except (ValueError,OSError,native_plugins.PluginError) as error:
+            raise native_plugins.PluginError(tr('La skill gestionada está modificada o es ajena; se conserva.')) from error
+        if record['sha256']==hashlib.sha256(content.encode()).hexdigest():return
+    source.mkdir(parents=True,mode=0o700,exist_ok=True)
+    # Config-owned generated files, never an upstream skill or original project.
+    atomic_write(file,content)
+    atomic_write(marker,json.dumps({'schemaVersion':1,'sha256':hashlib.sha256(content.encode()).hexdigest()}))
 
 
 def claude_commands(binary):

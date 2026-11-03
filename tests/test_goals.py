@@ -32,6 +32,35 @@ class GoalTests(unittest.TestCase):
     def setUp(self):
         self.config = {'tokensEnabled': True, 'securityEnabled': True}
 
+    def test_setup_state_for_each_outcome(self):
+        current = data()
+        codex, claude = current['agents']
+        self.assertEqual(goals.setup_state(codex, current['components']),
+                         {'setupState': 'ready', 'missingComponents': [], 'setupIssues': []})
+        self.assertEqual(goals.setup_state({**codex, 'enabled': False}, current['components'])['setupState'], 'disabled')
+        current['components'][1]['targets'][0].update(verified=False, detail='falta')
+        state = goals.setup_state(codex, current['components'])
+        self.assertEqual((state['setupState'], state['missingComponents']), ('pending', ['memory']))
+        self.assertEqual(state['setupIssues'], [{'component': 'memory', 'detail': 'falta'}])
+        current['components'][1]['targets'][0]['lastError'] = 'roto'
+        self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'error')
+        current['components'][1]['enabled'] = False
+        self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'ready')
+        self.assertEqual(goals.setup_state({**claude, 'installation': 'missing'}, [])['missingComponents'], ['cli'])
+
+    def test_repair_plan_separates_what_needs_an_installer(self):
+        current = data()
+        codex = {**current['agents'][0], 'missingComponents': ['cli']}
+        self.assertEqual(goals.repair_plan([codex], [])[0], [])
+        codex = {**current['agents'][0], 'missingComponents': ['memory', 'local-tools', 'superpowers']}
+        targets = current['components']
+        targets[0]['targets'][0].update(installed=False, detail='sin instalar')  # superpowers
+        targets[1]['targets'][0].update(installed=True, blocked=True, detail='ajeno')  # memory
+        targets[2]['targets'][0].update(installed=False, available=True)  # local-tools: only generated files
+        repair, pending = goals.repair_plan([codex], targets)
+        self.assertEqual(repair, [{'agent': 'codex', 'component': 'local-tools'}])
+        self.assertEqual([row['component'] for row in pending], ['memory', 'superpowers'])
+
     def row(self, current, key):
         return next(row for row in goals.rows(current, self.config) if row['id'] == key)
 

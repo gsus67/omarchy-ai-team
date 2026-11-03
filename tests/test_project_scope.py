@@ -36,6 +36,15 @@ class ProjectScopeTests(unittest.TestCase):
                                  {'value': other, 'label': 'Proyecto ' + other[:10]}])
         self.assertFalse(self.settings.exists())
 
+    def test_project_label_drops_separators_and_bidi_without_trailing_space(self):
+        key = 'a' * 64
+        folder = self.settings.parent / 'projects' / key
+        folder.mkdir(parents=True)
+        name = 'Pro\u2028ye\u202ecto' + 'x' * 94 + ' y'
+        (folder / '.ai-team-project.json').write_text(json.dumps({'schemaVersion': 1, 'name': name}))
+        label = project_scope.project_options(self.settings, projects=(key,))[1]['label']
+        self.assertEqual(label, 'Proyecto' + 'x' * 92 + ' · ' + key[:8])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -510,6 +510,7 @@ class BackendTests(unittest.TestCase):
         self.executable("codex", "exit 0")
         config = harness.load_config()
         config["future-setting"] = "keep"
+        config["superpowersEnabled"] = False  # Not a new install: selecting must not enable any goal.
         harness.save_config(config)
         for enabled in ("true", "false"):
             result, reply = self.run_cli("set-agent", "codex", enabled)

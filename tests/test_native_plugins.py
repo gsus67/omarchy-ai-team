@@ -148,6 +148,26 @@ class NativePluginsTests(unittest.TestCase):
         self.assertEqual(call.args[2]["edits"][0]["value"], True)
         self.assertTrue(call.args[2]["edits"][1]["value"].startswith("Keep this.\n"))
 
+    def test_matching_codex_connection_does_not_write(self):
+        home = plugins.agent_home("codex")
+        path = self.root / "cache/superpowers"
+        config = {"developer_instructions": plugins.codex_instructions("Keep.\n", path),
+                  "plugins": {plugins.PLUGIN: {"enabled": True}}}
+        layer = {"name": {"type": "user", "file": str(home / "config.toml")}, "version": "v1", "config": config}
+        with patch.object(plugins, "codex_request", side_effect=[{"layers": [layer]}]) as request:
+            plugins.set_codex_connection("/installed/codex", plugins.PLUGIN, True, path)
+        self.assertEqual(request.call_count, 1)
+
+    def test_codex_connection_writes_only_the_difference(self):
+        home = plugins.agent_home("codex")
+        config = {"developer_instructions": "Keep.\n", "plugins": {plugins.PLUGIN: {"enabled": True}}}
+        layer = {"name": {"type": "user", "file": str(home / "config.toml")}, "version": "v1", "config": config}
+        with patch.object(plugins, "codex_request", side_effect=[{"layers": [layer]}, {}]) as request:
+            plugins.set_codex_connection("/installed/codex", plugins.PLUGIN, True, self.root)
+        written = request.call_args_list[1].args[2]
+        self.assertEqual([edit["keyPath"] for edit in written["edits"]], ["developer_instructions"])
+        self.assertEqual(written["expectedVersion"], "v1")
+
     def test_missing_native_config_version_prevents_writing(self):
         with patch.object(plugins, "codex_request", return_value={"layers": []}) as request:
             with self.assertRaises(plugins.PluginError):
