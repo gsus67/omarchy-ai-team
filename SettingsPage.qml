@@ -20,6 +20,7 @@ ColumnLayout {
   property var prices: ({})
   property var components: []
   property var lastReconcile: ({})
+  property string pluginVersion: ""
   property bool busy: false
   function setupStatus(agent) {
     if (agent.setupState === "ready") return root.tr("Listo")
@@ -162,5 +163,17 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
+  }
+  Text {
+    objectName: "plugin-version"
+    Layout.fillWidth: true
+    visible: root.pluginVersion !== ""
+    text: `v${root.pluginVersion}`
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    opacity: 0.5
+    horizontalAlignment: Text.AlignRight
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
   }
 }

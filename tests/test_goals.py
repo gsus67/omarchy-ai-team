@@ -48,6 +48,25 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'ready')
         self.assertEqual(goals.setup_state({**claude, 'installation': 'missing'}, [])['missingComponents'], ['cli'])
 
+    def test_unsupported_targets_are_not_missing(self):
+        current = data()
+        codex = current['agents'][0]
+        current['components'][1]['targets'][0].update(enabled=False, verified=False, unsupported=True)
+        self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'ready')
+        self.assertEqual(goals.connection_line(current['components'][1], [codex]), '')
+
+    def test_quality_line_is_not_claimed_when_every_agent_is_unsupported(self):
+        current = data()
+        for component in current['components']:
+            for target in component['targets']:
+                target.update(enabled=False, verified=False, unsupported=True)
+        rows = goals.rows(current, self.config)
+        quality = next(row for row in rows if row['id'] == 'quality')
+        self.assertEqual(quality['line'], 'No disponible en este agente')
+        codex_only = data()
+        self.assertEqual(next(row for row in goals.rows(codex_only, self.config) if row['id'] == 'quality')['line'],
+                         'Plan, TDD y revisión')
+
     def test_repair_plan_separates_what_needs_an_installer(self):
         current = data()
         codex = {**current['agents'][0], 'missingComponents': ['cli']}

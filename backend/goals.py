@@ -20,9 +20,17 @@ def connection_line(component: dict, agents: list[dict]) -> str:
     targets = {target['agent']: target for target in component.get('targets', [])}
     for agent in agents:
         target = targets.get(agent['id'], {})
+        if target.get('unsupported'):
+            continue
         if not (target.get('enabled') and target.get('verified')):
             return tr('{nombre} sin conectar', nombre=agent['name'])
     return ''
+
+
+def all_unsupported(component: dict, agents: list[dict]) -> bool:
+    """True when every selected agent has a target that cannot take this component (Muse Code)."""
+    targets = {target['agent']: target for target in component.get('targets', [])}
+    return bool(agents) and all(targets.get(agent['id'], {}).get('unsupported') for agent in agents)
 
 
 def setup_state(agent: dict, components: list[dict], *, models_missing: bool = False) -> dict:
@@ -36,7 +44,7 @@ def setup_state(agent: dict, components: list[dict], *, models_missing: bool = F
         if not component.get('enabled'):
             continue
         target = next((row for row in component.get('targets', []) if row.get('agent') == agent.get('id')), {})
-        if target.get('enabled') and target.get('verified'):
+        if target.get('unsupported') or (target.get('enabled') and target.get('verified')):
             continue
         missing.append(component['id'])
         issues.append({'component': component['id'], 'detail': target.get('detail', '')})
@@ -110,7 +118,7 @@ def rows(data: dict, config: dict) -> list[dict]:
             state = 'pending' if line else 'ok'
             if not line:
                 if key == 'quality':
-                    line = tr('Plan, TDD y revisión')
+                    line = tr('Plan, TDD y revisión') if not all_unsupported(component, agents) else tr('No disponible en este agente')
                 elif key == 'memory':
                     line, state = memory_line(data.get('memory', {}))
                 else:

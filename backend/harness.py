@@ -604,7 +604,8 @@ def prepare_agent(config, agent, *, make_default=False):
     tool = agent_tool(agent, inventory)
     if tool['installation'] == 'missing-profile':
         raise HarnessError(tr('Perfil {agent} no disponible.', agent=agent))
-    if tool['installation'] != 'installed':
+    # Muse Code has no managed installer (agent_runtime.operate refuses it): it is used as found, never installed here.
+    if tool['installation'] != 'installed' and agent != 'muse':
         manage_agent_runtime(agent, 'install')
     before = json.dumps(config, sort_keys=True)
     if is_new_config(config):

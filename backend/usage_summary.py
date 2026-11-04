@@ -196,10 +196,63 @@ def _spend(agent_id):
             'unpriced': ', '.join(data['unpricedModels'])[:120]}
 
 
+MUSE_DAYS = 30
+MUSE_FIELDS = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens')
+MUSE_MAX_FILES, MUSE_MAX_BYTES = 5000, 64 * 1024 * 1024
+
+
+def _muse_session_tokens(path, since):
+    """Tokens of the ``model_completed`` events of one session file recorded since ``since`` (microseconds), or None."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)  # never follow links or wait on a pipe
+    except OSError:
+        return None
+    total = None
+    with os.fdopen(descriptor, 'rb') as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            return None
+        for line in handle.read(MUSE_MAX_BYTES).splitlines():
+            try:
+                record = json.loads(line)
+                event = record['payload']['event']
+                recorded, usage = record['recorded_at'], event['usage']
+                if event['kind'] != 'model_completed' or type(recorded) is not int or recorded < since or not isinstance(usage, dict):
+                    continue
+            except (ValueError, KeyError, TypeError, RecursionError):
+                continue
+            # Each counter counts only as an exact non-negative int; anything else adds nothing.
+            total = (total or 0) + sum(value for value in (usage.get(field) for field in MUSE_FIELDS)
+                                       if type(value) is int and 0 <= value < 10 ** 15)
+    return total
+
+
+def _muse_tokens():
+    """Tokens of every Muse session (subagents included) of the last MUSE_DAYS days, or None without any."""
+    base = os.environ.get('XDG_DATA_HOME') or ''
+    root = (Path(base) if os.path.isabs(base) else Path.home() / '.local/share') / 'muse' / 'sessions'  # XDG: relative is ignored
+    since = int((time.time() - MUSE_DAYS * 86400) * 1_000_000)
+    total, seen = None, 0
+    for folder, _, names in os.walk(root):  # os.walk does not follow directory links
+        if 'session.jsonl' not in names:
+            continue
+        seen += 1
+        if seen > MUSE_MAX_FILES:
+            break
+        tokens = _muse_session_tokens(os.path.join(folder, 'session.jsonl'), since)
+        if tokens is not None:
+            total = (total or 0) + tokens
+    return total
+
+
 def total_tokens(agents):
     """Tokens of every kind over the breakdown window, summed across the selected accounts (None without any record)."""
     total = None
     for agent in agents:
+        if agent.get('id') == 'muse' and agent.get('enabled'):
+            tokens = _muse_tokens()
+            if tokens is not None:
+                total = (total or 0) + tokens
+            continue
         if agent.get('id') not in SHORT_NAMES or not agent.get('enabled'):
             continue
         data = _read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json'))

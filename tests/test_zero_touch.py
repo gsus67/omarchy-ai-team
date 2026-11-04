@@ -17,7 +17,7 @@ import shared_memory
 
 
 class ZeroTouchCase(unittest.TestCase):
-    AGENT_BINARIES = ("claude", "codex", "pi")
+    AGENT_BINARIES = ("claude", "codex", "pi", "muse")
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -137,12 +137,28 @@ class PrepareAgentTests(ZeroTouchCase):
                 self.assertTrue(saved["agents"][agent])
                 self.assertTrue(all(saved[key + "Enabled"] for key in ("superpowers", "memory", "local-tools")))
                 self.assertTrue(saved["team"]["enabled"])
+                if agent == "muse":
+                    # Muse Code has no managed installer or components (native_muse): selecting it is only a preference.
+                    self.assertEqual(self.native.actions, [])
+                    continue
                 row = self.agent(harness.status(saved), agent)
                 # Every component connected; Pi alone still waits for the user to turn on Nous.
                 self.assertEqual(row["missingComponents"], ["models"] if agent == "pi" else [])
                 self.assertEqual(row["setupState"], "pending" if agent == "pi" else "ready")
                 self.assertEqual({row[0] for row in self.native.actions}, set(harness.MANAGED))
                 self.assertEqual({row[1] for row in self.native.actions}, {agent})
+
+    def test_muse_is_never_installed_even_when_missing(self):
+        (self.bin / "muse").unlink()
+        config = harness.load_config()
+        with patch.object(harness, "manage_agent_runtime") as install:
+            harness.prepare_agent(config, "muse")
+            install.assert_not_called()
+            self.assertTrue(harness.load_config()["agents"]["muse"])
+            (self.bin / "claude").unlink()
+            with self.assertRaises(harness.HarnessError):  # the fake installer installs nothing
+                harness.prepare_agent(harness.load_config(), "claude")
+            install.assert_called_once_with("claude", "install")
 
     def test_existing_disabled_preferences_are_preserved(self):
         config = self.settings(memoryEnabled=False, superpowersEnabled=True)

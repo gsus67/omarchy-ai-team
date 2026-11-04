@@ -269,6 +269,11 @@ class MuseTotalTokensTests(unittest.TestCase):
         self.assertEqual(usage_summary.total_tokens([{'id': 'muse', 'enabled': False}]), None)
         self.assertEqual(usage_summary.total_tokens([{'id': 'claude', 'enabled': True}, {'id': 'muse', 'enabled': False}]), 4)
 
+    def test_muse_relative_xdg_data_home_is_ignored(self):
+        self._session('2026/a', self._line(int(time.time() * 1_000_000), self._usage()))
+        with patch.dict(os.environ, {'XDG_DATA_HOME': 'data', 'HOME': str(self.root / 'nohome')}):
+            self.assertIsNone(usage_summary.total_tokens([{'id': 'muse', 'enabled': True}]))
+
     def test_muse_symlinked_session_is_not_followed_and_missing_is_none(self):
         outside = self.root / 'outside.jsonl'
         outside.write_text(self._line(int(time.time() * 1_000_000), self._usage()) + '\n')
