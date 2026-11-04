@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import native_plugins
 import shared_memory
@@ -45,6 +46,8 @@ import native_team
 import ai_check
 
 
+VERSION_PROBE_TIMEOUT_SECONDS = 120
+BACKEND_OPERATION_TIMEOUT_SECONDS = 180
 AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi", "muse": "Muse Code"}  # the order every list shows
 CLI_NAME = {"codex-2": "codex", "claude-2": "claude"}
 PROFILE_DIRS = {"codex-2": ".codex-2", "claude-2": ".claude-2"}
@@ -73,7 +76,7 @@ def refresh_usage_window():
     """One pass of the usage writer that republishes the breakdowns for the selected window; no limits are collected."""
     try:
         done = subprocess.run([sys.executable, str(USAGE_WRITER), '--breakdowns-only'], capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=120, check=False)
+                              stdin=subprocess.DEVNULL, timeout=VERSION_PROBE_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         raise HarnessError(tr('No se pudo actualizar la medición; la ventana queda guardada. Reintenta.')) from error
     if done.returncode != 0:
@@ -88,13 +91,24 @@ def config_path():
 
 
 @contextlib.contextmanager
-def after_update_lock():
+def after_update_lock(timeout=20.0, interval=0.25):
+    """Yield True holding the lock, or False if another process kept it past `timeout`."""
     path = config_path().with_name('after-update.lock')
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    deadline = time.monotonic() + timeout
+    held = False
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(interval)
+        yield held
     finally:
         os.close(descriptor)
 
@@ -473,12 +487,30 @@ def update_runtimes(config, choice):
                     save_config(config);results.append(result)
                 except (native_plugins.PluginError, OSError, ValueError, subprocess.SubprocessError) as error:
                     errors.append(f"{row['name']}: {error}")
+        # Last: updating the plugin may rewrite this folder and reload the panel.
+        omarchy = shutil.which('omarchy')
+        if not omarchy:
+            errors.append(str(tr('Plugin: no se encontró Omarchy para comprobar la actualización.')))
+        else:
+            before = plugin_version()
+            try:
+                result = subprocess.run([omarchy, 'plugin', 'update', 'gsus67.ai-team'], cwd=Path.home(),  # noqa: S603 -- resolved by shutil.which
+                                        capture_output=True, text=True, timeout=BACKEND_OPERATION_TIMEOUT_SECONDS, check=False)
+                if result.returncode:
+                    raise HarnessError(tr('el gestor terminó con salida {code}', code=result.returncode))
+                after = plugin_version()
+                results.append({'component': 'plugin', 'version': after,
+                                'outcome': 'updated' if before != after else 'current', 'changed': before != after})
+            except (HarnessError, OSError, ValueError, subprocess.SubprocessError) as error:
+                errors.append(str(tr('Plugin: no se pudo comprobar la actualización ({error}).', error=error)))
     # Keep partial successes reviewable even when another component is blocked.
     return {"updates": results, "updateErrors": errors}
 
 
-def failure(error):
+def failure(error, operation=None):
     reply = {"ok": False, "error": str(error)}
+    if operation:
+        reply["operation"] = operation
     try:
         reply["data"] = status()
     except (HarnessError, OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -513,20 +545,21 @@ def component_status(key, config, agents):
                             "installed": False, "enabled": False, "version": "", "verified": False,
                             "detail": str(error)})
     selected = {a["id"] for a in agents if a["enabled"]}
+    supported_selected = selected - {target['agent'] for target in targets if target.get('unsupported')}
     wanted = config.get(key + "Enabled", key == "superpowers" and any(t.get("enabled") for t in targets))
     if key == 'team': wanted = config.get('team', {}).get('enabled', False)
     active = sum(t.get("enabled", False) and plugin_manages(config, key, t["agent"], selected) for t in targets)
-    connected = sum(t["agent"] in selected and t.get("enabled", False) and t.get("verified", False) for t in targets)
-    if not selected:
+    connected = sum(t["agent"] in supported_selected and t.get("enabled", False) and t.get("verified", False) for t in targets)
+    if not supported_selected:
         detail = tr('Elige los agentes en Modelos y agentes. Se conectará al seleccionarlos.') if wanted else tr('Desactivado. Se aplicará a los agentes que selecciones.')
     elif wanted:
-        detail = tr('Conexiones comprobadas: {connected} de {value2} agentes seleccionados.', connected=connected, value2=len(selected))
+        detail = tr('Conexiones comprobadas: {connected} de {value2} agentes seleccionados.', connected=connected, value2=len(supported_selected))
     elif active:
         detail = tr('Desactivación pendiente: {active} conexiones siguen activas.', active=active)
     else:
         detail = tr('Desactivado para los agentes seleccionados.')
     return {"id": key, "name": name, "installation": "managed", "integration": "native", "targets": targets, "enabled": wanted,
-            "selectedCount": len(selected), "connectedCount": connected, "activeCount": active, "detail": detail}
+            "selectedCount": len(supported_selected), "connectedCount": connected, "activeCount": active, "detail": detail}
 
 
 def sync_launcher_menu(config):
@@ -1026,6 +1059,7 @@ def _main(argv=None):
     if args.command in ('context-checkpoint', 'context-brief', 'context-precompact'):
         import context_state
         return context_state.main([args.command.removeprefix('context-'), *(['--instance', args.instance] if args.instance else [])])
+    operation = {}
     try:
         if args.command == 'catalog-context':
             try:
@@ -1041,7 +1075,6 @@ def _main(argv=None):
             return 0 if report['usable']['ok'] else 1
         config = load_config()
         message = ""
-        operation = {}
         if args.command == 'set-language':
             config['language'] = args.language
             save_config(config)
@@ -1077,21 +1110,29 @@ def _main(argv=None):
             message = tr('Comprobación con IA terminada. Consulta los resultados por agente.')
         elif args.command == 'after-update':
             # One bar per monitor runs this at once: only the first may update and restart the shell.
-            with after_update_lock():
-                config = load_config()
-                version = plugin_version()
-                if config.get('pluginVersion') != version or team_agent_changed(config, status(config)['agents']):
-                    errors = refresh_connections(config)
-                    if native_pi.provider_settings(config)['nous']:
+            with after_update_lock() as locked:
+                if not locked:
+                    # Another bar is still updating: leave quietly instead of blocking the shell.
+                    message = tr('Otra actualización sigue en curso; se omite este paso.')
+                else:
+                    config = load_config()
+                    version = plugin_version()
+                    if config.get('pluginVersion') != version or team_agent_changed(config, status(config)['agents']):
+                        errors = []
                         try:
-                            nous_quota.configure(config_path(), True)
-                        except (native_plugins.PluginError, OSError, ValueError) as error:
-                            errors.append(str(error))
-                    # Not on first install: nothing old is loaded yet.
-                    if config.get('pluginVersion') not in (None, version): operation = {'shellRestart': True}
-                    config['pluginVersion'] = version
-                    save_config(config)
-                    message = '; '.join(errors) if errors else tr('Reconectado tras actualizar a {version}', version=version)
+                            errors = refresh_connections(config)
+                            if native_pi.provider_settings(config)['nous']:
+                                try:
+                                    nous_quota.configure(config_path(), True)
+                                except (native_plugins.PluginError, OSError, ValueError) as error:
+                                    errors.append(str(error))
+                        finally:
+                            # Saved even if a refresh fails, so the shell is not restarted in a loop.
+                            # Not on first install: nothing old is loaded yet.
+                            if config.get('pluginVersion') not in (None, version): operation = {'shellRestart': True}
+                            config['pluginVersion'] = version
+                            save_config(config)
+                        message = '; '.join(errors) if errors else tr('Reconectado tras actualizar a {version}', version=version)
         elif args.command in ('pi-provider','pi-provider-check','pi-model','pi-auth','pi-nous-refresh','pi-nous-quota','pi-provider-probe','pi-nous-resume'):
             if not config.get('agents',{}).get('pi'):
                 raise HarnessError(tr('Selecciona Pi en Modelos y agentes antes de configurar sus proveedores.'))
@@ -1278,7 +1319,9 @@ def _main(argv=None):
             select_agents(config, args.agents)
             message = tr('Agentes guardados. Abre sesiones nuevas.')
         elif args.command == 'reconcile-selected':
-            with after_update_lock():
+            with after_update_lock() as locked:
+                if not locked:
+                    raise HarnessError(tr('Otra actualización sigue en curso; reintenta cuando termine.'))
                 config = load_config()
                 report = reconcile_selected(config)
             if report['errors']:
@@ -1373,9 +1416,9 @@ def _main(argv=None):
         print(json.dumps(i18n.localize({"ok": True, "data": status(config), "message": message, "operation": operation}, i18n.resolve(config.get("language", "system"))), ensure_ascii=False))
         return 0
     except (KeyError, TypeError, AttributeError):
-        return failure(tr('La respuesta o configuración del gestor nativo no es compatible. No se marcará la conexión como comprobada.'))
+        return failure(tr('La respuesta o configuración del gestor nativo no es compatible. No se marcará la conexión como comprobada.'), operation)
     except (HarnessError, team.TeamError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired) as error:
-        return failure(error)
+        return failure(error, operation)
 
 
 if __name__ == "__main__":
