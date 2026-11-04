@@ -2,12 +2,15 @@
 
 Reads the records the Omarchy agents panel already maintains in
 ~/.local/state/omarchy/agents/usage/ (read-only; nothing is collected here).
+Muse Code has no such record, so its two windows come from `muse usage --json`.
 """
 
 import json
 import os
 import re
 import stat
+import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +20,7 @@ from i18n import tr
 # Only these accounts have limit windows; the short names fit a 380 px screen.
 SHORT_NAMES = {'claude': 'Claude', 'claude-2': 'Claude 2', 'codex': 'Codex', 'codex-2': 'Codex 2'}
 MAX_BYTES = 1024 * 1024
+MUSE_TTL = 60  # seconds a `muse usage` answer is reused, so refreshes do not start the binary each time
 # The only counters that are usage; a record may also carry capacity metadata such as maxOutputTokens.
 USAGE_BUCKETS = ('inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens')
 
@@ -268,11 +272,88 @@ def measurement(agents, *, start, window_days):
             'limited': any(item[6] for item in found)}
 
 
+def _muse_percent(window):
+    value = window.get('usedPercent') if isinstance(window, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
+        return None
+    return value / 100
+
+
+def _muse_limit(label, window):
+    percent = _muse_percent(window)
+    if percent is None:
+        return None
+    limit = {'label': label, 'percent': percent}
+    reset = window.get('resetsAtMs')
+    if isinstance(reset, int) and not isinstance(reset, bool) and 0 < reset < 4e12:
+        limit['resetsAt'] = datetime.fromtimestamp(reset / 1000, timezone.utc).isoformat()
+    return limit
+
+
+def _muse_cache_file():
+    return Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'omarchy-ai-team' / 'muse-usage.json'
+
+
+def _muse_fetch(binary):
+    """Raw `muse usage --json` output: no shell, own process group, short timeout, bounded size."""
+    proc = subprocess.Popen([binary, 'usage', '--json'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,  # noqa: S603 - fixed argv, no shell
+                            stdin=subprocess.DEVNULL, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=8)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        proc.communicate()
+        return None
+    return out[:MAX_BYTES].decode('utf-8', 'replace') if proc.returncode == 0 else None
+
+
+def _muse_record(binary):
+    """`muse usage --json` shaped like a usage record (or None); reused for MUSE_TTL seconds through a cache file,
+    because every panel refresh is a new process."""
+    path = _muse_cache_file()
+    try:
+        if time.time() - path.stat().st_mtime < MUSE_TTL:
+            cached = _read_record(path)
+            if cached and isinstance(cached.get('limits'), list):
+                return cached
+    except OSError:
+        pass
+    record = None
+    try:
+        data = json.loads(_muse_fetch(binary) or 'null')
+        allowance = data.get('allowance') if isinstance(data, dict) else None
+        if isinstance(allowance, dict):
+            limits = [item for item in (_muse_limit('5h', allowance.get('window')),
+                                        _muse_limit('Weekly (7-day)', allowance.get('weekly'))) if item]
+            tier = allowance.get('tier')
+            record = {'limits': limits, 'tierLabel': tier if isinstance(tier, str) else ''}
+    except (OSError, ValueError, subprocess.SubprocessError, RecursionError):
+        record = None
+    if record and record['limits']:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            tmp = path.with_suffix('.tmp')
+            tmp.write_text(json.dumps(record))
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return record
+
+
 def rows(agents):
     """One row per selected account with a readable record: bar percentages plus the detail shown on click."""
     result = []
     for agent in agents:
         agent_id = agent.get('id')
+        if agent_id == 'muse' and agent.get('enabled'):
+            binary = agent.get('binary')
+            if agent.get('installation') != 'installed' or not isinstance(binary, str) or not os.path.isabs(binary) or not os.access(binary, os.X_OK):
+                continue
+            record = _muse_record(binary) or {'limits': [], 'tierLabel': ''}
+            result.append({'id': 'muse', 'name': 'Muse', 'tier': record['tierLabel'][:30],
+                           'five': _window(record['limits'], r'^5h'), 'weekly': _window(record['limits'], r'^Weekly \(7-day\)$'),
+                           'windows': _windows(record['limits']), 'models': [], 'spend': None})
+            continue
         if agent_id not in SHORT_NAMES or not agent.get('enabled'):
             continue
         record = _read_record(_directory() / (agent_id + '.json'))

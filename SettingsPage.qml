@@ -41,7 +41,7 @@ ColumnLayout {
 
   // All the agents in one wrapping block, ordered by family so accounts of the same tool sit together.
   readonly property var orderedAgents: {
-    const order = ["claude", "codex", "pi"]
+    const order = ["claude", "codex", "pi", "muse"]
     const rank = agent => { const i = order.indexOf(String(agent.id).replace(/-\d+$/, "")); return i === -1 ? order.length : i }
     return root.agents.map((agent, index) => ({agent: agent, index: index}))
       .sort((a, b) => rank(a.agent) - rank(b.agent) || a.index - b.index).map(item => item.agent)

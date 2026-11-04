@@ -179,6 +179,8 @@ def launch_options(agent, policy):
     if agent in ('codex', 'codex-2'):
         return ['-c', f'model_auto_compact_token_limit={threshold}',
                 '-c', 'model_auto_compact_token_limit_scope="total"'], []
+    if agent == 'muse':
+        return [], []  # only exec-level fractions and no hooks are documented: no thresholds are guessed
     if agent == 'pi':
         return ['--extension', str(Path(__file__).resolve().parent.parent / 'extensions' / 'pi-context-policy.ts')], []
     raise ContextPolicyError(tr('El agente predeterminado no es válido; se conserva la configuración.'))

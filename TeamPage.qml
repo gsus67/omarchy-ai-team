@@ -9,7 +9,7 @@ import qs.Commons as Commons
 ColumnLayout {
   id: root
   readonly property real labelColumn: Style.space(74)
-  readonly property var providers: ({claude: "Claude", codex: "Codex", pi: "Pi"})
+  readonly property var providers: ({claude: "Claude", codex: "Codex", pi: "Pi", muse: "Muse"})
   function providerRank(agent) { const i = Object.keys(root.providers).indexOf(agent); return i === -1 ? 99 : i }
   function providerName(agent) { return root.providers[agent] || agent }
   readonly property real effortColumn: Style.space(98)

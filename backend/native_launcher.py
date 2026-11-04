@@ -111,6 +111,8 @@ def invocation(agent, *, config=None, role='jefe', context_override=None, cwd=No
     """Shared per-process builder for terminal and explicit headless recipes."""
     if config is None and context_override is None:
         return [], []
+    if agent == 'muse':
+        return [], []  # no documented native context knob or hook: Muse launches without policy flags
     profile, agent = agent, ('claude' if agent == 'claude-2' else agent)  # claude-2 is the same CLI, another account
     policy = context_policy.resolve(config if config is not None else {}, role, override=context_override)
     args, environment = context_policy.launch_options(agent, policy)
@@ -159,6 +161,8 @@ def launch(binary, agent, home, *, arguments=(), config=None, role='jefe', conte
         args[4:4] = ['-C', json.loads(frozen)['cwd']]  # env changes directory before running the CLI
     if agent == 'pi':
         args+=['-u','PI_CODING_AGENT_DIR','PI_CODING_AGENT_DIR='+str(home)]
+    elif agent == 'muse':
+        pass  # no profile variable is documented: Muse reads its own home, and the others are cleared above
     elif agent == 'claude-2':
         args.append('CLAUDE_CONFIG_DIR='+str(home))
     elif agent != 'claude':
@@ -171,6 +175,6 @@ def launch(binary, agent, home, *, arguments=(), config=None, role='jefe', conte
 
 
 def authenticate(binary, agent, home):
-    if agent not in ('claude', 'claude-2', 'codex', 'codex-2'):
+    if agent not in ('claude', 'claude-2', 'codex', 'codex-2', 'muse'):
         raise LauncherError(tr('Usa la autenticación nativa del proveedor desde el menú de Pi.'))
     launch(binary, agent, home, arguments=('auth','login','--claudeai') if agent in ('claude', 'claude-2') else ('login',))

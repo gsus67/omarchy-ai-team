@@ -199,12 +199,26 @@ def role_commands(key, row, profiles, *, settings_file=None, only_pi=False):
         return [('CLAUDE_CONFIG_DIR='+shlex.quote(str(Path.home()/'.claude-2'))+' ' if profile == 'claude-2' else 'env -u CLAUDE_CONFIG_DIR ')+
                 wrapped(profile, ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
                                    '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits']) for profile in claude_profiles(profiles)]
+    if row['agent'] == 'muse':
+        return muse_commands(key, row, settings_file=settings_file)
     if only_pi or key in ('review', 'simple'):
         provider, model = row['model'].split('/', 1)
         thinking = ['--thinking', row['effort']] if row.get('effort') else []
         return [wrapped('pi', ['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])]
 
     return ['# Pi: encargo pendiente; requiere otra CLI para este papel.']
+
+
+def muse_commands(key, row, *, settings_file=None):
+    if key not in ('review', 'simple', 'code'):
+        return ['# Muse: encargo pendiente; requiere otra CLI para este papel.']
+    command = ['/usr/bin/python3', str(Path(__file__).with_name('context_run.py').resolve()),
+               *(['--settings', str(settings_file)] if settings_file else []), '--agent', 'muse', '--role', key, '--cwd', '<dir>', '--']
+    model = ['--model', row['model']] if row['model'] != 'default' and not str(row['model']).startswith('-') else []
+    effort = ['--reasoning-effort', row['effort']] if row.get('effort') else []
+    if key == 'code':  # default sandbox + approval stay on; writes are confined to the workspace
+        return [shlex.join([*command, 'muse', 'exec', '--approval-mode', 'on-request', '--workspace', '<dir>', *model, *effort, '<encargo>'])+' </dev/null']
+    return [shlex.join([*command, 'muse', 'exec', '--approval-mode', 'untrusted', *model, *effort, '<encargo>'])+' </dev/null']
 
 
 def text(paths, settings_file, team=None):
@@ -251,6 +265,8 @@ def text(paths, settings_file, team=None):
          'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas, '
          'pero pedirlo es una instrucción, no aislamiento efectivo: si Pi revisa, hazlo en un worktree Git y comprueba el diff después; '
          'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.'),
+        *(['Muse Code: su ayuda no documenta un sandbox ni el formato de salida de exec; úsalo para Revisar o Tareas sencillas '
+           '(solo lectura) y para Programar dentro de su --workspace con el sandbox por defecto; no para Planificar.'] if 'muse' in selected else []),
         '', 'Sustituye <dir> y <encargo> por valores concretos citados como argumentos de shell. '
         'Los comandos siguientes son recetas para la sesión; el plugin nunca los ejecuta.', ''])
     for key in roles.ROLES:

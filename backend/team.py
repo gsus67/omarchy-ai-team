@@ -11,9 +11,11 @@ CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
 # Aliases stay the stored/CLI value; versions only decorate the UI (ids: claude-<alias>-<major>-<minor>).
 CLAUDE_VERSIONS = {'fable': '5.1', 'opus': '5.5', 'sonnet': '5.5', 'haiku': '5.5'}
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra')
-AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi'}
+AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi', 'muse': 'Muse'}
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
+# Listed by `muse exec --help`; `max` and `ultra` are left out because their cost is not documented.
+MUSE_EFFORTS = ('low', 'medium', 'high', 'xhigh')
 STRONG_ORDER = (('claude', 'opus'), ('codex', 'sol'), ('claude', 'sonnet'), ('codex', 'luna'))
 WRITING_ORDER = (*STRONG_ORDER, ('pi', ''))
 FALLBACK_ORDER = {'plan': WRITING_ORDER, 'code': WRITING_ORDER,
@@ -27,7 +29,7 @@ class TeamError(Exception):
 
 
 def families(selected):
-    return [agent for agent in ('claude', 'codex', 'pi')
+    return [agent for agent in ('claude', 'codex', 'pi', 'muse')
             if agent in selected or (agent == 'codex' and 'codex-2' in selected)
             or (agent == 'claude' and 'claude-2' in selected)]
 
@@ -64,6 +66,9 @@ def options(selected, catalog, free_pi, paid_ok):
         elif agent == 'codex':
             models = [(row['id'], [effort['reasoningEffort'] for effort in row.get('supportedReasoningEfforts', [])]
                        or ['high', 'medium']) for row in codex_models(catalog)]
+        elif agent == 'muse':
+            # Its help lists no models: `default` omits --model; a catalog entry is optional.
+            models = [(model, MUSE_EFFORTS) for model in dict.fromkeys(['default', *catalog.get('muse', [])])]
         else:
             models = [(model, pi_efforts(catalog, model)) for model in dict.fromkeys([
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]

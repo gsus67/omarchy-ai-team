@@ -1082,7 +1082,7 @@ def main():
             settings_file = directory / "config/omarchy-ai-team/settings.json"
             settings_file.parent.mkdir(parents=True)
             settings_file.write_text('{"schemaVersion":1,"pluginVersion":"previous","language":"es","agents":{},"superpowersEnabled":false,"memoryEnabled":false,"local-toolsEnabled":false,"catalogInstalls":{"rg":{"deps":[]}}}\n')
-            for agent in ("claude", "codex", "pi"):
+            for agent in ("claude", "codex", "pi", "muse"):
                 binary = binaries / agent
                 binary.write_text("#!/bin/sh\nexit 99\n")
                 binary.chmod(0o755)

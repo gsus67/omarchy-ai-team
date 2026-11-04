@@ -36,6 +36,7 @@ import native_tools
 import project_scope
 import local_catalog
 import native_pi
+import native_muse
 import nous_quota
 import native_local_tools
 import goals
@@ -44,7 +45,7 @@ import native_team
 import ai_check
 
 
-AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi"}  # the order every list shows
+AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi", "muse": "Muse Code"}  # the order every list shows
 CLI_NAME = {"codex-2": "codex", "claude-2": "claude"}
 PROFILE_DIRS = {"codex-2": ".codex-2", "claude-2": ".claude-2"}
 MANAGED = {"superpowers": ("Superpowers", native_plugins),
@@ -159,7 +160,7 @@ def load_config():
                 raise HarnessError(tr('Preferencias de equipo inválidas; se conservan.'))
             for role, row in plugins.get('roles', {}).items():
                 if (role not in team.ROLES or not isinstance(row, dict) or row.get('manual') is not True
-                        or row.get('agent') not in ('claude', 'codex', 'pi')
+                        or row.get('agent') not in ('claude', 'codex', 'pi', 'muse')
                         or any(not isinstance(row.get(field), str) for field in ('model', 'effort'))):
                     raise HarnessError(tr('Papeles de equipo inválidos; se conservan.'))
             plugins = {key: row for key, row in plugins.items() if key not in ('enabled', 'roles', 'notices')}
@@ -196,13 +197,16 @@ def is_launcher(path):
     return native_tools.is_launcher(path)
 
 
+MISE_TOOL = {"muse": "http:muse"}
+
+
 def detect_tool(name, inventory):
-    return native_tools.detect_tool(name, inventory)
+    return native_tools.detect_tool(name, inventory, MISE_TOOL.get(name))
 
 
 def team_context(config):
     selected = {key for key in AGENTS if config.get('agents', {}).get(key)}
-    catalog = {'codex': config.get('teamModels', {}).get('codex', []),
+    catalog = {'muse': native_muse.muse_models(), 'codex': config.get('teamModels', {}).get('codex', []),
                'pi': config.get('agentCatalogs', {}).get('pi', {}).get('models', []),
                'nousEffort': ['nous/'+model for model in config.get('piNousCatalog', {}).get('effortModels', [])]}
     free_pi = ['nous/'+row['id'] for row in config.get('piNousCatalog', {}).get('models', [])
@@ -244,10 +248,10 @@ def agent_profile(agent):
         os.environ["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-2")
     elif agent == "claude":
         os.environ.pop("CLAUDE_CONFIG_DIR", None)  # the main account never inherits claude-2's directory
-    elif agent != "pi":
+    elif agent not in ("pi", "muse"):
         os.environ["CODEX_HOME"] = str(Path.home() / (".codex-2" if agent == "codex-2" else ".codex"))
     try:
-        yield "claude" if agent == "claude-2" else agent if agent in ("claude", "pi") else "codex"
+        yield "claude" if agent == "claude-2" else agent if agent in ("claude", "pi", "muse") else "codex"
     finally:
         for name, value in previous.items():
             if value is None:
@@ -285,7 +289,9 @@ def manage_agent_runtime(agent, action):
 def apply_component(config, component, agent, action, tool):
     with agent_profile(agent) as cli:
         options = component_options(component, config)
-        if cli == 'pi' and component in ('memory','superpowers'):
+        if cli == 'muse':
+            receipt = native_muse.apply_component(component, tool['binary'], action, config.get(component, {}).get(agent))
+        elif cli == 'pi' and component in ('memory','superpowers'):
             receipt = native_pi.apply_component(component, tool['binary'], action, config.get(component, {}).get(agent))
         else:
             receipt = MANAGED[component][1].apply(cli, tool["binary"], action, config.get(component, {}).get(agent), **options)
@@ -341,6 +347,8 @@ def manage_component(config, key, action, *, only=None, previous_selected=frozen
             operation = action
         if operation:
             try:
+                if target.get('unsupported'):
+                    continue  # Muse: nothing to connect and nothing recorded
                 if target.get("blocked") and operation != "verify":
                     raise HarnessError(target["detail"])
                 tool = agent_tool(agent, inventory)
@@ -487,7 +495,7 @@ def component_status(key, config, agents):
         try:
             with agent_profile(agent["id"]) as cli:
                 options = component_options(key, config)
-                plugin = (native_pi.inspect_component(key, receipt)
+                plugin = (native_muse.inspect_component(key, receipt) if cli=='muse' else native_pi.inspect_component(key, receipt)
                           if cli=='pi' and key in ('memory','superpowers') else adapter.inspect(cli, receipt, **options))
             if plugin["verified"] and (receipt.get("agentBinary") != agent["binary"] or receipt.get("agentVersion") != agent["version"]):
                 plugin["verified"] = False
@@ -887,7 +895,7 @@ def _main(argv=None):
     catalog = commands.add_parser('agent-models', help=tr('Consultar el catálogo nativo de Pi sin iniciar inferencia'))
     catalog.add_argument('agent', choices=('pi',))
     auth = commands.add_parser('authenticate-profile', help=tr('Abrir autenticación nativa sin seleccionar otra cuenta ni activar componentes'))
-    auth.add_argument('agent', choices=('claude','claude-2','codex','codex-2'))
+    auth.add_argument('agent', choices=('claude','claude-2','codex','codex-2','muse'))
     setting = commands.add_parser("set-agent", help=tr('Seleccionar los agentes que usarán los componentes del plugin'))
     setting.add_argument("agent", choices=AGENTS)
     setting.add_argument("enabled", choices=("true", "false"))
@@ -962,7 +970,7 @@ def _main(argv=None):
     usage_window_command.add_argument('days', type=int, choices=usage_start.WINDOW_DAYS)
     team_set = commands.add_parser('team-set', help=tr('Elegir el modelo de un papel'))
     team_set.add_argument('role', choices=team.ROLES)
-    team_set.add_argument('agent', choices=('claude', 'codex', 'pi'))
+    team_set.add_argument('agent', choices=('claude', 'codex', 'pi', 'muse'))
     team_set.add_argument('model')
     team_set.add_argument('--effort', default='')
     team_pair = commands.add_parser('team-set-pair', help=tr('Cambiar Planificar y Revisar a la vez'))
