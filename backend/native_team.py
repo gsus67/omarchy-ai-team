@@ -45,13 +45,13 @@ def instruction(original,paths,enabled,*,team=None):
         message=('Con política de contexto activa en papel Jefe usa solo índice ECC y delegación nativa; las lecturas/ejecuciones van a obreros. '
                  'Equipo activo: tú diriges y los modelos del equipo trabajan, también dentro de los pasos de Superpowers. '
                  +('Solo Pi: los modelos de Nous trabajan sin sandbox ni aprobación por herramienta; compruébalo todo en el diff. ' if only_pi else '')+
-                 'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva. '
-                 'Cualquier otro cambio de código: encarga Programar al modelo de ese papel, salvo que sea tu propio modelo. '
+                 'El Jefe no edita código ni lanza ayudantes internos de su CLI (Agent/Task) para programar. '
+                 'Todo código se encarga únicamente mediante context_run.py al papel y modelo asignados; si no puede ejecutarlo, lo dice claramente. '
                  'Antes de decir que un cambio de código está terminado, encarga siempre Revisar al modelo de ese papel y corrige lo que encuentre'
                  +(': '+command if command else '')+'. '
                  'Si tu sandbox o tus permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, di claramente que ese papel no se hizo con su modelo: un ayudante interno de tu CLI no cuenta como revisión independiente. '
                  'Lee la skill '+ID+' en '+json.dumps(str(paths['source']/'SKILL.md'),ensure_ascii=False)
-                 +' para los demás comandos, las alternativas si un modelo no responde y las reglas. Conserva los permisos nativos; nunca de pago sin consentimiento.')
+                 +' para los demás comandos y las reglas. Tras los fallos permitidos, detente, informa qué modelo falló y por qué, propón la siguiente alternativa y espera la autorización explícita del usuario. Sin autorización no la lances. Conserva los permisos nativos; nunca de pago sin consentimiento.')
     return native_plugins.instruction_block(original,'team',message if enabled else None)
 
 
@@ -229,9 +229,9 @@ def review_rule(assignments):
     if roles.same_family(plan, review): repeated.append('la misma familia que planificó')
     if repeated:
         return ('La elección actual de Revisar repite ' + ' y '.join(repeated) + ': se permite por elección del usuario, pero no hay revisión independiente; infórmalo al terminar. '
-                'Al saltar a una alternativa, prefiere otro modelo y otra familia. ')
+                'Al proponer una alternativa, prefiere otro modelo y otra familia. ')
     return ('Se recomienda que una revisión no la haga el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: '
-            'prefiere esa alternativa. ')
+            'propón de preferencia esa alternativa. ')
 
 
 def text(paths, settings_file, team=None):
@@ -253,13 +253,15 @@ def text(paths, settings_file, team=None):
         lines.append(roles.LABELS[key]+': '+(' · '.join(filter(None, (row['agent'], row['model'], row['effort']))) if row else 'Pendiente; no hay modelo disponible.'))
     lines.extend(['', *(saved_message(warning, 'es') for warning in state.get('warnings', [])), '',
         'Con política de contexto activa, una instancia Jefe se limita al índice ECC y a la delegación nativa; los obreros leen y ejecutan. '
+        'El Jefe no edita código ni lanza ayudantes internos de su CLI (Agent/Task) para programar. '
+        'Todo código se encarga únicamente mediante context_run.py al papel y modelo asignados; si no puede ejecutarlo, lo dice. '
         'Las recetas context_run.py resuelven preferencias actuales por papel y excepción motivada, sin cambiar perfiles. '
         'Entregan solo el informe final status/references/tests/error/pending, acotado; los detalles extensos van por puntero ECC verificado. '
         'Sin política se conserva la salida nativa. Umbral, piso, fase segura y presupuesto no son garantías duras. '
-        'La sesión habitual dirige. Si el papel corresponde a tu propia CLI y modelo, hazlo tú mismo sin lanzarte en headless. '
-        'Haz tú mismo solo preguntas, lecturas y cambios de una o dos líneas sin lógica nueva; todo lo demás se encarga. Respeta Superpowers como única metodología: sus pasos se reparten con estos papeles. '
-        'Un encargo que no responde no se espera ni se repite sin fin: intenta lanzarlo una sola vez con `timeout 60` si estás en un sandbox que puede impedirlo; '
-        'si no responde, sigue con lo que puedas hacer tú, di qué papel quedó pendiente y termina. '
+        'La sesión habitual dirige; incluso si el papel corresponde a su propia CLI y modelo, el Jefe encarga el código mediante context_run.py. '
+        'Haz tú mismo solo preguntas y lecturas; todo cambio de código se encarga. Respeta Superpowers como única metodología: sus pasos se reparten con estos papeles. '
+        'Un encargo que no responde no se espera ni se repite sin fin: usa `timeout 60` si estás en un sandbox que puede impedirlo y reintenta una sola vez; '
+        'si vuelve a fallar, detente, informa qué modelo falló y por qué, propón la siguiente alternativa y espera la autorización explícita del usuario. Sin autorización no la lances. '
         'Si el sandbox o los permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, informa de que ese papel no se hizo con su modelo. Un ayudante interno de tu CLI no cuenta como revisión independiente. '
         'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, «no hagas commits» y «no encargues nada a otros modelos». '
         'Si tú recibiste un encargo así, hazlo y devuelve el resultado: revisar y repartir corresponde a la sesión que dirige. '
@@ -267,16 +269,18 @@ def text(paths, settings_file, team=None):
         'Usa un worktree Git por escritor paralelo. Los encargos no dejan archivos sueltos: temporales con `mktemp -d`, borrados al terminar, nunca registros en `/tmp` compartido. Con memoria compartida activa, guarda allí el plan y las decisiones para el traspaso; '
         'no captures transcripciones. Informa qué modelo hizo qué y tokens/coste solo si la CLI los reporta. '
         'Modelos nunca de pago sin consentimiento explícito vigente. No cambies modelos o permisos de las sesiones abiertas.',
-        'Codex-2 primero; solo ante un error real de cuota usa Codex si también está seleccionado. '
-        'Si ambas cuentas agotan cuota, avisa y usa otro recomendado permitido; si no existe, pide una decisión. '
+        'Codex-2 primero. Ante un error real de cuota, detente e informa; si Codex está seleccionado, propón esa alternativa y espera autorización explícita antes de lanzarla. '
+        'Si ambas cuentas agotan cuota, avisa y propón otro recomendado permitido; no lo lances sin autorización. Si no existe, pide una decisión. '
         'No inventes cuotas ni actives un proveedor de pago.',
-        *(['Claude Code-2 primero; solo ante un error real de cuota usa Claude Code si también está seleccionado. '
-           'Si ambas cuentas agotan cuota, avisa y usa otro recomendado permitido; si no existe, pide una decisión.'] if 'claude-2' in selected else []),
-        'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
-        'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
+        *(['Claude Code-2 primero. Ante un error real de cuota, detente e informa; si Claude Code está seleccionado, propón esa alternativa y espera autorización explícita antes de lanzarla. '
+           'Si ambas cuentas agotan cuota, avisa y propón otro recomendado permitido; no lo lances sin autorización. Si no existe, pide una decisión.'] if 'claude-2' in selected else []),
+        'Cada papel usa exclusivamente su modelo asignado y sus alternativas enumeradas: está prohibido sustituirlo por otro modelo o por un ayudante interno de la CLI. '
+        'Tras un fallo transitorio, reintenta una vez: con dos fallos seguidos del modelo de un papel (el intento inicial y un único reintento), se detiene. '
+        'Informa qué modelo falló y por qué, propón la siguiente alternativa de ese papel y espera la autorización explícita del usuario antes de que trabaje. Sin autorización no la lances. '
+        'Cuota agotada, modelo no encontrado o configuración pendiente cuentan como fallo inmediato: no consumen el reintento y exigen la misma parada, información, propuesta y autorización. '
         'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '
         + review_rule(assignments) +
-        'Informa qué modelo hizo cada papel y por qué se cambió. Si no queda alternativa, déjalo pendiente y dilo; no lo des por hecho.',
+        'Informa qué modelo hizo cada papel y qué cambio autorizó el usuario. Si se agotan las alternativas, déjalo pendiente, avisa al usuario y pide una decisión; nunca elijas un modelo fuera de la lista.',
         ('Solo Pi: los modelos de Nous cubren todos los papeles y no tienen sandbox ni aprobación por herramienta, así que pueden cambiar archivos o ejecutar comandos sin preguntar. '
          'Pedir a Revisar que solo lea es una instrucción, no es aislamiento efectivo: trabaja en un worktree Git y comprueba el diff antes de aceptar el resultado. '
          'Avisa de este límite al informar de cada encargo.' if only_pi else

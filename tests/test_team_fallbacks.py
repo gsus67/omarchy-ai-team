@@ -433,12 +433,14 @@ class AlternativeSkillTests(unittest.TestCase):
 
     def test_skill_states_when_to_change_and_when_not_to(self):
         for wanted in ('reintenta una vez', 'siguiente alternativa', 'permisos denegados', 'encargo inválido',
-                       'por qué se cambió', 'déjalo pendiente', 'no la haga el modelo que escribió'):
+                       'qué cambio autorizó el usuario', 'Sin autorización no la lances', 'déjalo pendiente',
+                       'no la haga el modelo que escribió'):
             self.assertIn(wanted, self.text)
 
     def test_startup_block_points_to_the_alternatives(self):
         block = native_team.instruction('', self.paths, True, team=self.state)
-        self.assertIn('alternativas', block)
+        self.assertIn('propón la siguiente alternativa', block)
+        self.assertIn('autorización explícita del usuario', block)
 
 
 if __name__ == '__main__':

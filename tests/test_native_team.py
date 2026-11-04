@@ -31,10 +31,37 @@ class NativeTeamTests(unittest.TestCase):
     def test_startup_block_states_triggers_and_review_command(self):
         paths = native_team.layout('claude')
         block = native_team.instruction('', paths, True, team=self.state())
-        for wanted in ('tú diriges', 'una o dos líneas', 'encarga Programar', 'encarga siempre Revisar',
+        for wanted in ('tú diriges', 'El Jefe no edita código', 'context_run.py', 'encarga siempre Revisar',
                        "-s read-only -m gpt-6.1-sol", 'Superpowers', 'no cuenta como revisión independiente'):
             self.assertIn(wanted, block)
         self.assertEqual(native_team.instruction(block, paths, False, team=self.state()), '')
+
+    def test_chief_never_programs_or_uses_internal_cli_helpers(self):
+        paths = native_team.layout('claude')
+        for policy in (native_team.instruction('', paths, True, team=self.state()), self.content()):
+            self.assertIn('El Jefe no edita código', policy)
+            self.assertIn('Agent/Task', policy)
+            self.assertIn('únicamente mediante context_run.py', policy)
+            self.assertIn('si no puede', policy.lower())
+            self.assertNotIn('Si el papel corresponde a tu propia CLI y modelo, hazlo tú mismo', policy)
+
+    def test_role_fallback_waits_for_explicit_user_authorization(self):
+        policy = self.content()
+        for wanted in ('dos fallos seguidos', 'intento inicial y un único reintento',
+                       'se detiene', 'informa qué modelo falló y por qué',
+                       'propón la siguiente alternativa', 'autorización explícita del usuario',
+                       'Sin autorización no la lances', 'fallo inmediato',
+                       'prohibido sustituirlo por otro modelo', 'nunca elijas un modelo fuera de la lista'):
+            self.assertIn(wanted, policy)
+        for forbidden in ('llevan a la siguiente alternativa',
+                          'saltan directamente a la siguiente alternativa',
+                          'solo ante un error real de cuota usa Codex',
+                          'avisa y usa otro recomendado permitido'):
+            self.assertNotIn(forbidden, policy)
+        startup = native_team.instruction('', native_team.layout('claude'), True, team=self.state())
+        for wanted in ('detente', 'informa qué modelo falló y por qué', 'propón la siguiente alternativa',
+                       'autorización explícita del usuario', 'Sin autorización no la lances'):
+            self.assertIn(wanted, startup)
 
     def test_security_skill_carries_the_lessons_without_privilege_words(self):
         import native_local_tools as tools
@@ -65,7 +92,7 @@ class NativeTeamTests(unittest.TestCase):
         text = self.content()
         for value in (*team.LABELS.values(), 'gpt-6.1-sol', 'gpt-6-luna', 'opus', '-s workspace-write',
                       '-s read-only', '</dev/null', '--effort high --permission-mode acceptEdits', '--permission-mode plan',
-                      'hazlo tú mismo', 'worktree', 'no hagas commits', 'nunca de pago'):
+                      'incluso si el papel corresponde', 'worktree', 'no hagas commits', 'nunca de pago'):
             self.assertIn(value, text)
         for forbidden in ('bypassPermissions', 'danger-full-access', '--dangerously', '--yolo'):
             self.assertNotIn(forbidden, text)
@@ -86,9 +113,9 @@ class NativeTeamTests(unittest.TestCase):
         self.assertIn('Se recomienda', native_team.review_rule(independent))
         self.assertNotIn('Una revisión nunca', native_team.review_rule(independent))
 
-    def test_a_task_that_does_not_answer_is_not_retried_forever(self):
+    def test_a_task_that_does_not_answer_is_retried_only_once(self):
         text = self.content()
-        for wanted in ('intenta lanzarlo una sola vez', 'timeout 60', 'sandbox', 'di qué papel quedó pendiente'):
+        for wanted in ('reintenta una sola vez', 'timeout 60', 'sandbox', 'si vuelve a fallar, detente'):
             self.assertIn(wanted, text)
 
     def test_a_delegated_task_does_not_delegate_again(self):
