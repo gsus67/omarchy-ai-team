@@ -199,12 +199,39 @@ def role_commands(key, row, profiles, *, settings_file=None, only_pi=False):
         return [('CLAUDE_CONFIG_DIR='+shlex.quote(str(Path.home()/'.claude-2'))+' ' if profile == 'claude-2' else 'env -u CLAUDE_CONFIG_DIR ')+
                 wrapped(profile, ['claude', '-p', '<encargo>', '--model', row['model'], '--effort', row['effort'],
                                    '--permission-mode', 'plan' if key in ('plan', 'review') else 'acceptEdits']) for profile in claude_profiles(profiles)]
-    if only_pi or key in ('review', 'simple'):
-        provider, model = row['model'].split('/', 1)
-        thinking = ['--thinking', row['effort']] if row.get('effort') else []
-        return [wrapped('pi', ['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])]
+    if row['agent'] == 'muse':
+        return muse_commands(key, row, settings_file=settings_file)
+    # Pi keeps an executable recipe whenever it is assigned, with or without other CLIs.
+    provider, model = row['model'].split('/', 1)
+    thinking = ['--thinking', row['effort']] if row.get('effort') else []
+    return [wrapped('pi', ['pi', '-p', '--provider', provider, '--model', model, *thinking, '<encargo>'])]
 
-    return ['# Pi: encargo pendiente; requiere otra CLI para este papel.']
+
+def muse_commands(key, row, *, settings_file=None):
+    import team as roles
+    if key not in roles.MUSE_ROLES:
+        return ['# Muse: encargo pendiente; requiere otra CLI para este papel.']
+    command = ['/usr/bin/python3', str(Path(__file__).with_name('context_run.py').resolve()),
+               *(['--settings', str(settings_file)] if settings_file else []), '--agent', 'muse', '--role', key, '--cwd', '<dir>', '--']
+    model = ['--model', row['model']] if row['model'] != 'default' and not str(row['model']).startswith('-') else []
+    effort = ['--reasoning-effort', row['effort']] if row.get('effort') else []
+    if key == 'code':  # default sandbox + approval stay on; writes are confined to the workspace
+        return [shlex.join([*command, 'muse', 'exec', '--approval-mode', 'on-request', '--workspace', '<dir>', *model, *effort, '<encargo>'])+' </dev/null']
+    return [shlex.join([*command, 'muse', 'exec', '--approval-mode', 'untrusted', '--disable-write', '--disable-shell', *model, *effort, '<encargo>'])+' </dev/null']
+
+
+def review_rule(assignments):
+    """Independence of Revisar: a recommendation, or an explicit note when the user's choice repeats model/family."""
+    import team as roles
+    code, plan, review = assignments.get('code'), assignments.get('plan'), assignments.get('review')
+    repeated = []
+    if roles.same_model(code, review): repeated.append('el mismo modelo que programó')
+    if roles.same_family(plan, review): repeated.append('la misma familia que planificó')
+    if repeated:
+        return ('La elección actual de Revisar repite ' + ' y '.join(repeated) + ': se permite por elección del usuario, pero no hay revisión independiente; infórmalo al terminar. '
+                'Al saltar a una alternativa, prefiere otro modelo y otra familia. ')
+    return ('Se recomienda que una revisión no la haga el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: '
+            'prefiere esa alternativa. ')
 
 
 def text(paths, settings_file, team=None):
@@ -213,6 +240,11 @@ def text(paths, settings_file, team=None):
     selected = state.get('selected', [paths['profile']])
     profiles = [profile for profile in ('codex-2', 'codex', 'claude-2', 'claude') if profile in selected]
     only_pi = roles.only_pi(selected)
+    # Pi has an executable recipe for exactly the roles assigned to it; only the others stay off limits.
+    pi_has = [key for key in ('plan', 'code') if assignments.get(key, {}).get('agent') == 'pi']
+    pi_off = [roles.LABELS[key] for key in ('plan', 'code') if key not in pi_has]
+    pi_delegation = ('Pi tiene receta ejecutable para '+' y '.join(roles.LABELS[key] for key in pi_has)+'; ' if pi_has else '')+(
+        'no delegues '+' ni '.join(pi_off)+' a Pi. ' if pi_off else '')
     lines = ['---', 'name: '+ID,
              'description: "Úsala siempre que vayas a cambiar código: encarga programar y revisar a los modelos del equipo, y planificar o tareas sencillas cuando compense."',
              '---', '', '# Equipo por papeles', '']
@@ -243,14 +275,16 @@ def text(paths, settings_file, team=None):
         'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
         'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
         'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '
-        'Una revisión nunca la hace el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: salta esa alternativa. '
+        + review_rule(assignments) +
         'Informa qué modelo hizo cada papel y por qué se cambió. Si no queda alternativa, déjalo pendiente y dilo; no lo des por hecho.',
         ('Solo Pi: los modelos de Nous cubren todos los papeles y no tienen sandbox ni aprobación por herramienta, así que pueden cambiar archivos o ejecutar comandos sin preguntar. '
          'Pedir a Revisar que solo lea es una instrucción, no es aislamiento efectivo: trabaja en un worktree Git y comprueba el diff antes de aceptar el resultado. '
          'Avisa de este límite al informar de cada encargo.' if only_pi else
          'Pi no tiene sandbox ni aprobación por herramienta: solo lectura para Revisar o Tareas sencillas, '
          'pero pedirlo es una instrucción, no aislamiento efectivo: si Pi revisa, hazlo en un worktree Git y comprueba el diff después; '
-         'no delegues Planificar ni Programar a Pi. Si no puedes garantizar una tarea de lectura, informa del límite.'),
+         +pi_delegation+'Si no puedes garantizar una tarea de lectura, informa del límite.'),
+        *(['Muse Code: su ayuda no documenta un sandbox ni el formato de salida de exec; úsalo para Revisar o Tareas sencillas '
+           '(solo lectura) y para Programar dentro de su --workspace con el sandbox por defecto; no para Planificar.'] if 'muse' in selected else []),
         '', 'Sustituye <dir> y <encargo> por valores concretos citados como argumentos de shell. '
         'Los comandos siguientes son recetas para la sesión; el plugin nunca los ejecuta.', ''])
     for key in roles.ROLES:

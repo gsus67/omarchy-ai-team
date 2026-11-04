@@ -81,6 +81,41 @@ class ContextRunTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), REPORT)
         self.assertFalse((self.root/'pi').exists())
 
+    def test_muse_task_carries_the_report_schema(self):
+        seen = self.root / 'prompt.txt'
+        fake = self.fake('import json,sys\nopen('+repr(str(seen))+',"w").write(sys.argv[-1])\nprint('+repr(json.dumps(REPORT))+')\n')
+        output = io.StringIO()
+        self.assertEqual(self.run.run([fake, 'exec', 'task'], 'muse', 'review', {}, self.root, output=output), 0)
+        self.assertEqual(json.loads(output.getvalue()), REPORT)
+        prompt = seen.read_text()
+        self.assertTrue(prompt.startswith('task'))
+        self.assertIn('"required"', prompt)
+        self.assertIn('"references"', prompt)
+
+    def test_muse_schema_never_corrupts_an_option_value(self):
+        seen = self.root / 'args.json'
+        fake = self.fake('import json,sys\nopen('+repr(str(seen))+',"w").write(json.dumps(sys.argv[1:]))\nprint('+repr(json.dumps(REPORT))+')\n')
+        for arguments in (['exec', '--no-session-log', '--prompt-file', 'task.md'], ['exec', '--no-session-log', '--model', 'chosen'], ['exec', '--no-session-log', '--model=x']):
+            self.assertEqual(self.run.run([fake, *arguments], 'muse', 'review', {}, self.root, output=io.StringIO()), 0)
+            self.assertEqual(json.loads(seen.read_text()), arguments)
+        self.assertEqual(self.run.run([fake, 'exec', '--disable-shell', 'task'], 'muse', 'review', {}, self.root, output=io.StringIO()), 0)
+        self.assertIn('"required"', json.loads(seen.read_text())[-1])
+
+    def test_muse_prompt_detection_uses_the_flag_table(self):
+        seen = self.root / 'args.json'
+        fake = self.fake('import json,sys\nopen('+repr(str(seen))+',"w").write(json.dumps(sys.argv[1:]))\nprint('+repr(json.dumps(REPORT))+')\n')
+        cases = [['exec', '--disable-web-tools', 'task'], ['exec', '--', 'task'], ['exec', '--no-session-log', '--', 'task']]
+        cases += [['exec', flag, 'task'] for flag in sorted(self.run.MUSE_FLAGS)]
+        for arguments in cases:
+            self.assertEqual(self.run.run([fake, *arguments], 'muse', 'review', {}, self.root, output=io.StringIO()), 0)
+            sent = json.loads(seen.read_text())
+            self.assertEqual(sent[-2], arguments[-2], arguments)
+            self.assertTrue(set(arguments[:-1]) <= set(sent[:-1]), arguments)
+            self.assertTrue(sent[-1].startswith('task') and '"required"' in sent[-1], arguments)
+        for arguments in (['exec', '-w', 'task'], ['exec', '--', 'task', 'more'], ['exec', '--unknown', 'task'], ['exec', '--model', 'chosen']):
+            self.assertEqual(self.run.run([fake, *arguments], 'muse', 'review', {}, self.root, output=io.StringIO()), 0)
+            self.assertEqual(json.loads(seen.read_text())[-len(arguments)+1:], arguments[1:])
+
     def test_pi_transport_accepts_multiline_report(self):
         fake = self.fake('print('+repr(json.dumps(REPORT, indent=2))+')\n')
         output = io.StringIO()

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SMOKE = r'''
   property int languageStep: 0
+  property bool componentToggleRetried: false
   property int step: 0
   property int ticks: 0
   property bool capturing: false
@@ -259,6 +260,11 @@ SMOKE = r'''
           var item=find(harness,name,[])
           if (!item || !item.visible || !item.enabled) { fail("Pointer target unavailable: " + name); return }
           pointer.mouseClick(item,item.width / 2,item.height / 2,button || Qt.LeftButton)
+        }
+        if (harness.page === "") {
+          // A snapshot update rebuilds the goal rows; wait until the layout has placed them before pointing at one.
+          var goalYs = (harness.snapshot.goals || []).map(g => { var r = find(harness,"goal-" + g.id,[]); return r ? r.mapToItem(null,0,0).y : -1 })
+          if (goalYs.length > 1 && goalYs.some((y, i) => goalYs.indexOf(y) !== i)) return
         }
         if (navigationStep === 0) {
           if (harness.page !== "" || find(harness,"tabs",[])) { fail("Main view must have no tabs"); return }
@@ -611,6 +617,8 @@ SMOKE = r'''
         componentToggle.toggled()
         step++
       } else if (step === 1) {
+        // run() drops a command that arrives while a chained status/repair still runs: repeat it once, never silently.
+        if (!component.enabled && !componentToggleRetried) { componentToggleRetried = true; componentToggle.toggled(); return }
         if (!component.enabled || component.selectedCount !== 0) { fail("Component preference not prepared"); return }
         componentToggle.toggled()
         step++
@@ -1082,7 +1090,7 @@ def main():
             settings_file = directory / "config/omarchy-ai-team/settings.json"
             settings_file.parent.mkdir(parents=True)
             settings_file.write_text('{"schemaVersion":1,"pluginVersion":"previous","language":"es","agents":{},"superpowersEnabled":false,"memoryEnabled":false,"local-toolsEnabled":false,"catalogInstalls":{"rg":{"deps":[]}}}\n')
-            for agent in ("claude", "codex", "pi"):
+            for agent in ("claude", "codex", "pi", "muse"):
                 binary = binaries / agent
                 binary.write_text("#!/bin/sh\nexit 99\n")
                 binary.chmod(0o755)

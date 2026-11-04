@@ -152,6 +152,10 @@ def run(config, snapshot):
         key = agent['id']; wanted = expected(config, snapshot, key)
         row = dict(agent=key, name=agent['name'], ok=False, failures=[], warnings=[])
         results.append(row)
+        if key == 'muse':
+            # A real run would need a model and the exec output format, neither documented: nothing is launched.
+            row.update(skipped=True, warnings=[tr('Muse omitido: su ayuda no documenta un modelo ni un formato de salida que comprobar.')])
+            continue
         if key == 'pi':
             model = pi_check_model(config)
             if not model:

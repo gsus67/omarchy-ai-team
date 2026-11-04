@@ -36,6 +36,7 @@ import native_tools
 import project_scope
 import local_catalog
 import native_pi
+import native_muse
 import nous_quota
 import native_local_tools
 import goals
@@ -44,7 +45,7 @@ import native_team
 import ai_check
 
 
-AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi"}  # the order every list shows
+AGENTS = {"claude": "Claude Code", "claude-2": "Claude Code-2", "codex": "Codex", "codex-2": "Codex-2", "pi": "Pi", "muse": "Muse Code"}  # the order every list shows
 CLI_NAME = {"codex-2": "codex", "claude-2": "claude"}
 PROFILE_DIRS = {"codex-2": ".codex-2", "claude-2": ".claude-2"}
 MANAGED = {"superpowers": ("Superpowers", native_plugins),
@@ -159,7 +160,7 @@ def load_config():
                 raise HarnessError(tr('Preferencias de equipo inválidas; se conservan.'))
             for role, row in plugins.get('roles', {}).items():
                 if (role not in team.ROLES or not isinstance(row, dict) or row.get('manual') is not True
-                        or row.get('agent') not in ('claude', 'codex', 'pi')
+                        or row.get('agent') not in ('claude', 'codex', 'pi', 'muse')
                         or any(not isinstance(row.get(field), str) for field in ('model', 'effort'))):
                     raise HarnessError(tr('Papeles de equipo inválidos; se conservan.'))
             plugins = {key: row for key, row in plugins.items() if key not in ('enabled', 'roles', 'notices')}
@@ -196,13 +197,16 @@ def is_launcher(path):
     return native_tools.is_launcher(path)
 
 
+MISE_TOOL = {"muse": "http:muse"}
+
+
 def detect_tool(name, inventory):
-    return native_tools.detect_tool(name, inventory)
+    return native_tools.detect_tool(name, inventory, MISE_TOOL.get(name))
 
 
 def team_context(config):
     selected = {key for key in AGENTS if config.get('agents', {}).get(key)}
-    catalog = {'codex': config.get('teamModels', {}).get('codex', []),
+    catalog = {'muse': native_muse.muse_models(), 'codex': config.get('teamModels', {}).get('codex', []),
                'pi': config.get('agentCatalogs', {}).get('pi', {}).get('models', []),
                'nousEffort': ['nous/'+model for model in config.get('piNousCatalog', {}).get('effortModels', [])]}
     free_pi = ['nous/'+row['id'] for row in config.get('piNousCatalog', {}).get('models', [])
@@ -244,10 +248,10 @@ def agent_profile(agent):
         os.environ["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-2")
     elif agent == "claude":
         os.environ.pop("CLAUDE_CONFIG_DIR", None)  # the main account never inherits claude-2's directory
-    elif agent != "pi":
+    elif agent not in ("pi", "muse"):
         os.environ["CODEX_HOME"] = str(Path.home() / (".codex-2" if agent == "codex-2" else ".codex"))
     try:
-        yield "claude" if agent == "claude-2" else agent if agent in ("claude", "pi") else "codex"
+        yield "claude" if agent == "claude-2" else agent if agent in ("claude", "pi", "muse") else "codex"
     finally:
         for name, value in previous.items():
             if value is None:
@@ -285,7 +289,9 @@ def manage_agent_runtime(agent, action):
 def apply_component(config, component, agent, action, tool):
     with agent_profile(agent) as cli:
         options = component_options(component, config)
-        if cli == 'pi' and component in ('memory','superpowers'):
+        if cli == 'muse':
+            receipt = native_muse.apply_component(component, tool['binary'], action, config.get(component, {}).get(agent))
+        elif cli == 'pi' and component in ('memory','superpowers'):
             receipt = native_pi.apply_component(component, tool['binary'], action, config.get(component, {}).get(agent))
         else:
             receipt = MANAGED[component][1].apply(cli, tool["binary"], action, config.get(component, {}).get(agent), **options)
@@ -341,6 +347,8 @@ def manage_component(config, key, action, *, only=None, previous_selected=frozen
             operation = action
         if operation:
             try:
+                if target.get('unsupported'):
+                    continue  # Muse: nothing to connect and nothing recorded
                 if target.get("blocked") and operation != "verify":
                     raise HarnessError(target["detail"])
                 tool = agent_tool(agent, inventory)
@@ -487,10 +495,13 @@ def component_status(key, config, agents):
         try:
             with agent_profile(agent["id"]) as cli:
                 options = component_options(key, config)
-                plugin = (native_pi.inspect_component(key, receipt)
+                plugin = (native_muse.inspect_component(key, receipt) if cli=='muse' else native_pi.inspect_component(key, receipt)
                           if cli=='pi' and key in ('memory','superpowers') else adapter.inspect(cli, receipt, **options))
             if plugin["verified"] and (receipt.get("agentBinary") != agent["binary"] or receipt.get("agentVersion") != agent["version"]):
+                # Native inspection already matched the content (digest); only the CLI identity moved.
                 plugin["verified"] = False
+                if agent["installation"] == "installed":
+                    plugin["needsReconcile"] = True
                 plugin["detail"] = tr('El agente cambió desde la última comprobación. Pulsa Comprobar.')
             if receipt.get("lastError") and not plugin["verified"]:
                 plugin["detail"] = i18n.saved_message(receipt["lastError"], i18n.current_language()) + "\n" + plugin["detail"]
@@ -596,7 +607,8 @@ def prepare_agent(config, agent, *, make_default=False):
     tool = agent_tool(agent, inventory)
     if tool['installation'] == 'missing-profile':
         raise HarnessError(tr('Perfil {agent} no disponible.', agent=agent))
-    if tool['installation'] != 'installed':
+    # Muse Code has no managed installer (agent_runtime.operate refuses it): it is used as found, never installed here.
+    if tool['installation'] != 'installed' and agent != 'muse':
         manage_agent_runtime(agent, 'install')
     before = json.dumps(config, sort_keys=True)
     if is_new_config(config):
@@ -640,13 +652,16 @@ def reconcile_selected(config):
         try:
             apply_component(config, key, agent, 'enable', agent_tool(agent, inventory))
             report['repaired'].append(row)
-        except (HarnessError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        except (HarnessError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired,
+                KeyError, TypeError, AttributeError) as error:
+            message = (tr('La respuesta o configuración del gestor nativo no es compatible. No se marcará la conexión como comprobada.')
+                       if isinstance(error, (KeyError, TypeError, AttributeError)) else str(error))
             record = config.setdefault(key, {}).setdefault(agent, {})
-            if record.get('lastError') != str(error) or 'digest' in record:
+            if record.get('lastError') != message or 'digest' in record:
                 record.pop('digest', None)
-                record['lastError'] = str(error)
+                record['lastError'] = message
                 save_config(config)
-            report['errors'].append({**row, 'detail': str(error)})
+            report['errors'].append({**row, 'detail': message})
     if report['repaired']:
         config['lastReconcile'] = {'at': datetime.now(timezone.utc).isoformat(), 'repaired': report['repaired']}
         save_config(config)
@@ -887,7 +902,7 @@ def _main(argv=None):
     catalog = commands.add_parser('agent-models', help=tr('Consultar el catálogo nativo de Pi sin iniciar inferencia'))
     catalog.add_argument('agent', choices=('pi',))
     auth = commands.add_parser('authenticate-profile', help=tr('Abrir autenticación nativa sin seleccionar otra cuenta ni activar componentes'))
-    auth.add_argument('agent', choices=('claude','claude-2','codex','codex-2'))
+    auth.add_argument('agent', choices=('claude','claude-2','codex','codex-2','muse'))
     setting = commands.add_parser("set-agent", help=tr('Seleccionar los agentes que usarán los componentes del plugin'))
     setting.add_argument("agent", choices=AGENTS)
     setting.add_argument("enabled", choices=("true", "false"))
@@ -962,7 +977,7 @@ def _main(argv=None):
     usage_window_command.add_argument('days', type=int, choices=usage_start.WINDOW_DAYS)
     team_set = commands.add_parser('team-set', help=tr('Elegir el modelo de un papel'))
     team_set.add_argument('role', choices=team.ROLES)
-    team_set.add_argument('agent', choices=('claude', 'codex', 'pi'))
+    team_set.add_argument('agent', choices=('claude', 'codex', 'pi', 'muse'))
     team_set.add_argument('model')
     team_set.add_argument('--effort', default='')
     team_pair = commands.add_parser('team-set-pair', help=tr('Cambiar Planificar y Revisar a la vez'))
@@ -1196,17 +1211,17 @@ def _main(argv=None):
         elif args.command in ('team-set', 'team-set-pair', 'team-recommend', 'team-models'):
             if args.command == 'team-set-pair':
                 selected, catalog, free_pi = team_context(config)
-                team.set_roles(config, [('plan', args.plan_agent, args.plan_model, args.plan_effort),
+                notes = team.set_roles(config, [('plan', args.plan_agent, args.plan_model, args.plan_effort),
                                         ('review', args.review_agent, args.review_model, args.review_effort)],
                                selected=selected, catalog=catalog, free_pi=free_pi,
                                paid_ok=config.get('piPaidApproved', False))
-                message = tr('Papeles guardados.')
+                message = ' '.join([tr('Papeles guardados.'), *notes])
             elif args.command == 'team-set':
                 selected, catalog, free_pi = team_context(config)
-                team.set_role(config, args.role, args.agent, args.model, args.effort,
+                notes = team.set_role(config, args.role, args.agent, args.model, args.effort,
                               selected=selected, catalog=catalog, free_pi=free_pi,
                               paid_ok=config.get('piPaidApproved', False))
-                message = tr('Papel guardado.')
+                message = ' '.join([tr('Papel guardado.'), *notes])
             elif args.command == 'team-recommend':
                 team.reset(config)
                 message = tr('Papeles recomendados restablecidos.')

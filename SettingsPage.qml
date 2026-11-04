@@ -20,6 +20,7 @@ ColumnLayout {
   property var prices: ({})
   property var components: []
   property var lastReconcile: ({})
+  property string pluginVersion: ""
   property bool busy: false
   function setupStatus(agent) {
     if (agent.setupState === "ready") return root.tr("Listo")
@@ -41,7 +42,7 @@ ColumnLayout {
 
   // All the agents in one wrapping block, ordered by family so accounts of the same tool sit together.
   readonly property var orderedAgents: {
-    const order = ["claude", "codex", "pi"]
+    const order = ["claude", "codex", "pi", "muse"]
     const rank = agent => { const i = order.indexOf(String(agent.id).replace(/-\d+$/, "")); return i === -1 ? order.length : i }
     return root.agents.map((agent, index) => ({agent: agent, index: index}))
       .sort((a, b) => rank(a.agent) - rank(b.agent) || a.index - b.index).map(item => item.agent)
@@ -162,5 +163,17 @@ ColumnLayout {
     font.family: root.fonts.family
     font.pixelSize: root.fonts.caption
     wrapMode: Text.WordWrap
+  }
+  Text {
+    objectName: "plugin-version"
+    Layout.fillWidth: true
+    visible: root.pluginVersion !== ""
+    text: `v${root.pluginVersion}`
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    opacity: 0.5
+    horizontalAlignment: Text.AlignRight
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
   }
 }

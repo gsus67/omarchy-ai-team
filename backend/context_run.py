@@ -145,6 +145,15 @@ def _fresh_command(command, agent):
             raise ValueError(refusal)
         if any(item in ('-p', '--print') for item in rest) and '--no-session-persistence' not in rest:
             rest.insert(0, '--no-session-persistence')
+    elif agent == 'muse':
+        # `resume` is a subcommand and --session-id reuses a session: both continue earlier work.
+        before_delimiter = rest[:rest.index('--')] if '--' in rest else rest
+        if rest[:1] == ['resume'] or any(item == '--session-id' or item.startswith('--session-id=') for item in before_delimiter):
+            raise ValueError(refusal)
+        if 'exec' not in before_delimiter:
+            raise ValueError(tr('La receta de Muse requiere exec nativo.'))
+        if '--no-session-log' not in before_delimiter:
+            rest.insert(before_delimiter.index('exec') + 1, '--no-session-log')
     elif agent == 'pi':
         if any(item in ('--continue', '-c', '--resume', '-r', '--session', '--fork')
                or item.startswith(('--continue=', '--resume=', '--session=', '--fork=')) for item in rest):
@@ -278,9 +287,17 @@ def _report(value):
 
 def _bounded(report, capsule):
     # Approximately four UTF-8 bytes/token: a transport budget, never a tokenizer claim.
-    budget = max(256, capsule['policy']['worker_report_max_tokens'] * 4)
+    # Workers without a capsule (Muse) have no ECC handoff: default budget, no referenced report.
+    budget = max(256, (capsule['policy']['worker_report_max_tokens'] if capsule else 800) * 4)
     if len(json.dumps(report, ensure_ascii=False).encode()) <= budget:
         return report
+    if capsule is None:
+        failure = _failure(str(tr('El informe del obrero excede el límite y no hay ECC donde guardarlo; pide uno más corto.')))
+        failure['pending'] = str(tr('Repetir el encargo pidiendo un informe más corto.'))
+        failure['error'] = failure['error'].encode()[:budget].decode(errors='ignore')
+        while len(json.dumps(failure, ensure_ascii=False).encode()) > budget:
+            failure['error'] = failure['error'][:-1]
+        return failure
     try:
         key = save_report(capsule, report)
         return dict(zip(REPORT_FIELDS, ('referenced', key, '', '', str(tr('Informe ECC; contenido omitido para respetar el presupuesto de transporte.')))))
@@ -292,6 +309,30 @@ def _bounded(report, capsule):
         while len(json.dumps(failure, ensure_ascii=False).encode()) > budget:
             failure['error'] = failure['error'][:-1]
         return failure
+
+
+# Flags of `muse exec --help` that take no value: a prompt may follow them. Any other
+# `-flag` (valued, optional-valued like -w, or unknown) leaves the arguments untouched.
+MUSE_FLAGS = frozenset((
+    '--json', '--api-key-stdin', '--parallel-tool-calls', '--no-parallel-tool-calls',
+    '--allow-workspace-switch', '--user-input-auto-resolve', '--subagent-worktree-isolation',
+    '--disable-web-tools', '--disable-reminders', '--disable-request-user-input',
+    '--no-foreign-personal-context', '--no-session-log', '--yolo', '--trust-workspace',
+    '--disable-approval', '--disable-sandbox', '--disable-write', '--disable-shell',
+    '--enable-shell-tool',
+))
+
+
+def _muse_prompt_last(arguments):
+    """True only when the last argument is surely the prompt, not the value of an option."""
+    if len(arguments) < 2:
+        return False
+    if '--' in arguments:
+        return arguments.index('--') == len(arguments)-2
+    last, before = arguments[-1], arguments[-2]
+    if last.startswith('-'):
+        return False
+    return not before.startswith('-') or '=' in before or before in MUSE_FLAGS
 
 
 def run(command, agent, role, config, cwd, *, override=None, output=None, profile=None):
@@ -322,8 +363,12 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
             prepared[position:position] = ['--json', '--output-schema', str(schema)]
         elif agent == 'claude':
             prepared[1:1] = ['--output-format', 'json', '--json-schema', json.dumps(SCHEMA)]
+        elif agent == 'muse':
+            # Muse's exec output format is undocumented: its text is read whole, so the task itself carries the schema.
+            if _muse_prompt_last(prepared):
+                prepared[-1] += '\n\n' + str(tr('Responde solo con un objeto JSON (sin texto ni cercas de código) que cumpla este esquema, con cinco campos de texto: ')) + json.dumps(SCHEMA)
         elif agent == 'pi':
-            pass  # Pi print mode emits the final answer as plain text.
+            pass  # Pi is read as plain text.
         # Raw events are drained and discarded. No transcripts or raw stderr reach the caller.
         with subprocess.Popen(prepared, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
@@ -333,13 +378,13 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
                     break
                 if len(line) > MAX_EVENT:
                     final = None
-                    if agent == 'pi':
+                    if agent in ('pi', 'muse'):
                         pi_overflow = True
                         pi_output.clear()
                     while line and not line.endswith(b'\n'):
                         line = child.stdout.readline(MAX_EVENT+1)
                     continue
-                if agent == 'pi':
+                if agent in ('pi', 'muse'):
                     if len(pi_output) + len(line) > MAX_EVENT:
                         pi_overflow = True
                         pi_output.clear()
@@ -367,7 +412,7 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
                 except (ValueError, TypeError, KeyError, AttributeError):
                     continue
             code = child.wait()
-        if agent == 'pi' and not pi_overflow:
+        if agent in ('pi', 'muse') and not pi_overflow:
             try:
                 final = _report(pi_output.decode('utf-8'))
             except (ValueError, UnicodeError, TypeError):
@@ -393,7 +438,7 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--settings')
-    parser.add_argument('--agent', choices=('claude', 'claude-2', 'codex', 'codex-2', 'pi'), required=True)
+    parser.add_argument('--agent', choices=('claude', 'claude-2', 'codex', 'codex-2', 'pi', 'muse'), required=True)
     parser.add_argument('--role', choices=context_policy.ROLES, required=True)
     parser.add_argument('--cwd', required=True)
     parser.add_argument('--context-override', type=json.loads)

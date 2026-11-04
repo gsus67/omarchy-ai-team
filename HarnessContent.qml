@@ -392,6 +392,7 @@ ColumnLayout {
         aiCheck: root.snapshot.aiCheck || ({})
         components: root.snapshot.components || []
         lastReconcile: root.snapshot.lastReconcile || ({})
+        pluginVersion: root.snapshot.pluginVersion || ""
         busy: root.busy
         onCommandRequested: arguments => root.commandRequested(arguments)
         onPageRequested: id => root.page = id

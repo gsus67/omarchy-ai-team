@@ -11,9 +11,12 @@ CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
 # Aliases stay the stored/CLI value; versions only decorate the UI (ids: claude-<alias>-<major>-<minor>).
 CLAUDE_VERSIONS = {'fable': '5.1', 'opus': '5.5', 'sonnet': '5.5', 'haiku': '5.5'}
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra')
-AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi'}
+AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi', 'muse': 'Muse'}
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
+# Listed by `muse exec --help`; `max` and `ultra` are left out because their cost is not documented.
+MUSE_EFFORTS = ('low', 'medium', 'high', 'xhigh')
+MUSE_ROLES = ('review', 'simple', 'code')  # roles with an executable Muse recipe; Planificar has none
 STRONG_ORDER = (('claude', 'opus'), ('codex', 'sol'), ('claude', 'sonnet'), ('codex', 'luna'))
 WRITING_ORDER = (*STRONG_ORDER, ('pi', ''))
 FALLBACK_ORDER = {'plan': WRITING_ORDER, 'code': WRITING_ORDER,
@@ -27,7 +30,7 @@ class TeamError(Exception):
 
 
 def families(selected):
-    return [agent for agent in ('claude', 'codex', 'pi')
+    return [agent for agent in ('claude', 'codex', 'pi', 'muse')
             if agent in selected or (agent == 'codex' and 'codex-2' in selected)
             or (agent == 'claude' and 'claude-2' in selected)]
 
@@ -64,6 +67,9 @@ def options(selected, catalog, free_pi, paid_ok):
         elif agent == 'codex':
             models = [(row['id'], [effort['reasoningEffort'] for effort in row.get('supportedReasoningEfforts', [])]
                        or ['high', 'medium']) for row in codex_models(catalog)]
+        elif agent == 'muse':
+            # Its help lists no models: `default` omits --model; a catalog entry is optional.
+            models = [(model, MUSE_EFFORTS) for model in dict.fromkeys(['default', *catalog.get('muse', [])])]
         else:
             models = [(model, pi_efforts(catalog, model)) for model in dict.fromkeys([
                 *free_pi, *(row['id'] for row in catalog.get('pi', []))])]
@@ -181,7 +187,7 @@ def set_usage_guard(config, enabled, percent):
     config['usageGuard'] = {'enabled': enabled, 'percent': percent}
 
 
-def effective(config, selected, catalog, free_pi, strict=False):
+def effective(config, selected, catalog, free_pi):
     recommendations, warnings = recommend(selected, catalog, free_pi)
     choices = options(selected, catalog, free_pi, config.get('piPaidApproved', False))
     warnings = [warning for warning in warnings if getattr(warning, 'source', str(warning)) != 'No hay revisión independiente: Programar y Revisar usan el mismo modelo.']
@@ -190,7 +196,7 @@ def effective(config, selected, catalog, free_pi, strict=False):
     for key in ROLES:
         recommended = recommendations.get(key)
         stored = config.get('team', {}).get('roles', {}).get(key, {})
-        manual = bool(stored.get('manual'))
+        manual = bool(stored.get('manual')) and not (stored.get('agent') == 'muse' and key not in MUSE_ROLES)  # no Muse recipe: drop the stale choice
         value = {field: stored.get(field, '') for field in ('agent', 'model', 'effort')} if manual else recommended
         if manual and value['agent'] == 'pi':
             # The catalog decides which free models have levels and can change after the role was saved.
@@ -209,31 +215,29 @@ def effective(config, selected, catalog, free_pi, strict=False):
         # A recommendation gives way to the plan the user chose; otherwise swapping both would be a deadlock.
         replacement = next(iter(alternatives('review', roles, choices)), None)
         if replacement: review = roles['review'] = {**replacement, 'manual': False, 'recommended': review['recommended']}
-    elif (not strict and same_family(plan, review) and review['manual'] and other_family(review['agent'], choices)):
-        # A saved choice that breaks the family rule is kept in the file but not used while another family exists.
-        replacement = next(iter(alternatives('review', roles, choices)), None)
-        if replacement:
-            warnings.append(tr('{papel}: {modelo} es de la misma familia que Planificar; se usa el recomendado y se conserva tu elección.',
-                               papel=LABELS['review'], modelo=review['model']))
-            review = roles['review'] = {**replacement, 'manual': False, 'recommended': review['recommended']}
+    independence = []
     if same_model(roles.get('code'), roles.get('review')):
         warning = tr('No hay revisión independiente: Programar y Revisar usan el mismo modelo.')
+        independence.append(warning)
         if warning not in warnings: warnings.append(warning)
     if same_family(plan, review):
         name = AGENT_NAMES[plan['agent']]
-        warnings.append(tr('Planificar y Revisar son de la misma familia ({familia}): Revisar debería ser de otra.', familia=name)
-                        if other_family(plan['agent'], choices) else
-                        tr('Solo hay una familia disponible ({familia}): Planificar y Revisar la comparten.', familia=name))
+        independence.append(tr('Planificar y Revisar son de la misma familia ({familia}): Revisar debería ser de otra.', familia=name)
+                            if other_family(plan['agent'], choices) else
+                            tr('Solo hay una familia disponible ({familia}): Planificar y Revisar la comparten.', familia=name))
+        warnings.append(independence[-1])
     if roles and only_pi(selected):
         warnings.append(tr('Solo Pi: los modelos de Nous no tienen sandbox ni aprobación por herramienta; pueden cambiar archivos o ejecutar comandos sin preguntar.'))
     if any(row['agent'] == 'codex' and row['effort'] == 'ultra' for row in roles.values()):
         warnings.append(tr('Ultra hace que Codex reparta el trabajo por su cuenta: rompe el reparto del equipo y gasta tokens por partida doble.'))
-    return {'enabled': config.get('team', {}).get('enabled', False), 'roles': roles, 'options': choices, 'warnings': warnings}
+    return {'enabled': config.get('team', {}).get('enabled', False), 'roles': roles, 'options': choices, 'warnings': warnings, 'independence': independence}
 
 
-def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok, check=True):
+def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok):
     if role not in ROLES:
         raise TeamError(tr('El papel de equipo no es válido.'))
+    if agent == 'muse' and role not in MUSE_ROLES:
+        raise TeamError(tr('Muse no tiene receta para este papel.'))
     if agent == 'pi' and model not in free_pi and not paid_ok:
         raise TeamError(tr('El modelo de pago requiere consentimiento explícito.'))
     choices = [row for row in options(selected, catalog, free_pi, paid_ok) if not row['paid'] or paid_ok]
@@ -247,39 +251,26 @@ def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, 
     value = dict(agent=agent, model=model, effort=effort)
     if not supported or effort not in supported:
         raise TeamError(tr('Agente, modelo o razonamiento no disponible para la selección actual.'))
-    candidate = copy.deepcopy(config)
-    candidate.setdefault('team', {}).setdefault('roles', {})[role] = {**value, 'manual': True}
-    state = effective(candidate, selected, catalog, free_pi, strict=True)
-    if check:
-        _check_rules(state, role, agent, choices)
     config.setdefault('team', {}).setdefault('enabled', False)
     config['team'].setdefault('roles', {})[role] = {**value, 'manual': True}
     config['team'].pop('notices', None)
+    return rule_warnings(config, selected, catalog, free_pi)
 
 
-def _check_rules(state, role, agent, choices):
-    if (same_model(state['roles'].get('code'), state['roles'].get('review'))
-            and len({(row['agent'], row['model']) for row in choices}) > 1):
-        raise TeamError(tr('Revisar debe usar un modelo distinto de Programar.'))
-    # Only these two roles can break the rule: an older configuration must not block the others.
-    if (role in ('plan', 'review') and same_family(state['roles'].get('plan'), state['roles'].get('review'))
-            and other_family(agent, choices)):
-        raise TeamError(tr('Revisar debe ser de otra familia que Planificar ({familia}).', familia=AGENT_NAMES[agent]))
+def rule_warnings(config, selected, catalog, free_pi):
+    """Independence warnings after saving: the choice is always kept, the user is only told."""
+    return effective(config, selected, catalog, free_pi)['independence']
 
 
 def set_roles(config, assignments, *, selected, catalog, free_pi, paid_ok):
-    """Apply several (role, agent, model, effort) at once; the rules are checked only on the final result."""
+    """Apply several (role, agent, model, effort) at once; returns the independence warnings of the result."""
     work = copy.deepcopy(config)
     for role, agent, model, effort in assignments:
         set_role(work, role, agent, model, effort, selected=selected, catalog=catalog,
-                 free_pi=free_pi, paid_ok=paid_ok, check=False)
-    choices = [row for row in options(selected, catalog, free_pi, paid_ok) if not row['paid'] or paid_ok]
-    state = effective(work, selected, catalog, free_pi, strict=True)
-    for role, agent, _model, _effort in assignments:
-        if role in ('plan', 'review', 'code'):
-            _check_rules(state, role, agent, choices)
+                 free_pi=free_pi, paid_ok=paid_ok)
     config.clear()
     config.update(work)
+    return rule_warnings(config, selected, catalog, free_pi)
 
 
 def reset(config):

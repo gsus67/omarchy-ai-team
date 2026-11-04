@@ -10,7 +10,7 @@ from string import Formatter
 INSTRUCTIONS = {
     'context_state.py': {'instructions', '_body', 'stable_instructions', '_idle_notice'},
     'native_local_tools.py': {'text', 'instruction'},
-    'native_team.py': {'text', 'instruction', 'codex_command', 'claude_command', 'role_commands'},
+    'native_team.py': {'text', 'instruction', 'codex_command', 'claude_command', 'role_commands', 'review_rule'},
     'shared_memory.py': {'instructions'},
     'native_plugins.py': {'codex_instructions'},
     'nous_quota.py': {'extension'},
@@ -19,7 +19,7 @@ INSTRUCTIONS = {
 INSTRUCTION_CONSTANTS = {'USAGE_GUARD_MESSAGE', 'SECURITY_DESCRIPTION', 'TOKENS_DESCRIPTION', 'SECURITY_TEXT',
                          'TOKENS_TEXT', 'SECURITY_COMMANDS', 'SECURITY_LESSONS', 'TOKENS_COMMANDS'}
 PROPER = {'AI Team', 'ECC Memory Vault', 'Superpowers', 'Claude', 'Claude Code', 'Codex',
-          'Codex-2', 'Pi', 'Grok', 'Nous', 'xAI', 'English', 'Español', 'Tokens', 'Git', 'Python',
+          'Codex-2', 'Pi', 'Muse', 'Muse Code', 'Grok', 'Nous', 'xAI', 'English', 'Español', 'Tokens', 'Git', 'Python',
           'Node', 'Ruff', 'ShellCheck', 'Gitleaks', 'OSV-Scanner', 'Semgrep', 'qmllint',
           'ripgrep', 'jq', 'yq', 'ast-grep', 'hadolint'}
 DISPLAY_FIELDS = {'text', 'label', 'detail', 'message', 'error', 'warning', 'purpose', 'brief',

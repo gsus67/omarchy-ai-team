@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 import goals
@@ -47,6 +48,25 @@ class GoalTests(unittest.TestCase):
         current['components'][1]['enabled'] = False
         self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'ready')
         self.assertEqual(goals.setup_state({**claude, 'installation': 'missing'}, [])['missingComponents'], ['cli'])
+
+    def test_unsupported_targets_are_not_missing(self):
+        current = data()
+        codex = current['agents'][0]
+        current['components'][1]['targets'][0].update(enabled=False, verified=False, unsupported=True)
+        self.assertEqual(goals.setup_state(codex, current['components'])['setupState'], 'ready')
+        self.assertEqual(goals.connection_line(current['components'][1], [codex]), '')
+
+    def test_quality_line_is_not_claimed_when_every_agent_is_unsupported(self):
+        current = data()
+        for component in current['components']:
+            for target in component['targets']:
+                target.update(enabled=False, verified=False, unsupported=True)
+        rows = goals.rows(current, self.config)
+        quality = next(row for row in rows if row['id'] == 'quality')
+        self.assertEqual(quality['line'], 'No disponible en este agente')
+        codex_only = data()
+        self.assertEqual(next(row for row in goals.rows(codex_only, self.config) if row['id'] == 'quality')['line'],
+                         'Plan, TDD y revisión')
 
     def test_repair_plan_separates_what_needs_an_installer(self):
         current = data()
@@ -103,6 +123,110 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(self.row(current, 'memory')['line'], 'Codex sin conectar')
         self.assertEqual(self.summary(current),
                          {'text': 'Memoria compartida: Codex sin conectar', 'page': 'memory', 'state': 'pending'})
+
+    def test_english_summary_translates_goal_name_and_line(self):
+        import i18n
+        current = data()
+        current['components'][1]['targets'][0].update(verified=False, needsReconcile=True)
+        with i18n.using('en'):
+            text = goals.summary(current, goals.rows(current, self.config))['text']
+        self.assertEqual(text, 'Shared memory · Codex: checking connection…')
+
+    def test_version_only_change_shows_checking_not_unconnected(self):
+        current = data()
+        current['components'][1]['targets'][0].update(verified=False, needsReconcile=True)
+        self.assertEqual(self.row(current, 'memory')['line'], 'Codex: comprobando conexión…')
+
+    def test_checking_does_not_hide_a_real_failure_of_another_agent(self):
+        current = data()
+        current['components'][1]['targets'][0].update(verified=False, needsReconcile=True)
+        current['components'][1]['targets'][1].update(verified=False)
+        self.assertEqual(self.row(current, 'memory')['line'], 'Claude Code sin conectar')
+        current['components'][1]['targets'][1].update(enabled=False)
+        self.assertEqual(self.row(current, 'memory')['line'], 'Claude Code sin conectar')
+
+    def test_disabled_target_with_mark_is_not_checking(self):
+        current = data()
+        current['components'][1]['targets'][0].update(enabled=False, verified=False, needsReconcile=True)
+        self.assertEqual(self.row(current, 'memory')['line'], 'Codex sin conectar')
+
+    def test_uninstalled_cli_is_never_marked_checking(self):
+        import harness
+        agent = {'id': 'codex', 'name': 'Codex', 'binary': '/fixture/codex', 'version': '2',
+                 'installation': 'missing', 'enabled': True}
+        config = {'superpowers': {'codex': {'agentBinary': '/fixture/codex', 'agentVersion': '1'}}}
+        inspected = {'verified': True, 'enabled': True, 'installed': True, 'detail': 'ok'}
+        with patch.object(harness.native_plugins, 'inspect', side_effect=lambda *a, **k: dict(inspected)):
+            target = harness.component_status('superpowers', config, [agent])['targets'][0]
+        self.assertFalse(target.get('needsReconcile'))
+
+    def _reconcile_fixture(self):
+        import harness
+        agent = {'id': 'codex', 'name': 'Codex', 'binary': '/fixture/codex', 'version': '2',
+                 'installation': 'installed', 'enabled': True}
+        config = {'superpowers': {'codex': {'agentBinary': '/fixture/codex', 'agentVersion': '1', 'digest': 'abc'}}}
+
+        def inspect(_agent, receipt=None):
+            return {'verified': bool((receipt or {}).get('digest')), 'enabled': True, 'installed': True, 'detail': 'ok'}
+
+        def target():
+            with patch.object(harness.native_plugins, 'inspect', side_effect=inspect):
+                return harness.component_status('superpowers', config, [agent])['targets'][0]
+
+        def reconcile(apply):
+            current = {'agents': [{**agent, 'missingComponents': ['superpowers']}],
+                       'components': [{'id': 'superpowers', 'enabled': True, 'targets': [target()]}]}
+            with patch.object(harness, 'status', return_value=current), \
+                 patch.object(harness, 'mise_inventory', return_value=({}, None)), \
+                 patch.object(harness, 'agent_tool', return_value=None), \
+                 patch.object(harness, 'apply_component', side_effect=apply), \
+                 patch.object(harness, 'save_config'):
+                return harness.reconcile_selected(config)
+        return agent, config, target, reconcile
+
+    def test_failed_reconcile_records_error_and_line_becomes_unconnected(self):
+        import harness
+        for error in (KeyError('installPath'), TypeError('x'), AttributeError('x')):
+            with self.subTest(error=type(error).__name__):
+                agent, config, target, reconcile = self._reconcile_fixture()
+                self.assertTrue(target()['needsReconcile'])
+                self.assertEqual(goals.connection_line({'targets': [target()]}, [agent]), 'Codex: comprobando conexión…')
+                report = reconcile(Mock(side_effect=error))
+                self.assertEqual(len(report['errors']), 1)
+                saved = config['superpowers']['codex']
+                self.assertNotIn('digest', saved)
+                self.assertNotIn('installPath', saved['lastError'])
+                self.assertIn('no es compatible', saved['lastError'])
+                self.assertEqual(report['errors'][0]['detail'], saved['lastError'])
+                after = target()
+                self.assertFalse(after.get('needsReconcile'))
+                self.assertEqual(goals.connection_line({'targets': [after]}, [agent]), 'Codex sin conectar')
+
+    def test_successful_reconcile_clears_the_mark(self):
+        agent, config, target, reconcile = self._reconcile_fixture()
+        self.assertTrue(target()['needsReconcile'])
+
+        def apply(cfg, key, agent_id, operation, tool):
+            cfg[key][agent_id].update(agentBinary='/fixture/codex', agentVersion='2', digest='abc')
+        report = reconcile(apply)
+        self.assertEqual(report['errors'], [])
+        self.assertEqual(len(report['repaired']), 1)
+        after = target()
+        self.assertTrue(after['verified'])
+        self.assertFalse(after.get('needsReconcile'))
+        self.assertEqual(goals.connection_line({'targets': [after]}, [agent]), '')
+
+    def test_component_status_flags_version_only_change_but_not_content_change(self):
+        import harness
+        agent = {'id': 'codex', 'name': 'Codex', 'binary': '/fixture/codex', 'version': '2',
+                 'installation': 'installed', 'enabled': True}
+        config = {'superpowers': {'codex': {'agentBinary': '/fixture/codex', 'agentVersion': '1'}}}
+        for inspected, expected in (({'verified': True, 'enabled': True, 'installed': True, 'detail': 'ok'}, True),
+                                    ({'verified': False, 'enabled': True, 'installed': True, 'detail': 'digest distinto'}, False)):
+            with self.subTest(inspected=inspected['verified']), patch.object(harness.native_plugins, 'inspect', side_effect=lambda *a, **k: dict(inspected)):
+                target = harness.component_status('superpowers', config, [agent])['targets'][0]
+                self.assertFalse(target['verified'])
+                self.assertEqual(bool(target.get('needsReconcile')), expected)
 
     def test_connection_requires_enabled_and_verified_for_every_selected_agent(self):
         for component, keys in ((0, ('quality',)), (1, ('memory',)), (2, ('tokens', 'security'))):

@@ -18,11 +18,24 @@ def connection_line(component: dict, agents: list[dict]) -> str:
     if not agents:
         return tr('Selecciona un agente')
     targets = {target['agent']: target for target in component.get('targets', [])}
+    checking = ''
     for agent in agents:
         target = targets.get(agent['id'], {})
-        if not (target.get('enabled') and target.get('verified')):
+        if target.get('unsupported'):
+            continue
+        if target.get('needsReconcile') and target.get('enabled'):
+            checking = checking or tr('{nombre}: comprobando conexión…', nombre=agent['name'])
+        elif not (target.get('enabled') and target.get('verified')):
             return tr('{nombre} sin conectar', nombre=agent['name'])
+    if checking:
+        return checking
     return ''
+
+
+def all_unsupported(component: dict, agents: list[dict]) -> bool:
+    """True when every selected agent has a target that cannot take this component (Muse Code)."""
+    targets = {target['agent']: target for target in component.get('targets', [])}
+    return bool(agents) and all(targets.get(agent['id'], {}).get('unsupported') for agent in agents)
 
 
 def setup_state(agent: dict, components: list[dict], *, models_missing: bool = False) -> dict:
@@ -36,7 +49,7 @@ def setup_state(agent: dict, components: list[dict], *, models_missing: bool = F
         if not component.get('enabled'):
             continue
         target = next((row for row in component.get('targets', []) if row.get('agent') == agent.get('id')), {})
-        if target.get('enabled') and target.get('verified'):
+        if target.get('unsupported') or (target.get('enabled') and target.get('verified')):
             continue
         missing.append(component['id'])
         issues.append({'component': component['id'], 'detail': target.get('detail', '')})
@@ -110,7 +123,7 @@ def rows(data: dict, config: dict) -> list[dict]:
             state = 'pending' if line else 'ok'
             if not line:
                 if key == 'quality':
-                    line = tr('Plan, TDD y revisión')
+                    line = tr('Plan, TDD y revisión') if not all_unsupported(component, agents) else tr('No disponible en este agente')
                 elif key == 'memory':
                     line, state = memory_line(data.get('memory', {}))
                 else:
@@ -128,7 +141,9 @@ def summary(data: dict, rows: list[dict]) -> dict:
             return {'text': tr('{nombre}: sin instalar', nombre=agent['name']), 'page': agent['id'], 'state': 'pending'}
     for row in rows:
         if row['state'] == 'pending':
-            return {'text': tr('{nombre}: {estado}', nombre=row['name'], estado=row['line']), 'page': row['id'], 'state': 'pending'}
+            text = (tr('{nombre} · {estado}', nombre=row['name'], estado=row['line']) if ':' in row['line']
+                    else tr('{nombre}: {estado}', nombre=row['name'], estado=row['line']))
+            return {'text': text, 'page': row['id'], 'state': 'pending'}
     if any(row['id'] == 'memory' and row['enabled'] and row['state'] == 'warning' for row in rows):
         return {'text': tr('Memoria compartida: copia fallida'), 'page': 'memory', 'state': 'warning'}
     return {'text': tr('Todo funcionando'), 'page': '', 'state': 'ok'}

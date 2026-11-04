@@ -65,7 +65,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertTrue(reply["ok"])
         self.assertEqual(harness.load_config()["agents"], {
-            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": True,
+            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": True, "muse": False,
         })
         self.assertEqual(manage_component.call_count, len(harness.MANAGED))
         self.assertEqual({call.args[1:] for call in manage_component.call_args_list},
@@ -171,7 +171,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertTrue(reply["ok"])
         self.assertEqual(harness.load_config()["agents"], {
-            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": False,
+            "claude": False, "codex": True, "codex-2": False, "claude-2": False, "pi": False, "muse": False,
         })
         self.assertEqual(manage_component.call_count, len(harness.MANAGED))
 

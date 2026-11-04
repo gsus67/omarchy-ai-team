@@ -40,7 +40,7 @@ class PanelBehaviourTests(unittest.TestCase):
         import sys
         sys.path.insert(0, str(ROOT / 'backend'))
         import harness
-        self.assertEqual(list(harness.AGENTS), ['claude', 'claude-2', 'codex', 'codex-2', 'pi'])
+        self.assertEqual(list(harness.AGENTS), ['claude', 'claude-2', 'codex', 'codex-2', 'pi', 'muse'])
 
 
 if __name__ == '__main__':

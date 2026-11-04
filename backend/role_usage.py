@@ -105,6 +105,10 @@ def summary(agents, *, window_days=7):
                 amounts.update(workers)
             except OSError:
                 pass
+            if any(agent.get('id') == 'muse' and agent.get('enabled') for agent in agents):
+                muse = usage_summary._muse_tokens(window_days, since=measured['since'], until=measured['asOf'])  # Muse has no ledger: its own sessions fill Otros
+                if muse is not None and amounts['otros'] is not None:
+                    amounts['otros'] += muse
     finally:
         if directory is not None:
             os.close(directory)

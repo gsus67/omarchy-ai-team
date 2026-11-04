@@ -27,6 +27,13 @@ class TeamTests(unittest.TestCase):
         catalog['codex'] = catalog['codex'][:5]
         self.assertEqual(team.recommend({'codex'}, catalog, [])[0]['code']['model'], 'gpt-6.1-sol')
 
+    def test_stored_muse_plan_is_dropped_for_the_recommendation(self):
+        config = self.config()
+        config['team']['roles']['plan'] = dict(agent='muse', model='x', effort='', manual=True)
+        row = team.effective(config, {'codex'}, CAT, [])['roles']['plan']
+        self.assertEqual(row['agent'], 'codex')
+        self.assertFalse(row['manual'])
+
     def test_manual_role_with_vanished_model_falls_back_but_is_kept(self):
         for field, value in (('model', 'vanished'), ('effort', 'vanished')):
             with self.subTest(field=field):
@@ -169,12 +176,12 @@ class TeamTests(unittest.TestCase):
         self.assertFalse(result['roles']['plan']['manual'])
         self.assertIn('haiku', ' '.join(result['warnings']))
 
-    def test_review_equal_code_rejected(self):
+    def test_review_equal_code_is_saved_with_warning(self):
         for changed, model in (('review', 'opus'), ('code', 'sonnet')):
             config = self.config()
-            with self.assertRaisesRegex(team.TeamError, 'Revisar|revisión'):
-                team.set_role(config, changed, 'claude', model, '', selected={'claude'}, catalog=CAT, free_pi=[], paid_ok=False)
-            self.assertEqual(config['team']['roles'], {})
+            notes = team.set_role(config, changed, 'claude', model, '', selected={'claude'}, catalog=CAT, free_pi=[], paid_ok=False)
+            self.assertEqual(config['team']['roles'][changed]['model'], model)
+            self.assertIn('revisión independiente', ' '.join(notes))
 
     def test_single_model_allowed_with_warning(self):
         config = self.config()

@@ -129,46 +129,44 @@ class CodexCatalogTests(unittest.TestCase):
 
 
 class ReviewFamilyTests(unittest.TestCase):
-    def test_review_in_the_family_of_plan_is_rejected(self):
+    def test_review_in_the_family_of_plan_is_saved_with_warning(self):
         config = {'team': {'roles': {}}}
         set_role(config, 'plan', 'claude', 'opus', 'high')
-        with self.assertRaisesRegex(team.TeamError, 'otra familia'):
-            set_role(config, 'review', 'claude', 'sonnet', 'high')
-        self.assertNotIn('review', config['team']['roles'])
+        notes = team.set_role(config, 'review', 'claude', 'sonnet', 'high', selected=set(SELECTED), catalog=CODEX_CATALOG,
+                              free_pi=[], paid_ok=False)
+        self.assertEqual(config['team']['roles']['review']['model'], 'sonnet')
+        self.assertIn('misma familia', ' '.join(notes))
+        state = team.effective(config, SELECTED, CODEX_CATALOG, [])
+        self.assertEqual((state['roles']['review']['agent'], state['roles']['review']['manual']), ('claude', True))
 
-    def test_plan_in_the_family_of_review_is_rejected(self):
+    def test_plan_in_the_family_of_review_is_saved_with_warning(self):
         config = manual_config(review=('codex', 'gpt-6-astra', 'high'))
-        with self.assertRaisesRegex(team.TeamError, 'otra familia'):
-            set_role(config, 'plan', 'codex', 'gpt-6.1-sol', 'high')
-        self.assertNotIn('plan', config['team']['roles'])
+        notes = team.set_role(config, 'plan', 'codex', 'gpt-6.1-sol', 'high', selected=set(SELECTED), catalog=CODEX_CATALOG,
+                              free_pi=[], paid_ok=False)
+        self.assertEqual(config['team']['roles']['plan']['model'], 'gpt-6.1-sol')
+        self.assertIn('misma familia', ' '.join(notes))
 
-    def test_the_rejection_is_translatable(self):
-        config = manual_config(review=('codex', 'gpt-6-astra', 'high'))
-        with self.assertRaises(team.TeamError) as caught:
-            set_role(config, 'plan', 'codex', 'gpt-6.1-sol', 'high')
-        self.assertEqual(getattr(caught.exception.args[0], 'source', None), 'Revisar debe ser de otra familia que Planificar ({familia}).')
-
-    def test_review_keeps_rejecting_the_model_of_code(self):
+    def test_review_equal_to_code_is_saved_with_warning(self):
         config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), code=('claude', 'sonnet', 'high'))
-        with self.assertRaisesRegex(team.TeamError, 'distinto de Programar'):
-            set_role(config, 'review', 'claude', 'sonnet', 'high')
+        notes = team.set_role(config, 'review', 'claude', 'sonnet', 'high', selected=set(SELECTED), catalog=CODEX_CATALOG,
+                              free_pi=[], paid_ok=False)
+        self.assertEqual(config['team']['roles']['review']['model'], 'sonnet')
+        self.assertIn('revisión independiente', ' '.join(notes))
 
     def test_set_roles_swaps_plan_and_review_atomically(self):
         config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), review=('claude', 'opus', 'high'))
-        with self.assertRaises(team.TeamError):
-            set_role(config, 'plan', 'claude', 'sonnet', 'high')
+        set_role(config, 'plan', 'claude', 'sonnet', 'high')
         team.set_roles(config, [('plan', 'claude', 'opus', 'high'), ('review', 'codex', 'gpt-6.1-sol', 'high')],
                        selected=set(SELECTED), catalog=CODEX_CATALOG, free_pi=[], paid_ok=False)
         roles = config['team']['roles']
         self.assertEqual((roles['plan']['agent'], roles['review']['agent']), ('claude', 'codex'))
 
-    def test_set_roles_changes_nothing_when_the_result_breaks_the_rule(self):
+    def test_set_roles_saves_a_pair_in_one_family_and_warns(self):
         config = manual_config(plan=('codex', 'gpt-6.1-sol', 'high'), review=('claude', 'opus', 'high'))
-        before = copy.deepcopy(config)
-        with self.assertRaisesRegex(team.TeamError, 'otra familia'):
-            team.set_roles(config, [('plan', 'claude', 'opus', 'high'), ('review', 'claude', 'sonnet', 'high')],
-                           selected=set(SELECTED), catalog=CODEX_CATALOG, free_pi=[], paid_ok=False)
-        self.assertEqual(config, before)
+        notes = team.set_roles(config, [('plan', 'claude', 'opus', 'high'), ('review', 'claude', 'sonnet', 'high')],
+                               selected=set(SELECTED), catalog=CODEX_CATALOG, free_pi=[], paid_ok=False)
+        self.assertEqual(config['team']['roles']['review']['model'], 'sonnet')
+        self.assertIn('misma familia', ' '.join(notes))
 
     def test_one_family_warns_without_blocking(self):
         for selected, catalog, free, role_row in (
@@ -187,12 +185,12 @@ class ReviewFamilyTests(unittest.TestCase):
         set_role(config, 'review', 'claude', 'sonnet', 'high', selected={'claude', 'pi'}, catalog=catalog)
         self.assertIn('Solo hay una familia disponible', ' '.join(team.effective(config, {'claude', 'pi'}, catalog, [])['warnings']))
 
-    def test_manual_configuration_that_breaks_the_rule_warns_and_is_kept(self):
+    def test_manual_configuration_that_breaks_the_rule_warns_and_is_used(self):
         config = manual_config(plan=('claude', 'opus', 'high'), review=('claude', 'sonnet', 'high'))
         state = team.effective(config, SELECTED, CODEX_CATALOG, [])
-        self.assertFalse(state['roles']['review']['manual'])
-        self.assertNotEqual(state['roles']['review']['agent'], 'claude')
-        self.assertIn('misma familia que Planificar', ' '.join(state['warnings']))
+        self.assertTrue(state['roles']['review']['manual'])
+        self.assertEqual(state['roles']['review']['agent'], 'claude')
+        self.assertIn('misma familia (', ' '.join(state['warnings']))
         self.assertEqual(config['team']['roles']['review']['model'], 'sonnet')
 
     def test_a_broken_configuration_does_not_block_other_roles(self):
@@ -435,7 +433,7 @@ class AlternativeSkillTests(unittest.TestCase):
 
     def test_skill_states_when_to_change_and_when_not_to(self):
         for wanted in ('reintenta una vez', 'siguiente alternativa', 'permisos denegados', 'encargo inválido',
-                       'por qué se cambió', 'déjalo pendiente', 'nunca la hace el modelo'):
+                       'por qué se cambió', 'déjalo pendiente', 'no la haga el modelo que escribió'):
             self.assertIn(wanted, self.text)
 
     def test_startup_block_points_to_the_alternatives(self):

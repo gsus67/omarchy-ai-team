@@ -41,6 +41,7 @@ def check_version(name, tool):
     result = subprocess.run([tool['binary'], '--version'], cwd=Path.home(), capture_output=True, text=True, timeout=15)
     pattern = r'^codex-cli\s+(\d+\.\d+\.\d+)\b' if name == 'codex' else r'^(\d+\.\d+\.\d+)\s+\(Claude Code\)'
     if name == 'pi':pattern=r'^(\d+\.\d+\.\d+)\s*$'
+    if name == 'muse':pattern=r'^Muse Code (\d+\.\d+\.\d+)'
     match = re.search(pattern, result.stdout, re.MULTILINE)
     if result.returncode or not match or (tool.get('version') and match[1] != tool['version']):
         raise AgentError(tr('La CLI no confirmó la versión que declara su gestor; no se marcará comprobada.'))
@@ -48,6 +49,9 @@ def check_version(name, tool):
 
 
 def operate(name, action, inventory, detect, refresh):
+    if name == 'muse':
+        # Its help documents no mise package or update channel; installing is left to its own method.
+        raise AgentError(tr('Muse Code no se instala ni actualiza desde AI Team; usa su método oficial.'))
     if name not in ('claude', 'codex', 'pi') or action not in ('install', 'update', 'uninstall'):
         raise AgentError(tr('Operación de agente no admitida.'))
     current = detect(name, inventory)

@@ -26,6 +26,11 @@ class PluginError(Exception):
 
 
 def agent_home(agent):
+    if agent == "muse":
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        if not base.is_absolute():
+            raise PluginError(tr('{key} debe ser una ruta absoluta.', key="XDG_CONFIG_HOME"))
+        return base / "muse"
     if agent == "pi":
         import native_pi
         return native_pi.home()
