@@ -221,6 +221,20 @@ def muse_commands(key, row, *, settings_file=None):
     return [shlex.join([*command, 'muse', 'exec', '--approval-mode', 'untrusted', *model, *effort, '<encargo>'])+' </dev/null']
 
 
+def review_rule(assignments):
+    """Independence of Revisar: a recommendation, or an explicit note when the user's choice repeats model/family."""
+    import team as roles
+    code, plan, review = assignments.get('code'), assignments.get('plan'), assignments.get('review')
+    repeated = []
+    if roles.same_model(code, review): repeated.append('el mismo modelo que programó')
+    if roles.same_family(plan, review): repeated.append('la misma familia que planificó')
+    if repeated:
+        return ('La elección actual de Revisar repite ' + ' y '.join(repeated) + ': se permite por elección del usuario, pero no hay revisión independiente; infórmalo al terminar. '
+                'Al saltar a una alternativa, prefiere otro modelo y otra familia. ')
+    return ('Se recomienda que una revisión no la haga el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: '
+            'prefiere esa alternativa. ')
+
+
 def text(paths, settings_file, team=None):
     import team as roles
     state = team or {}; assignments = state.get('roles', {})
@@ -257,7 +271,7 @@ def text(paths, settings_file, team=None):
         'Si el modelo de un papel no responde, reintenta una vez un fallo transitorio (conexión, tiempo agotado o saturación). '
         'Si sigue fallando, o es cuota, modelo no encontrado o configuración pendiente, usa la siguiente alternativa de ese papel, en orden. '
         'Ante permisos denegados o un encargo inválido no cambies de modelo: corrígelo o avisa. '
-        'Una revisión nunca la hace el modelo que escribió el cambio ni un modelo de la familia que planificó, salvo que solo haya una familia disponible: salta esa alternativa. '
+        + review_rule(assignments) +
         'Informa qué modelo hizo cada papel y por qué se cambió. Si no queda alternativa, déjalo pendiente y dilo; no lo des por hecho.',
         ('Solo Pi: los modelos de Nous cubren todos los papeles y no tienen sandbox ni aprobación por herramienta, así que pueden cambiar archivos o ejecutar comandos sin preguntar. '
          'Pedir a Revisar que solo lea es una instrucción, no es aislamiento efectivo: trabaja en un worktree Git y comprueba el diff antes de aceptar el resultado. '

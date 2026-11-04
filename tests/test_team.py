@@ -169,12 +169,12 @@ class TeamTests(unittest.TestCase):
         self.assertFalse(result['roles']['plan']['manual'])
         self.assertIn('haiku', ' '.join(result['warnings']))
 
-    def test_review_equal_code_rejected(self):
+    def test_review_equal_code_is_saved_with_warning(self):
         for changed, model in (('review', 'opus'), ('code', 'sonnet')):
             config = self.config()
-            with self.assertRaisesRegex(team.TeamError, 'Revisar|revisión'):
-                team.set_role(config, changed, 'claude', model, '', selected={'claude'}, catalog=CAT, free_pi=[], paid_ok=False)
-            self.assertEqual(config['team']['roles'], {})
+            notes = team.set_role(config, changed, 'claude', model, '', selected={'claude'}, catalog=CAT, free_pi=[], paid_ok=False)
+            self.assertEqual(config['team']['roles'][changed]['model'], model)
+            self.assertIn('revisión independiente', ' '.join(notes))
 
     def test_single_model_allowed_with_warning(self):
         config = self.config()

@@ -18,12 +18,17 @@ def connection_line(component: dict, agents: list[dict]) -> str:
     if not agents:
         return tr('Selecciona un agente')
     targets = {target['agent']: target for target in component.get('targets', [])}
+    checking = ''
     for agent in agents:
         target = targets.get(agent['id'], {})
         if target.get('unsupported'):
             continue
-        if not (target.get('enabled') and target.get('verified')):
+        if target.get('needsReconcile') and target.get('enabled'):
+            checking = checking or tr('{nombre}: comprobando conexión…', nombre=agent['name'])
+        elif not (target.get('enabled') and target.get('verified')):
             return tr('{nombre} sin conectar', nombre=agent['name'])
+    if checking:
+        return checking
     return ''
 
 
@@ -136,7 +141,9 @@ def summary(data: dict, rows: list[dict]) -> dict:
             return {'text': tr('{nombre}: sin instalar', nombre=agent['name']), 'page': agent['id'], 'state': 'pending'}
     for row in rows:
         if row['state'] == 'pending':
-            return {'text': tr('{nombre}: {estado}', nombre=row['name'], estado=row['line']), 'page': row['id'], 'state': 'pending'}
+            text = (tr('{nombre} · {estado}', nombre=row['name'], estado=row['line']) if ':' in row['line']
+                    else tr('{nombre}: {estado}', nombre=row['name'], estado=row['line']))
+            return {'text': text, 'page': row['id'], 'state': 'pending'}
     if any(row['id'] == 'memory' and row['enabled'] and row['state'] == 'warning' for row in rows):
         return {'text': tr('Memoria compartida: copia fallida'), 'page': 'memory', 'state': 'warning'}
     return {'text': tr('Todo funcionando'), 'page': '', 'state': 'ok'}

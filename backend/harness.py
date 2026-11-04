@@ -498,7 +498,10 @@ def component_status(key, config, agents):
                 plugin = (native_muse.inspect_component(key, receipt) if cli=='muse' else native_pi.inspect_component(key, receipt)
                           if cli=='pi' and key in ('memory','superpowers') else adapter.inspect(cli, receipt, **options))
             if plugin["verified"] and (receipt.get("agentBinary") != agent["binary"] or receipt.get("agentVersion") != agent["version"]):
+                # Native inspection already matched the content (digest); only the CLI identity moved.
                 plugin["verified"] = False
+                if agent["installation"] == "installed":
+                    plugin["needsReconcile"] = True
                 plugin["detail"] = tr('El agente cambió desde la última comprobación. Pulsa Comprobar.')
             if receipt.get("lastError") and not plugin["verified"]:
                 plugin["detail"] = i18n.saved_message(receipt["lastError"], i18n.current_language()) + "\n" + plugin["detail"]
@@ -649,13 +652,16 @@ def reconcile_selected(config):
         try:
             apply_component(config, key, agent, 'enable', agent_tool(agent, inventory))
             report['repaired'].append(row)
-        except (HarnessError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        except (HarnessError, native_plugins.PluginError, OSError, ValueError, subprocess.TimeoutExpired,
+                KeyError, TypeError, AttributeError) as error:
+            message = (tr('La respuesta o configuración del gestor nativo no es compatible. No se marcará la conexión como comprobada.')
+                       if isinstance(error, (KeyError, TypeError, AttributeError)) else str(error))
             record = config.setdefault(key, {}).setdefault(agent, {})
-            if record.get('lastError') != str(error) or 'digest' in record:
+            if record.get('lastError') != message or 'digest' in record:
                 record.pop('digest', None)
-                record['lastError'] = str(error)
+                record['lastError'] = message
                 save_config(config)
-            report['errors'].append({**row, 'detail': str(error)})
+            report['errors'].append({**row, 'detail': message})
     if report['repaired']:
         config['lastReconcile'] = {'at': datetime.now(timezone.utc).isoformat(), 'repaired': report['repaired']}
         save_config(config)
@@ -1205,17 +1211,17 @@ def _main(argv=None):
         elif args.command in ('team-set', 'team-set-pair', 'team-recommend', 'team-models'):
             if args.command == 'team-set-pair':
                 selected, catalog, free_pi = team_context(config)
-                team.set_roles(config, [('plan', args.plan_agent, args.plan_model, args.plan_effort),
+                notes = team.set_roles(config, [('plan', args.plan_agent, args.plan_model, args.plan_effort),
                                         ('review', args.review_agent, args.review_model, args.review_effort)],
                                selected=selected, catalog=catalog, free_pi=free_pi,
                                paid_ok=config.get('piPaidApproved', False))
-                message = tr('Papeles guardados.')
+                message = ' '.join([tr('Papeles guardados.'), *notes])
             elif args.command == 'team-set':
                 selected, catalog, free_pi = team_context(config)
-                team.set_role(config, args.role, args.agent, args.model, args.effort,
+                notes = team.set_role(config, args.role, args.agent, args.model, args.effort,
                               selected=selected, catalog=catalog, free_pi=free_pi,
                               paid_ok=config.get('piPaidApproved', False))
-                message = tr('Papel guardado.')
+                message = ' '.join([tr('Papel guardado.'), *notes])
             elif args.command == 'team-recommend':
                 team.reset(config)
                 message = tr('Papeles recomendados restablecidos.')

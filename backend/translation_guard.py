@@ -10,7 +10,7 @@ from string import Formatter
 INSTRUCTIONS = {
     'context_state.py': {'instructions', '_body', 'stable_instructions', '_idle_notice'},
     'native_local_tools.py': {'text', 'instruction'},
-    'native_team.py': {'text', 'instruction', 'codex_command', 'claude_command', 'role_commands'},
+    'native_team.py': {'text', 'instruction', 'codex_command', 'claude_command', 'role_commands', 'review_rule'},
     'shared_memory.py': {'instructions'},
     'native_plugins.py': {'codex_instructions'},
     'nous_quota.py': {'extension'},

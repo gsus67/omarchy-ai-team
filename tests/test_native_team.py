@@ -72,6 +72,20 @@ class NativeTeamTests(unittest.TestCase):
         self.assertLess(text.index('CODEX_HOME=' + str(self.root / '.codex-2')),
                         text.index('CODEX_HOME=' + str(self.root / '.codex') + ' '))
 
+    def test_review_independence_text_matches_the_current_choice(self):
+        def role(agent, model):
+            return {'agent': agent, 'model': model, 'effort': 'high'}
+        repeated = {'plan': role('codex', 'a'), 'code': role('claude', 'b'), 'review': role('codex', 'a')}
+        independent = {'plan': role('claude', 'a'), 'code': role('codex', 'b'), 'review': role('codex', 'c')}
+        same_code = {'plan': role('claude', 'a'), 'code': role('codex', 'b'), 'review': role('codex', 'b')}
+        for assignments in (repeated, same_code):
+            text = native_team.review_rule(assignments)
+            self.assertNotIn('nunca', text)
+            self.assertIn('por elección del usuario', text)
+            self.assertIn('no hay revisión independiente', text)
+        self.assertIn('Se recomienda', native_team.review_rule(independent))
+        self.assertNotIn('Una revisión nunca', native_team.review_rule(independent))
+
     def test_a_task_that_does_not_answer_is_not_retried_forever(self):
         text = self.content()
         for wanted in ('intenta lanzarlo una sola vez', 'timeout 60', 'sandbox', 'di qué papel quedó pendiente'):
@@ -320,13 +334,12 @@ class NativeTeamTests(unittest.TestCase):
         self.assertFalse(config['team']['enabled'])
         self.assertTrue((native_team.layout('claude')['source'] / 'SKILL.md').exists())
 
-    def test_team_set_rejection_returns_spanish_error_without_saving(self):
+    def test_team_set_same_model_saves_and_warns(self):
         self.config['agents'] = {'claude': True}; harness.save_config(self.config)
-        before = self.settings.read_bytes()
         code, reply = self.run_main(['team-set', 'review', 'claude', 'opus'])
-        self.assertEqual(code, 1)
-        self.assertIn('Revisar', reply['error'])
-        self.assertEqual(self.settings.read_bytes(), before)
+        self.assertEqual(code, 0)
+        self.assertIn('revisión independiente', json.dumps(reply, ensure_ascii=False))
+        self.assertEqual(harness.load_config()['team']['roles']['review']['model'], 'opus')
 
     def test_paid_pi_rejected_even_if_native_catalog_lists_it(self):
         self.config.update(agents={'pi': True}, agentCatalogs={'pi': {'models': [{'id': 'xai/grok'}]}})
