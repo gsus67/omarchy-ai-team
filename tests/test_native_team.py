@@ -172,6 +172,18 @@ class NativeTeamTests(unittest.TestCase):
         review = text[text.index('Revisar:\n```sh'):]
         self.assertIn('pi -p --provider nous --model b:free', review[:review.index('```', 12)])
 
+    def test_pi_with_executable_plan_and_code_recipes_is_not_barred_from_them(self):
+        state = self.state({'claude', 'pi'})
+        pi = {'agent': 'pi', 'model': 'nous/a:free', 'effort': ''}
+        state['roles'] = {**state['roles'], 'plan': pi, 'code': pi}
+        text = self.content(state=state)
+        self.assertNotIn('no delegues Planificar ni Programar a Pi', text)
+        self.assertIn('Pi tiene receta ejecutable para', text)
+        state['roles'] = {**state['roles'], 'plan': pi, 'code': {**pi, 'agent': 'claude'}}
+        text = self.content(state=state)
+        self.assertIn('no delegues Programar a Pi', text)
+        self.assertNotIn('no delegues Planificar', text)
+
     def test_only_pi_startup_block_uses_the_review_recipe(self):
         block = native_team.instruction('', native_team.layout('pi'), True, team=self.only_pi_state())
         self.assertIn('--model b:free', block)
@@ -184,9 +196,9 @@ class NativeTeamTests(unittest.TestCase):
         self.assertIn("'<encargo>'", command)
         self.assertTrue(command.endswith('</dev/null'))
 
-    def test_pi_code_role_stays_pending_next_to_another_cli(self):
+    def test_pi_code_role_stays_executable_next_to_another_cli(self):
         row = {'agent': 'pi', 'model': 'nous/a:free', 'effort': ''}
-        self.assertIn('pendiente', native_team.role_commands('code', row, [])[0])
+        self.assertNotIn('pendiente', native_team.role_commands('code', row, [])[0])
 
     def test_team_set_round_trip_and_recommend_preserves_foreign(self):
         self.config['foreign'] = 'keep'; harness.save_config(self.config)

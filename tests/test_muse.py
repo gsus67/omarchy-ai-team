@@ -151,15 +151,29 @@ class MuseTests(unittest.TestCase):
         row = dict(agent='muse', model='chosen', effort='high')
         for key in ('review', 'simple'):
             command = native_team.role_commands(key, row, ['claude'])[0]
-            self.assertIn("muse exec --approval-mode untrusted --model chosen --reasoning-effort high '<encargo>'", command)
+            self.assertIn("muse exec --approval-mode untrusted --disable-write --disable-shell --model chosen --reasoning-effort high '<encargo>'", command)
             self.assertIn('context_run.py', command)
             self.assertIn('--agent muse', command)
         default = native_team.role_commands('review', dict(agent='muse', model='default', effort=''), ['claude'])[0]
-        self.assertIn("muse exec --approval-mode untrusted '<encargo>'", default)
+        self.assertIn("muse exec --approval-mode untrusted --disable-write --disable-shell '<encargo>'", default)
         code = native_team.role_commands('code', row, ['claude'])[0]
         self.assertIn("muse exec --approval-mode on-request --workspace '<dir>' --model chosen --reasoning-effort high '<encargo>'", code)
         self.assertNotIn('--yolo', code)
         self.assertTrue(native_team.role_commands('plan', row, ['claude'])[0].startswith('# Muse'))
+
+    def test_muse_cannot_be_assigned_to_plan_and_keeps_the_previous_choice(self):
+        config = {}
+        team.set_role(config, 'plan', 'claude', 'opus', 'high', selected={'claude', 'muse'}, catalog={}, free_pi=[], paid_ok=False)
+        with self.assertRaises(team.TeamError):
+            team.set_role(config, 'plan', 'muse', 'default', 'high', selected={'claude', 'muse'}, catalog={}, free_pi=[], paid_ok=False)
+        self.assertEqual(config['team']['roles']['plan']['agent'], 'claude')
+
+    def test_pi_recipe_stays_executable_next_to_muse(self):
+        row = dict(agent='pi', model='nous/model', effort='')
+        selected = {'pi', 'muse'}
+        self.assertFalse(team.only_pi(selected))
+        for key in ('plan', 'code'):
+            self.assertFalse(native_team.role_commands(key, row, ['claude'], only_pi=False)[0].startswith('#'))
 
     def test_components_are_explicitly_unsupported(self):
         for key in ('memory', 'superpowers', 'local-tools', 'team'):
@@ -256,6 +270,31 @@ class MuseTotalTokensTests(unittest.TestCase):
         self._session('2026/old', self._line(now - 31 * day, self._usage()))
         agents = [{'id': 'muse', 'enabled': True}]
         self.assertEqual(usage_summary.total_tokens(agents), 42 + 42 + 5)
+
+    def test_muse_tokens_respect_measured_window(self):
+        from datetime import datetime, timezone
+        base = 1_800_000_000
+        at = lambda seconds: (base + seconds) * 1_000_000
+        self._session('2026/w', self._line(at(-10), self._usage()), self._line(at(0), self._usage()),
+                      self._line(at(50), self._usage()), self._line(at(100), self._usage()), self._line(at(101), self._usage()))
+        since, until = (datetime.fromtimestamp(base + offset, timezone.utc) for offset in (0, 100))
+        self.assertEqual(usage_summary._muse_tokens(36500, since=since, until=until), 42 * 3)
+
+    def test_role_usage_summary_counts_muse_sessions_in_otros(self):
+        import role_usage
+        now = int(time.time() * 1_000_000)
+        self._session('2026/a', self._line(now, self._usage()))
+        measured = {'since': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) - __import__('datetime').timedelta(minutes=1), 'asOf': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) + __import__('datetime').timedelta(minutes=1), 'jefe': 1, 'otros': 2, 'limited': False}
+        agents = [{'id': 'claude', 'enabled': True}, {'id': 'muse', 'enabled': True}]
+        start = measured['since'] - __import__('datetime').timedelta(days=30)
+        with patch.object(role_usage.usage_start, '_open_state_dir', side_effect=lambda *a, **k: os.open('/', os.O_RDONLY)), \
+                patch.object(role_usage.usage_start, '_read_start', return_value=start), \
+                patch.object(role_usage.usage_summary, 'measurement', return_value=measured), \
+                patch.object(role_usage, '_entries', return_value=iter([])):
+            result = role_usage.summary(agents)
+            without = role_usage.summary(agents[:1])
+        share = lambda r: next(x for x in r['roles'] if x['role'] == 'otros')['tokens']
+        self.assertNotEqual(share(result), share(without))
 
     def test_muse_tokens_add_to_breakdown_and_need_enabled(self):
         now = int(time.time() * 1_000_000)

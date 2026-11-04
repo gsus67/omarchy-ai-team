@@ -83,11 +83,13 @@ ColumnLayout {
       required property var modelData
       readonly property var current: (root.info.roles || {})[role.modelData.id] || ({})
       readonly property var recommended: role.current.recommended || ({})
-      readonly property var choice: (root.info.options || []).find(option => option.agent === role.current.agent && option.model === role.current.model) || ({})
+      // Muse has no recipe for Planificar: it is never offered there.
+      readonly property var roleOptions: (root.info.options || []).filter(option => option.agent !== "muse" || role.modelData.id !== "plan")
+      readonly property var choice: role.roleOptions.find(option => option.agent === role.current.agent && option.model === role.current.model) || ({})
       // Two short lists instead of one long one: the provider first, then only its models in alphabetical order.
-      readonly property var providerOptions: Array.from(new Set((root.info.options || []).map(option => option.agent)))
+      readonly property var providerOptions: Array.from(new Set(role.roleOptions.map(option => option.agent)))
         .sort((a, b) => root.providerRank(a) - root.providerRank(b)).map(agent => ({value: agent, label: root.providerName(agent)}))
-      readonly property var providerModels: (root.info.options || []).filter(option => option.agent === role.current.agent).slice()
+      readonly property var providerModels: role.roleOptions.filter(option => option.agent === role.current.agent).slice()
         .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
       readonly property var modelOptions: role.providerModels.map(option => ({
         value: JSON.stringify([option.agent, option.model]),
@@ -132,7 +134,7 @@ ColumnLayout {
           enabled: !root.busy && options.length > 1
           onChanged: value => {
             // The provider's recommended model when it has one, otherwise its first one alphabetically.
-            const models = (root.info.options || []).filter(option => option.agent === value)
+            const models = role.roleOptions.filter(option => option.agent === value)
               .sort((a, b) => a.model.localeCompare(b.model, undefined, {numeric: true, sensitivity: "base"}))
             const target = models.find(option => option.agent === role.recommended.agent && option.model === role.recommended.model) || models[0]
             if (target) role.choose(target.agent, target.model, (target.recommendedEfforts || {})[role.modelData.id] || "")

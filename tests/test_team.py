@@ -27,6 +27,13 @@ class TeamTests(unittest.TestCase):
         catalog['codex'] = catalog['codex'][:5]
         self.assertEqual(team.recommend({'codex'}, catalog, [])[0]['code']['model'], 'gpt-6.1-sol')
 
+    def test_stored_muse_plan_is_dropped_for_the_recommendation(self):
+        config = self.config()
+        config['team']['roles']['plan'] = dict(agent='muse', model='x', effort='', manual=True)
+        row = team.effective(config, {'codex'}, CAT, [])['roles']['plan']
+        self.assertEqual(row['agent'], 'codex')
+        self.assertFalse(row['manual'])
+
     def test_manual_role_with_vanished_model_falls_back_but_is_kept(self):
         for field, value in (('model', 'vanished'), ('effort', 'vanished')):
             with self.subTest(field=field):

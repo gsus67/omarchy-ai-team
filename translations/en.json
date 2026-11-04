@@ -736,6 +736,8 @@
   "Falta el comando nativo del obrero.": "The native worker command is missing.",
   "La CLI nativa terminó con código {code}; stderr descartado.": "The native CLI exited with code {code}; stderr discarded.",
   "La receta de Codex requiere exec nativo.": "The Codex recipe requires native exec.",
+  "Responde solo con un objeto JSON (sin texto ni cercas de código) que cumpla este esquema, con cinco campos de texto: ": "Reply only with a JSON object (no text or code fences) that matches this schema, with five text fields: ",
+  "Muse no tiene receta para este papel.": "Muse has no recipe for this role.",
   "La receta de Muse requiere exec nativo.": "The Muse recipe requires native exec.",
   "Muse Code no admite este componente: su ayuda no documenta el formato necesario. No se escribió ninguna configuración.": "Muse Code does not support this component: its help does not document the required format. No configuration was written.",
   "Muse Code no se instala ni actualiza desde AI Team; usa su método oficial.": "Muse Code is not installed or updated from AI Team; use its official method.",

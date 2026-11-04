@@ -201,7 +201,7 @@ MUSE_FIELDS = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_writ
 MUSE_MAX_FILES, MUSE_MAX_BYTES = 5000, 64 * 1024 * 1024
 
 
-def _muse_session_tokens(path, since):
+def _muse_session_tokens(path, since, until=None):
     """Tokens of the ``model_completed`` events of one session file recorded since ``since`` (microseconds), or None."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)  # never follow links or wait on a pipe
@@ -216,7 +216,7 @@ def _muse_session_tokens(path, since):
                 record = json.loads(line)
                 event = record['payload']['event']
                 recorded, usage = record['recorded_at'], event['usage']
-                if event['kind'] != 'model_completed' or type(recorded) is not int or recorded < since or not isinstance(usage, dict):
+                if event['kind'] != 'model_completed' or type(recorded) is not int or recorded < since or (until is not None and recorded > until) or not isinstance(usage, dict):
                     continue
             except (ValueError, KeyError, TypeError, RecursionError):
                 continue
@@ -226,11 +226,13 @@ def _muse_session_tokens(path, since):
     return total
 
 
-def _muse_tokens():
-    """Tokens of every Muse session (subagents included) of the last MUSE_DAYS days, or None without any."""
+def _muse_tokens(days=MUSE_DAYS, *, since=None, until=None):
+    """Tokens of every Muse session (subagents included) of the last ``days`` days, or None without any.
+    With aware datetimes ``since``/``until`` only events in [since, until] count (the measured window)."""
     base = os.environ.get('XDG_DATA_HOME') or ''
     root = (Path(base) if os.path.isabs(base) else Path.home() / '.local/share') / 'muse' / 'sessions'  # XDG: relative is ignored
-    since = int((time.time() - MUSE_DAYS * 86400) * 1_000_000)
+    first = int((since.timestamp() if since else time.time() - days * 86400) * 1_000_000)
+    last = int(until.timestamp() * 1_000_000) if until else None
     total, seen = None, 0
     for folder, _, names in os.walk(root):  # os.walk does not follow directory links
         if 'session.jsonl' not in names:
@@ -238,7 +240,7 @@ def _muse_tokens():
         seen += 1
         if seen > MUSE_MAX_FILES:
             break
-        tokens = _muse_session_tokens(os.path.join(folder, 'session.jsonl'), since)
+        tokens = _muse_session_tokens(os.path.join(folder, 'session.jsonl'), first, last)
         if tokens is not None:
             total = (total or 0) + tokens
     return total

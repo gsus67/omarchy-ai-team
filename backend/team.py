@@ -16,6 +16,7 @@ CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
 # Listed by `muse exec --help`; `max` and `ultra` are left out because their cost is not documented.
 MUSE_EFFORTS = ('low', 'medium', 'high', 'xhigh')
+MUSE_ROLES = ('review', 'simple', 'code')  # roles with an executable Muse recipe; Planificar has none
 STRONG_ORDER = (('claude', 'opus'), ('codex', 'sol'), ('claude', 'sonnet'), ('codex', 'luna'))
 WRITING_ORDER = (*STRONG_ORDER, ('pi', ''))
 FALLBACK_ORDER = {'plan': WRITING_ORDER, 'code': WRITING_ORDER,
@@ -195,7 +196,7 @@ def effective(config, selected, catalog, free_pi):
     for key in ROLES:
         recommended = recommendations.get(key)
         stored = config.get('team', {}).get('roles', {}).get(key, {})
-        manual = bool(stored.get('manual'))
+        manual = bool(stored.get('manual')) and not (stored.get('agent') == 'muse' and key not in MUSE_ROLES)  # no Muse recipe: drop the stale choice
         value = {field: stored.get(field, '') for field in ('agent', 'model', 'effort')} if manual else recommended
         if manual and value['agent'] == 'pi':
             # The catalog decides which free models have levels and can change after the role was saved.
@@ -235,6 +236,8 @@ def effective(config, selected, catalog, free_pi):
 def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok):
     if role not in ROLES:
         raise TeamError(tr('El papel de equipo no es válido.'))
+    if agent == 'muse' and role not in MUSE_ROLES:
+        raise TeamError(tr('Muse no tiene receta para este papel.'))
     if agent == 'pi' and model not in free_pi and not paid_ok:
         raise TeamError(tr('El modelo de pago requiere consentimiento explícito.'))
     choices = [row for row in options(selected, catalog, free_pi, paid_ok) if not row['paid'] or paid_ok]

@@ -311,6 +311,30 @@ def _bounded(report, capsule):
         return failure
 
 
+# Flags of `muse exec --help` that take no value: a prompt may follow them. Any other
+# `-flag` (valued, optional-valued like -w, or unknown) leaves the arguments untouched.
+MUSE_FLAGS = frozenset((
+    '--json', '--api-key-stdin', '--parallel-tool-calls', '--no-parallel-tool-calls',
+    '--allow-workspace-switch', '--user-input-auto-resolve', '--subagent-worktree-isolation',
+    '--disable-web-tools', '--disable-reminders', '--disable-request-user-input',
+    '--no-foreign-personal-context', '--no-session-log', '--yolo', '--trust-workspace',
+    '--disable-approval', '--disable-sandbox', '--disable-write', '--disable-shell',
+    '--enable-shell-tool',
+))
+
+
+def _muse_prompt_last(arguments):
+    """True only when the last argument is surely the prompt, not the value of an option."""
+    if len(arguments) < 2:
+        return False
+    if '--' in arguments:
+        return arguments.index('--') == len(arguments)-2
+    last, before = arguments[-1], arguments[-2]
+    if last.startswith('-'):
+        return False
+    return not before.startswith('-') or '=' in before or before in MUSE_FLAGS
+
+
 def run(command, agent, role, config, cwd, *, override=None, output=None, profile=None):
     output = output or sys.stdout
     policy = context_policy.resolve(config, role, override=override)
@@ -339,8 +363,12 @@ def run(command, agent, role, config, cwd, *, override=None, output=None, profil
             prepared[position:position] = ['--json', '--output-schema', str(schema)]
         elif agent == 'claude':
             prepared[1:1] = ['--output-format', 'json', '--json-schema', json.dumps(SCHEMA)]
-        elif agent in ('pi', 'muse'):
-            pass  # Pi and Muse are read as plain text: Muse's exec output format is undocumented.
+        elif agent == 'muse':
+            # Muse's exec output format is undocumented: its text is read whole, so the task itself carries the schema.
+            if _muse_prompt_last(prepared):
+                prepared[-1] += '\n\n' + str(tr('Responde solo con un objeto JSON (sin texto ni cercas de código) que cumpla este esquema, con cinco campos de texto: ')) + json.dumps(SCHEMA)
+        elif agent == 'pi':
+            pass  # Pi is read as plain text.
         # Raw events are drained and discarded. No transcripts or raw stderr reach the caller.
         with subprocess.Popen(prepared, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
