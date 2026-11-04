@@ -506,14 +506,18 @@ class ClaudeOriginTests(unittest.TestCase):
         return breakdown.scan_claude(self.root, prices.DEFAULT_PRICES, 30, NOW, since=START, total_days=30, managed_runs=managed_runs)['measurement']
 
     def assertSplit(self, block, jefe, otros, limited):
-        self.assertEqual((block['jefe'], block['otros'], block['classificationLimited']), (jefe, otros, limited))
+        visible = lambda row: {key: row[key] for key in ('total_input', 'output')}
+        self.assertEqual((visible(block['jefe']), visible(block['otros']), block['classificationLimited']),
+                         (jefe, otros, limited))
 
     FULL = {'total_input': 60, 'output': 5}
     NONE = {'total_input': 0, 'output': 0}
 
     def test_claude_cli_false_sidechain_is_interactive_jefe(self):
         self.write(origin_line('m1', 'cli', False, at=self.LATER, usage=(10, 5, 20, 30)))
-        self.assertSplit(self.measure(), self.FULL, self.NONE, False)
+        measured = self.measure()
+        self.assertSplit(measured, self.FULL, self.NONE, False)
+        self.assertEqual((measured['jefe']['cache'], measured['otros']['cache']), (50, 0))
         self.assertSplit(self.measure(managed_runs=True), self.FULL, self.NONE, False)
 
     def test_claude_sidechain_true_in_interactive_session_routes_to_otros(self):
@@ -732,7 +736,9 @@ class CodexOriginTests(unittest.TestCase):
                                     managed_runs=managed_runs)['measurement']
 
     def assertSplit(self, block, jefe, otros, limited):
-        self.assertEqual((block['jefe'], block['otros'], block['classificationLimited']), (jefe, otros, limited))
+        visible = lambda row: {key: row[key] for key in ('total_input', 'output')}
+        self.assertEqual((visible(block['jefe']), visible(block['otros']), block['classificationLimited']),
+                         (jefe, otros, limited))
 
     def double(self, block):
         return {key: value * 2 for key, value in block.items()}

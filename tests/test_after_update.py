@@ -1,8 +1,10 @@
 import contextlib
+import fcntl
 import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,6 +14,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 import harness
+import safe_updates
 
 
 class AfterUpdateTests(unittest.TestCase):
@@ -175,6 +178,42 @@ class AfterUpdateTests(unittest.TestCase):
         code, reply = self.command()
         self.assertEqual(code, 0)
         self.assertIs(reply['operation']['shellRestart'], True)
+
+    def test_lock_timeout_returns_without_blocking(self):
+        path = harness.config_path().with_name('after-update.lock')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with harness.after_update_lock(timeout=0, interval=0) as locked:
+            self.assertFalse(locked)
+
+    def test_version_is_saved_when_refresh_raises(self):
+        self.configured('previous')
+        with patch.object(harness, 'refresh_connections', side_effect=OSError('fallo abrupto')):
+            code, reply = self.command()
+        self.assertEqual(code, 1)
+        self.assertIn('fallo abrupto', reply['error'])
+        self.assertEqual(harness.load_config()['pluginVersion'], self.version)
+        self.assertIs(reply['operation']['shellRestart'], True)
+
+    def test_panel_debounces_status_and_guards_long_backend_calls(self):
+        source = (ROOT / 'Panel.qml').read_text()
+        self.assertIn('Component.onCompleted: startupTimer.restart()', source)
+        self.assertIn('interval: 2500', source)
+        self.assertIn('["env", "PYTHONDONTWRITEBYTECODE=1", "python3", "-B", script]', source)
+        self.assertIn('backend.running = false', source)
+        self.assertIn('interval: 4000', source)
+
+    def test_panel_watchdog_exceeds_every_backend_operation_timeout(self):
+        source = (ROOT / 'Panel.qml').read_text()
+        watchdog = source[source.index('id: watchdogTimer'):]
+        interval = re.search(r'\binterval:\s*(\d+)', watchdog)
+        self.assertIsNotNone(interval)
+        longest_backend_seconds = max(harness.VERSION_PROBE_TIMEOUT_SECONDS,
+                                      harness.BACKEND_OPERATION_TIMEOUT_SECONDS,
+                                      safe_updates.BACKEND_OPERATION_TIMEOUT_SECONDS)
+        self.assertGreater(int(interval.group(1)), longest_backend_seconds * 1000)
 
     def test_second_run_after_an_update_does_not_restart_again(self):
         self.configured('previous')

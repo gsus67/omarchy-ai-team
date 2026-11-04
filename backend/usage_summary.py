@@ -197,17 +197,19 @@ def _spend(agent_id):
 
 
 MUSE_DAYS = 30
-MUSE_FIELDS = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens')
+MUSE_TOKEN_FIELDS = ('input_tokens', 'output_tokens', 'reasoning_tokens')
+MUSE_CACHE_FIELDS = ('cache_read_tokens', 'cache_write_tokens')
+MUSE_FIELDS = MUSE_TOKEN_FIELDS + MUSE_CACHE_FIELDS
 MUSE_MAX_FILES, MUSE_MAX_BYTES = 5000, 64 * 1024 * 1024
 
 
-def _muse_session_tokens(path, since, until=None):
-    """Tokens of the ``model_completed`` events of one session file recorded since ``since`` (microseconds), or None."""
+def _muse_session_usage(path, since, until=None):
+    """Non-cache and cache tokens in one Muse session, or None when it has no matching event."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)  # never follow links or wait on a pipe
     except OSError:
         return None
-    total = None
+    total = cache = None
     with os.fdopen(descriptor, 'rb') as handle:
         if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
             return None
@@ -221,29 +223,43 @@ def _muse_session_tokens(path, since, until=None):
             except (ValueError, KeyError, TypeError, RecursionError):
                 continue
             # Each counter counts only as an exact non-negative int; anything else adds nothing.
-            total = (total or 0) + sum(value for value in (usage.get(field) for field in MUSE_FIELDS)
+            valid = lambda fields: sum(value for value in (usage.get(field) for field in fields)
                                        if type(value) is int and 0 <= value < 10 ** 15)
-    return total
+            total = (total or 0) + valid(MUSE_TOKEN_FIELDS)
+            cache = (cache or 0) + valid(MUSE_CACHE_FIELDS)
+    return None if total is None else (total, cache)
 
 
-def _muse_tokens(days=MUSE_DAYS, *, since=None, until=None):
+def _muse_session_tokens(path, since, until=None):
+    usage = _muse_session_usage(path, since, until)
+    return None if usage is None else sum(usage)
+
+
+def _muse_usage(days=MUSE_DAYS, *, since=None, until=None):
     """Tokens of every Muse session (subagents included) of the last ``days`` days, or None without any.
     With aware datetimes ``since``/``until`` only events in [since, until] count (the measured window)."""
     base = os.environ.get('XDG_DATA_HOME') or ''
     root = (Path(base) if os.path.isabs(base) else Path.home() / '.local/share') / 'muse' / 'sessions'  # XDG: relative is ignored
     first = int((since.timestamp() if since else time.time() - days * 86400) * 1_000_000)
     last = int(until.timestamp() * 1_000_000) if until else None
-    total, seen = None, 0
+    total = cache = None
+    seen = 0
     for folder, _, names in os.walk(root):  # os.walk does not follow directory links
         if 'session.jsonl' not in names:
             continue
         seen += 1
         if seen > MUSE_MAX_FILES:
             break
-        tokens = _muse_session_tokens(os.path.join(folder, 'session.jsonl'), first, last)
-        if tokens is not None:
-            total = (total or 0) + tokens
-    return total
+        usage = _muse_session_usage(os.path.join(folder, 'session.jsonl'), first, last)
+        if usage is not None:
+            total = (total or 0) + usage[0]
+            cache = (cache or 0) + usage[1]
+    return None if total is None else (total, cache)
+
+
+def _muse_tokens(days=MUSE_DAYS, *, since=None, until=None):
+    usage = _muse_usage(days, since=since, until=until)
+    return None if usage is None else sum(usage)
 
 
 def total_tokens(agents):
@@ -275,13 +291,16 @@ def _instant(value):
 
 
 def _counters(block):
-    """total_input + output of a ``{total_input, output}`` block of exact ints in [0, 10**15), else None."""
+    """``(new input + output, cache)``; old blocks without ``cache`` remain valid."""
     if not isinstance(block, dict):
         return None
-    values = (block.get('total_input'), block.get('output'))
+    values = (block.get('total_input'), block.get('output'), block.get('cache', 0))
     if any(type(value) is not int or not 0 <= value < 10 ** 15 for value in values):
         return None
-    return sum(values)
+    total_input, output, cache = values
+    if cache > total_input:
+        return None
+    return total_input - cache + output, cache
 
 
 def _measurement_block(data):
@@ -296,7 +315,7 @@ def _measurement_block(data):
     return start, since, block.get('windowDays'), generated, jefe, otros, block['classificationLimited']
 
 
-def measurement(agents, *, start, window_days):
+def _measurements(agents, *, start, window_days, partial):
     """``{since, asOf, jefe, otros, limited}`` of the selected accounts' rolling window, or None.
 
     None unless every selected account published a block measured from the same ``start`` and ``window_days``,
@@ -306,25 +325,50 @@ def measurement(agents, *, start, window_days):
         start, window = start.astimezone(timezone.utc), usage_start.window_days(window_days)
     except (ValueError, AttributeError, OverflowError):
         return None
+    selected = [agent['id'] for agent in agents if agent.get('id') in SHORT_NAMES and agent.get('enabled')]
     found = []
     for agent in agents:
         if agent.get('id') not in SHORT_NAMES or not agent.get('enabled'):
             continue
         parsed = _measurement_block(_read_record(_directory().parent / 'breakdown' / (agent['id'] + '.json')))
         if parsed is None:
-            return None
-        found.append(parsed)
-    if not found or any(item[0] != start or item[2] != window or item[3] != found[0][3] or item[1] != found[0][1] for item in found):
+            if not partial:
+                return None
+            continue
+        found.append((agent['id'], parsed))
+    if not found:
         return None
-    as_of = found[0][3]
-    try:
-        expected = usage_start.effective_since(start, as_of, window)
-    except ValueError:
+    compatible = []
+    for agent, item in found:
+        try:
+            expected = usage_start.effective_since(start, item[3], window)
+        except ValueError:
+            continue
+        if item[0] == start and item[2] == window and item[1] == expected:
+            compatible.append((agent, item))
+    if not compatible:
         return None
-    if found[0][1] != expected:
+    groups = {}
+    for agent, item in compatible:
+        groups.setdefault((item[3], item[1]), []).append((agent, item))
+    group = max(groups.values(), key=lambda rows: (len(rows), rows[0][1][3]))
+    if not partial and (len(group) != len(selected) or len(groups) != 1):
         return None
-    return {'since': expected, 'asOf': as_of, 'jefe': sum(item[4] for item in found), 'otros': sum(item[5] for item in found),
-            'limited': any(item[6] for item in found)}
+    return {'since': group[0][1][1], 'asOf': group[0][1][3],
+            'jefe': sum(item[4][0] for _, item in group), 'jefeCache': sum(item[4][1] for _, item in group),
+            'otros': sum(item[5][0] for _, item in group), 'otrosCache': sum(item[5][1] for _, item in group),
+            'limited': any(item[6] for _, item in group), 'agents': [agent for agent, _ in group],
+            'partial': len(group) != len(selected)}
+
+
+def measurement(agents, *, start, window_days):
+    """A coherent measurement for every selected supported account, or None."""
+    return _measurements(agents, start=start, window_days=window_days, partial=False)
+
+
+def partial_measurement(agents, *, start, window_days):
+    """The largest coherent subset when at least one selected account has valid data."""
+    return _measurements(agents, start=start, window_days=window_days, partial=True)
 
 
 def _muse_percent(window):

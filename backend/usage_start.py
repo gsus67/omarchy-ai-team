@@ -30,6 +30,7 @@ class UsageEntry:
     role: str
     agent: str
     tokens: int
+    cache: int = 0
 
 
 def default_state_dir():
@@ -47,12 +48,13 @@ def _utc(value):
 def _entry(line):
     try:
         row = json.loads(line)
-        role, agent, tokens = row['role'], row['agent'], row['tokens']
+        role, agent, tokens, cache = row['role'], row['agent'], row['tokens'], row.get('cache', 0)
         moment = _utc(row['at'])
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError, OverflowError):
         return None
-    if (role in WORKERS and isinstance(agent, str) and agent and type(tokens) is int and 0 <= tokens < 10 ** 15):
-        return UsageEntry(moment, role, agent, tokens)
+    if (role in WORKERS and isinstance(agent, str) and agent and type(tokens) is int and 0 <= tokens < 10 ** 15
+            and type(cache) is int and 0 <= cache < 10 ** 15):
+        return UsageEntry(moment, role, agent, tokens, cache)
     return None
 
 

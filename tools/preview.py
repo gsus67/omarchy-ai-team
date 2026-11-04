@@ -1182,6 +1182,7 @@ else:sys.exit(99)
                 " Path(os.environ['AI_HARNESS_TERMINAL_RECORD']).write_text(json.dumps(sys.argv[1:]))\n"
                 "elif sys.argv[1:] == ['restart','shell']:\n"
                 " Path(os.environ['AI_HARNESS_TERMINAL_RECORD']+'.restart').write_text('restart')\n"
+                "elif sys.argv[1:] == ['plugin','update','gsus67.ai-team']:\n pass\n"
                 "elif sys.argv[1:] == ['version']:\n os.execv(" + repr(real_omarchy) + ",[" + repr(real_omarchy) + ",'version'])\n"
                 "else: sys.exit(99)\n")
             fake_omarchy.chmod(0o755)

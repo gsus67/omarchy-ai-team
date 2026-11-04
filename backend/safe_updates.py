@@ -20,6 +20,9 @@ import memory_backups
 import runtime_guard
 
 
+BACKEND_OPERATION_TIMEOUT_SECONDS = 180
+
+
 class UpdateError(native_plugins.PluginError):
     pass
 
@@ -96,7 +99,7 @@ def memory_update():
         with tempfile.TemporaryDirectory(prefix='.ecc-update-', dir=prefix.parent) as temporary:
             staged = Path(temporary) / 'ecc-memory'
             result = subprocess.run([npm, 'install', '--prefix', str(staged), '--omit=dev', '--ignore-scripts',
-                                     '--no-audit', '--no-fund', '--registry', 'https://registry.npmjs.org', f'ecc-universal@{target}'], capture_output=True, text=True, timeout=180)
+                                     '--no-audit', '--no-fund', '--registry', 'https://registry.npmjs.org', f'ecc-universal@{target}'], capture_output=True, text=True, timeout=BACKEND_OPERATION_TIMEOUT_SECONDS)
             if result.returncode:
                 raise UpdateError(tr('npm no completó la preparación; la instalación actual se conserva.'))
             candidate = shared_memory.runtime_at(staged / 'node_modules' / shared_memory.PACKAGE, current['node'])

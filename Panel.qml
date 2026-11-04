@@ -23,6 +23,8 @@ Ui.Panel {
   property bool reconcileAttempted: false
   property bool reconcilePending: false
   property var operation: ({})
+  property var currentArguments: []
+  property bool shellRestartScheduled: false
   property alias page: content.page
   readonly property bool busy: backend.running
   implicitWidth: icon.implicitWidth
@@ -30,7 +32,9 @@ Ui.Panel {
 
   onOpenedChanged: if (opened) { reconcileAttempted = false; run(["status"]) }
   // `omarchy plugin update` has no hook: notice a new version as soon as the plugin loads.
-  Component.onCompleted: run(["status"])
+  // The shell reloads the plugin on every file change while an installer writes
+  // its folder, so the first status waits until the burst of reloads settles.
+  Component.onCompleted: startupTimer.restart()
 
   Ui.BarIconButton {
     id: icon
@@ -50,14 +54,44 @@ Ui.Panel {
     messageTimer.restart()
     errorText = ""
     message = ""
+    operation = ({})
     if (arguments[0] === "agent-update" || arguments[0] === "runtime-update") message = root.tr("Comprobando y actualizando mediante el gestor oficial…")
     else if (arguments[0] === "agent-install") message = root.tr("Instalando la CLI con el gestor oficial…")
     else if (arguments[0] === "agent-uninstall") message = root.tr("Desinstalando la CLI; tus cuentas y sesiones se conservan…")
     else if (arguments[0] === "prepare-agent" || (arguments[0] === "set-agent" && arguments[2] === "true")) message = root.tr("Preparando agente e integraciones; se instalará únicamente lo que falte…")
     launchRequested = arguments[0] === "launch-default"
     var script = decodeURIComponent(String(Qt.resolvedUrl("backend/harness.py")).replace(/^file:\/\//, ""))
-    backend.command = ["python3", script].concat(arguments)
+    currentArguments = arguments
+    // -B: never write __pycache__ inside the plugin folder (each write reloads the shell).
+    backend.command = ["env", "PYTHONDONTWRITEBYTECODE=1", "python3", "-B", script].concat(arguments)
     backend.running = true
+  }
+
+  Timer {
+    id: startupTimer
+    interval: 2500
+    repeat: false
+    onTriggered: root.run(["status"])
+  }
+
+  // Lets the installer finish before the shell restarts; scheduled at most once.
+  Timer {
+    id: restartTimer
+    interval: 4000
+    repeat: false
+    onTriggered: Quickshell.execDetached(["omarchy", "restart", "shell"])
+  }
+
+  // A backend stuck for more than four minutes is killed so the panel never stays busy.
+  Timer {
+    id: watchdogTimer
+    interval: 240000
+    repeat: false
+    running: backend.running
+    onTriggered: {
+      root.errorText = root.tr("La operación tardó demasiado y se canceló.")
+      backend.running = false
+    }
   }
 
   Timer {
@@ -74,9 +108,9 @@ Ui.Panel {
         try {
           const result = JSON.parse(text)
           if (result.data) root.snapshot = result.data
-          if (result.data && backend.command[2] === "status" && root.snapshot.needsReconnect && !root.reconnectAttempted)
+          if (result.data && root.currentArguments[0] === "status" && root.snapshot.needsReconnect && !root.reconnectAttempted)
             root.reconnectPending = true
-          else if (result.data && backend.command[2] === "status" && root.opened && root.snapshot.needsReconcile && !root.reconcileAttempted)
+          else if (result.data && root.currentArguments[0] === "status" && root.opened && root.snapshot.needsReconcile && !root.reconcileAttempted)
             root.reconcilePending = true
           root.operation = result.operation || ({})
           if (result.ok) {
@@ -95,7 +129,10 @@ Ui.Panel {
       if (exitCode !== 0 && root.errorText === "") root.errorText = root.tr("La operación no pudo completarse.")
       // The new version is saved before this runs, so the restarted shell does not come back here.
       if (root.operation.shellRestart) {
-        Quickshell.execDetached(["omarchy", "restart", "shell"])
+        if (!root.shellRestartScheduled) {
+          root.shellRestartScheduled = true
+          restartTimer.start()
+        }
         return
       }
       if (root.reconnectPending) {

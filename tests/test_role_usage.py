@@ -91,12 +91,32 @@ class RoleUsageTests(unittest.TestCase):
         self.assertEqual((result['total'], self.tokens(result)['jefe']), ('0', '0'))
         self.assertEqual({row['share'] for row in result['roles']}, {0})
 
-    def test_a_partial_chief_is_unknown_not_a_partial_sum(self):
+    def test_a_partial_chief_is_shown_with_a_warning(self):
         self.start()
         self.breakdown('claude', 60, 5)
         result = role_usage.summary(BOTH)
-        self.assertIsNone(result['total'])
-        self.assertIsNone(self.tokens(result)['jefe'])
+        self.assertEqual((result['total'], self.tokens(result)['jefe']), ('65', '65'))
+        self.assertTrue(result['partialTotal'])
+
+    def test_muse_does_not_turn_unmeasured_native_accounts_into_zero(self):
+        self.start()
+        agents = [{'id': 'claude', 'enabled': True}, {'id': 'muse', 'enabled': True}]
+        with patch.object(role_usage.usage_summary, '_muse_usage', return_value=(35, 7)):
+            result = role_usage.summary(agents)
+        tokens = self.tokens(result)
+        self.assertEqual(tokens['muse'], '35')
+        self.assertTrue(all(tokens[role] is None for role in (*role_usage.ROLES, 'otros')))
+        self.assertEqual((result['total'], result['cache'], result['pending']), (None, None, True))
+
+    def test_missing_muse_measurement_marks_the_known_native_total_partial(self):
+        self.start()
+        self.breakdown('claude', 1, otros=(2, 0))
+        agents = [{'id': 'claude', 'enabled': True}, {'id': 'muse', 'enabled': True}]
+        with patch.object(role_usage.usage_summary, '_muse_usage', return_value=None):
+            result = role_usage.summary(agents)
+        muse = next(row for row in result['roles'] if row['role'] == 'muse')
+        self.assertEqual((result['total'], muse['tokens']), ('3', '0'))
+        self.assertEqual((result['pending'], result['partialTotal']), (True, True))
 
     def test_workers_follow_the_selected_window_not_the_thirty_day_detail_or_the_old_start(self):
         old = AS_OF - timedelta(days=90)
@@ -136,16 +156,16 @@ class RoleUsageTests(unittest.TestCase):
         otros = result['roles'][-1]
         self.assertEqual(otros['name'], 'Otros')
 
-    def test_unknown_otros_or_selected_account_keeps_total_and_shares_unknown(self):
+    def test_missing_or_different_account_snapshot_keeps_a_partial_total(self):
         self.start()
         self.breakdown('claude', 60, 5, otros=(30, 5))
         result = role_usage.summary(BOTH)  # codex published nothing
-        self.assertIsNone(result['total'])
-        self.assertEqual(set(self.tokens(result).values()), {None})
-        self.assertTrue(all(row['share'] is None for row in result['roles']))
+        self.assertEqual(result['total'], '100')
+        self.assertTrue(result['partialTotal'])
         self.breakdown('codex', 10, 1, otros=(1, 1), as_of=AS_OF - timedelta(hours=1))  # another generation: no mixed sum
-        self.assertEqual(set(self.tokens(role_usage.summary(BOTH)).values()), {None})
-        self.assertIsNone(role_usage.summary(BOTH)['roles'][-1]['share'])
+        result = role_usage.summary(BOTH)
+        self.assertEqual((result['total'], self.tokens(result)['jefe']), ('100', '65'))
+        self.assertTrue(result['partialTotal'])
 
     def test_zero_otros_requires_a_complete_valid_scan(self):
         self.start()
@@ -167,7 +187,7 @@ class RoleUsageTests(unittest.TestCase):
     def test_otros_is_an_accounting_row_without_becoming_a_worker_role(self):
         self.assertNotIn('otros', role_usage.WORKERS)
         self.assertNotIn('otros', role_usage.ROLES)
-        self.assertEqual(role_usage.ACCOUNT_ROWS, role_usage.ROLES + ('otros',))
+        self.assertEqual(role_usage.ACCOUNT_ROWS, role_usage.ROLES + ('muse', 'otros'))
         role_usage.record('otros', 'claude', self.counters())
         self.assertFalse(role_usage.ledger().exists())
 
@@ -187,8 +207,8 @@ class RoleUsageTests(unittest.TestCase):
         both = role_usage.summary(BOTH)
         self.assertEqual((self.tokens(both)['otros'], both['since'], both['asOf']), ('165', CUT.isoformat(), AS_OF.isoformat()))
         self.breakdown('codex', 0, otros=(100, 50), window=30)  # another window: pending, no figure from either
-        self.assertIsNone(self.tokens(role_usage.summary(BOTH))['otros'])
-        self.assertIsNone(self.tokens(role_usage.summary(BOTH, window_days=30))['otros'])
+        self.assertEqual(self.tokens(role_usage.summary(BOTH))['otros'], '15')
+        self.assertEqual(self.tokens(role_usage.summary(BOTH, window_days=30))['otros'], '150')
 
     def test_otros_does_not_change_role_settings_models_or_recipes(self):
         import context_policy
@@ -227,11 +247,19 @@ class RoleUsageTests(unittest.TestCase):
         roles = self.tokens(role_usage.summary(AGENTS))
         self.assertEqual((roles['code'], roles['jefe']), ('80', '50'))  # the 45-day-old run is outside the seven days
 
-    def test_worker_tokens_use_total_input_plus_output_once(self):
+    def test_worker_tokens_exclude_cache_and_report_it_separately(self):
         self.start()
         self.breakdown('claude', 0)
         role_usage.record('code', 'claude', {'total_input': 60, 'output': 5, 'cached_read': 50, 'cache_creation': 10, 'new_input': 0})
-        self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '65')
+        result = role_usage.summary(AGENTS)
+        code = next(row for row in result['roles'] if row['role'] == 'code')
+        self.assertEqual((code['tokens'], code['cache']), ('5', '60'))
+
+    def test_invalid_detailed_counters_are_not_reinterpreted_as_legacy_total(self):
+        for counters in ({'total_input': 60, 'output': 5, 'cached_read': 50, 'cache_creation': 10, 'new_input': None},
+                         {'total_input': 60, 'output': 5, 'cached_read': '50', 'cache_creation': 10, 'new_input': 0}):
+            role_usage.record('code', 'claude', counters)
+        self.assertFalse(role_usage.ledger().exists())
 
     def test_a_fifo_in_place_of_the_ledger_never_blocks(self):
         self.start()
@@ -419,13 +447,12 @@ class RoleUsageTests(unittest.TestCase):
         self.rows(self.row(AS_OF + timedelta(seconds=1), 500), self.row(AS_OF, 5))
         self.assertEqual(self.tokens(role_usage.summary(AGENTS))['code'], '5')
 
-    def test_missing_selected_account_keeps_total_unknown_and_pending(self):
+    def test_missing_selected_account_keeps_a_partial_total_and_pending_warning(self):
         self.start()
         self.breakdown('claude', 10)
         self.rows(self.row(CUT, 5))
         result = role_usage.summary(BOTH)  # codex has no snapshot: neither the chief nor the workers are a partial sum
-        self.assertEqual((result['pending'], result['total']), (True, None))
-        self.assertEqual(set(self.tokens(result).values()), {None})
+        self.assertEqual((result['pending'], result['partialTotal'], result['total']), (True, True, '15'))
 
     def test_a_partial_window_is_flagged_and_the_selected_window_other_than_the_snapshot_is_pending(self):
         recent = AS_OF - timedelta(days=2)

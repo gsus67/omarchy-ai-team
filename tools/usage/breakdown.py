@@ -121,21 +121,22 @@ def _window_start(since, now, total_days):
 
 
 class _Measure:
-    """The two partitions of the selected interval, as ``total_input`` and ``output`` counters per bucket."""
+    """The two partitions as total input, output and the cache portion of input."""
 
     def __init__(self):
-        self.counters = {'jefe': [0, 0], 'otros': [0, 0]}
+        self.counters = {'jefe': [0, 0, 0], 'otros': [0, 0, 0]}
         self.limited = False
 
-    def add(self, bucket, limited, total_input, output):
+    def add(self, bucket, limited, total_input, output, cache=0):
         self.counters[bucket][0] += total_input
         self.counters[bucket][1] += output
+        self.counters[bucket][2] += cache
         self.limited = self.limited or (limited and total_input + output > 0)  # a limitation only matters where there is usage
 
     def block(self, start, since, total_days):
         return {'start': start.isoformat(), 'since': since.isoformat(), 'windowDays': total_days,
-                'jefe': {'total_input': self.counters['jefe'][0], 'output': self.counters['jefe'][1]},
-                'otros': {'total_input': self.counters['otros'][0], 'output': self.counters['otros'][1]},
+                'jefe': {'total_input': self.counters['jefe'][0], 'output': self.counters['jefe'][1], 'cache': self.counters['jefe'][2]},
+                'otros': {'total_input': self.counters['otros'][0], 'output': self.counters['otros'][1], 'cache': self.counters['otros'][2]},
                 'classificationLimited': self.limited}
 
 
@@ -245,7 +246,8 @@ def _claude_measure(lifetime, cut, now, managed_runs=True):
     for life in relevant:
         kinds = life['kinds']
         bucket, limited = _claude_bucket(life['origins'], managed_runs)
-        measure.add(bucket, limited, kinds['input'] + kinds['cacheRead'] + kinds['cacheWrite'], kinds['output'])
+        cache = kinds['cacheRead'] + kinds['cacheWrite']
+        measure.add(bucket, limited, kinds['input'] + cache, kinds['output'], cache)
     return measure
 
 
@@ -377,7 +379,7 @@ def scan_codex(sessions_dir, prices, days, now, extra_dirs=(), *, since=None, to
         project = model = last_total = last_lifetime_total = None
         pending = []
         rollout = {'file': _UUID.fullmatch(path.stem[-36:]), 'id': None, 'own': False, 'fork': False, 'source': None, 'parent': None, 'parent_invalid': False,
-                   'counted': [0, 0], 'meta': False}
+                   'counted': [0, 0, 0], 'meta': False}
         rollouts.append(rollout)
         for entry in _lines(path):
             payload = entry.get('payload')
@@ -423,6 +425,7 @@ def scan_codex(sessions_dir, prices, days, now, extra_dirs=(), *, since=None, to
                             else:
                                 rollout['counted'][0] += counters[0]
                                 rollout['counted'][1] += counters[1]
+                                rollout['counted'][2] += counters[2] if len(counters) > 2 else 0
                 if not isinstance(usage, dict) or moment is None or moment < cutoff:
                     continue
                 total = info.get('total_token_usage')

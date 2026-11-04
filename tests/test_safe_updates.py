@@ -121,10 +121,27 @@ class SafeUpdatesTests(unittest.TestCase):
         with patch.object(shared_memory, 'inspect_runtime', return_value=empty), \
              patch.object(harness, 'status', return_value={'components': [{'id': 'superpowers', 'targets': []}]}), \
              patch.object(harness, 'mise_inventory', return_value=({}, '')), \
+             patch.object(harness.shutil, 'which', return_value=None), \
              patch.object(updates, 'memory_update') as memory:
             result = harness.update_runtimes(config, 'core'); memory.assert_not_called()
-        self.assertEqual(result, {'updates': [], 'updateErrors': []})
+        self.assertEqual(result['updates'], [])
+        self.assertIn('Omarchy', result['updateErrors'][0])
         self.assertFalse(config['memoryEnabled']); self.assertFalse(config['foreignPreference'])
+
+    def test_joint_update_checks_the_plugin_last_with_a_timeout(self):
+        config = {'schemaVersion': 1, 'agents': {}, 'memoryEnabled': False}
+        empty = {'installed': False}
+        completed = subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(shared_memory, 'inspect_runtime', return_value=empty), \
+             patch.object(harness, 'status', return_value={'components': [{'id': 'superpowers', 'targets': []}]}), \
+             patch.object(harness, 'mise_inventory', return_value=({}, '')), \
+             patch.object(harness.shutil, 'which', return_value='/usr/bin/omarchy'), \
+             patch.object(harness, 'plugin_version', side_effect=['1', '2']), \
+             patch.object(harness.subprocess, 'run', return_value=completed) as run:
+            result = harness.update_runtimes(config, 'core')
+        self.assertEqual(result['updates'][-1], {'component': 'plugin', 'version': '2', 'outcome': 'updated', 'changed': True})
+        self.assertEqual(run.call_args.args[0], ['/usr/bin/omarchy', 'plugin', 'update', 'gsus67.ai-team'])
+        self.assertEqual(run.call_args.kwargs['timeout'], 180)
 
 
 if __name__ == '__main__':unittest.main()

@@ -124,7 +124,8 @@ class UsageTests(unittest.TestCase):
         as_of = datetime.fromisoformat(written['generatedAt'])
         self.assertEqual(written['measurement'], {
             'start': '2020-01-01T00:00:00+00:00', 'since': (as_of - timedelta(days=7)).isoformat(), 'windowDays': 7,
-            'jefe': {'total_input': 1_000_000, 'output': 0}, 'otros': {'total_input': 0, 'output': 0}, 'classificationLimited': True})
+            'jefe': {'total_input': 1_000_000, 'output': 0, 'cache': 0},
+            'otros': {'total_input': 0, 'output': 0, 'cache': 0}, 'classificationLimited': True})
         self.assertEqual(written['windowDays'], 30)
         self.assertNotIn('sinceStart', written)
 
@@ -164,7 +165,8 @@ class UsageTests(unittest.TestCase):
         ai_team_usage.write_breakdowns()
         self.assertEqual([path.name for path in stale.glob('*.json')], ['codex-2.json'])
         written = json.loads((stale / 'codex-2.json').read_text())
-        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']), ({'total_input': 0, 'output': 0},) * 2)
+        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']),
+                         ({'total_input': 0, 'output': 0, 'cache': 0},) * 2)
         self.assertFalse(written['measurement']['classificationLimited'])
         self.assertEqual(written['byKind'], dict.fromkeys(('input', 'output', 'cacheRead', 'cacheWrite'), 0))
 
@@ -263,7 +265,8 @@ class UsageTests(unittest.TestCase):
         (self.root / 'home/.claude-2/projects').mkdir(parents=True)
         self.assertEqual(ai_team_usage.write_breakdowns(), [])
         written = json.loads((ai_team_usage.breakdown_dir() / 'claude-2.json').read_text())
-        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']), ({'total_input': 0, 'output': 0},) * 2)
+        self.assertEqual((written['measurement']['jefe'], written['measurement']['otros']),
+                         ({'total_input': 0, 'output': 0, 'cache': 0},) * 2)
         self.assertFalse(written['measurement']['classificationLimited'])
 
     def test_source_disappearing_mid_scan_does_not_publish_partial_total(self):
