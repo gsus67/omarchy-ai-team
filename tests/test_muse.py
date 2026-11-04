@@ -184,6 +184,15 @@ class MuseTests(unittest.TestCase):
         with self.assertRaises(native_plugins.PluginError):
             native_muse.apply_component('memory', '/native/muse', 'enable')
 
+    def test_unsupported_muse_is_excluded_from_team_connection_count(self):
+        agents = [dict(id='claude', name='Claude Code', enabled=True, installation='installed', binary='/claude', version='1'),
+                  dict(id='muse', name='Muse Code', enabled=True, installation='installed', binary='/muse', version='1')]
+        config = {'team': {'enabled': True, 'roles': {}, 'claude': {'agentBinary': '/claude', 'agentVersion': '1'}}}
+        connected = {'enabled': True, 'verified': True, 'installed': True, 'version': '1', 'detail': 'ok'}
+        with patch.object(harness.native_team, 'inspect', return_value=connected):
+            result = harness.component_status('team', config, agents)
+        self.assertEqual((result['selectedCount'], result['connectedCount']), (1, 1))
+
     def test_ai_check_skips_muse_without_running_it(self):
         import ai_check
         snapshot = {'agents': [dict(id='muse', name='Muse Code', enabled=True, installation='installed', binary='/native/muse')]}
@@ -280,11 +289,13 @@ class MuseTotalTokensTests(unittest.TestCase):
         since, until = (datetime.fromtimestamp(base + offset, timezone.utc) for offset in (0, 100))
         self.assertEqual(usage_summary._muse_tokens(36500, since=since, until=until), 42 * 3)
 
-    def test_role_usage_summary_counts_muse_sessions_in_otros(self):
+    def test_role_usage_summary_gives_muse_its_own_row(self):
         import role_usage
         now = int(time.time() * 1_000_000)
         self._session('2026/a', self._line(now, self._usage()))
-        measured = {'since': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) - __import__('datetime').timedelta(minutes=1), 'asOf': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) + __import__('datetime').timedelta(minutes=1), 'jefe': 1, 'otros': 2, 'limited': False}
+        measured = {'since': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) - __import__('datetime').timedelta(minutes=1), 'asOf': __import__('datetime').datetime.now(__import__('datetime').timezone.utc) + __import__('datetime').timedelta(minutes=1),
+                    'jefe': 1, 'jefeCache': 0, 'otros': 2, 'otrosCache': 0, 'limited': False,
+                    'agents': ['claude'], 'partial': False}
         agents = [{'id': 'claude', 'enabled': True}, {'id': 'muse', 'enabled': True}]
         start = measured['since'] - __import__('datetime').timedelta(days=30)
         with patch.object(role_usage.usage_start, '_open_state_dir', side_effect=lambda *a, **k: os.open('/', os.O_RDONLY)), \
@@ -293,8 +304,16 @@ class MuseTotalTokensTests(unittest.TestCase):
                 patch.object(role_usage, '_entries', return_value=iter([])):
             result = role_usage.summary(agents)
             without = role_usage.summary(agents[:1])
-        share = lambda r: next(x for x in r['roles'] if x['role'] == 'otros')['tokens']
-        self.assertNotEqual(share(result), share(without))
+        muse = next(row for row in result['roles'] if row['role'] == 'muse')
+        self.assertEqual((muse['tokens'], muse['cache']), ('35', '7'))
+        self.assertNotIn('muse', {row['role'] for row in without['roles']})
+
+    def test_muse_only_keeps_the_roles_page_available(self):
+        now = int(time.time() * 1_000_000)
+        self._session('2026/a', self._line(now, self._usage()))
+        result = __import__('role_usage').summary([{'id': 'muse', 'enabled': True}])
+        muse = next(row for row in result['roles'] if row['role'] == 'muse')
+        self.assertEqual((result['total'], result['cache'], muse['tokens'], muse['cache']), ('35', '7', '35', '7'))
 
     def test_muse_tokens_add_to_breakdown_and_need_enabled(self):
         now = int(time.time() * 1_000_000)

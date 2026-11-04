@@ -48,7 +48,20 @@ ColumnLayout {
       .sort((a, b) => rank(a.agent) - rank(b.agent) || a.index - b.index).map(item => item.agent)
   }
 
-  Ui.PanelSectionHeader { text: root.tr("AGENTES") }
+  RowLayout {
+    Layout.fillWidth: true
+    Ui.PanelSectionHeader { Layout.fillWidth: true; text: root.tr("AGENTES") }
+    Text {
+      objectName: "plugin-version-header"
+      visible: root.pluginVersion !== ""
+      text: `v${root.pluginVersion}`
+      textFormat: Text.PlainText
+      color: Commons.Color.muted
+      opacity: 0.5
+      font.family: root.fonts.family
+      font.pixelSize: root.fonts.caption
+    }
+  }
   Flow {
     Layout.fillWidth: true
     spacing: root.metrics.xxs

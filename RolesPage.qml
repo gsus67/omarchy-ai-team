@@ -55,6 +55,11 @@ ColumnLayout {
     font.pixelSize: root.fonts.body
     font.bold: true
   }
+  Note {
+    objectName: "roles-total-cache"
+    visible: !root.loading && root.info.cache !== null && root.info.cache !== undefined
+    text: root.tr("caché: {cantidad}", {cantidad: root.info.cache})
+  }
   Repeater {
     model: root.loading ? [] : (root.info.roles || [])
     delegate: ColumnLayout {
@@ -84,6 +89,16 @@ ColumnLayout {
           font.bold: true
         }
       }
+      Text {
+        Layout.fillWidth: true
+        horizontalAlignment: Text.AlignRight
+        visible: role.modelData.cache !== null && role.modelData.cache !== undefined
+        text: root.tr("caché: {cantidad}", {cantidad: role.modelData.cache})
+        textFormat: Text.PlainText
+        color: Commons.Color.muted
+        font.family: root.fonts.family
+        font.pixelSize: root.fonts.caption
+      }
       Ui.PanelSeparator {
         Layout.fillWidth: true
         strength: 0.08
@@ -92,10 +107,12 @@ ColumnLayout {
   }
   Note { objectName: "roles-updating"; visible: root.loading; text: root.tr("Actualizando medición…") }
   Note { visible: !root.loading && !!root.info.pending; text: root.tr("Medición pendiente de actualizar.") }
+  Note { visible: !root.loading && !!root.info.partialTotal; text: root.tr("Total parcial: faltan datos de una o más cuentas seleccionadas.") }
   Note { objectName: "roles-since"; visible: !root.loading; text: root.sinceText ? root.tr("Medido desde {fecha}", {fecha: root.sinceText}) : root.tr("Inicio de medición no disponible") }
   Note { visible: !root.loading && !!root.info.partialWindow && !!root.sinceText; text: root.tr("Aún no hay {dias} días completos de medición. Se mide desde {fecha}.", {dias: root.windowDays, fecha: root.sinceText}) }
   Note { objectName: "roles-asof"; visible: !root.loading && !!root.asOfText; text: root.tr("Última medición: {fecha}", {fecha: root.asOfText}) }
   Note { objectName: "roles-overlap"; visible: !root.loading && !!root.info.classificationLimited; text: root.tr("Jefe incluye el consumo cuyo origen no se pudo verificar; algunos encargos pueden contarse también en los roles.") }
-  Note { text: root.tr("Otros reúne el consumo de Claude y Codex fuera de los papeles del equipo; el reparto es parcial.") }
+  Note { text: root.tr("Otros reúne el consumo de Claude y Codex fuera de los papeles del equipo; el reparto es parcial y Muse tiene su propia fila.") }
+  Note { text: root.tr("Solo cuenta lo lanzado por el plugin; los ayudantes internos de la CLI no se registran.") }
   Note { text: root.tr("Todas las filas usan la misma ventana móvil y el mismo inicio común.") }
 }

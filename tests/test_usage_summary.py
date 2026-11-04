@@ -219,7 +219,9 @@ class MeasurementTests(unittest.TestCase):
         self.write('claude', jefe=(60, 5), otros=(10, 1))
         self.write('codex', jefe=(100, 5), otros=(20, 2), limited=True)
         self.assertEqual(self.measure('claude', 'codex'),
-                         {'since': AS_OF - timedelta(days=7), 'asOf': AS_OF, 'jefe': 170, 'otros': 33, 'limited': True})
+                         {'since': AS_OF - timedelta(days=7), 'asOf': AS_OF,
+                          'jefe': 170, 'jefeCache': 0, 'otros': 33, 'otrosCache': 0,
+                          'limited': True, 'agents': ['claude', 'codex'], 'partial': False})
 
     def test_measurement_rejects_wrong_effective_cutoff(self):
         self.write('claude', since=OWN_START + timedelta(microseconds=1))

@@ -116,7 +116,8 @@ class TaskSnapshotTests(unittest.TestCase):
             self.assertNotIn('PRIVATE', (folder / name).read_text())
         self.assertEqual(sorted(path.name for path in folder.iterdir()), ['after.json', 'before.json'])
         (entry,) = (json.loads(line) for line in (self.root / 'state/omarchy-ai-team/role-usage.jsonl').read_text().splitlines())
-        self.assertEqual((entry['role'], entry['tokens']), ('code', 20000 + after['counters']['output']))
+        self.assertEqual((entry['role'], entry['tokens'], entry['cache']),
+                         ('code', 2000 + after['counters']['output'], 18000))
         self.assertNotIn('PRIVATE', json.dumps(entry))
 
     def ledger(self):

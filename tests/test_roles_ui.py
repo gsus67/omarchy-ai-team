@@ -6,6 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RolesUiTests(unittest.TestCase):
+    def test_usage_page_shows_cache_partial_totals_muse_and_plugin_only_note(self):
+        source = (ROOT / 'RolesPage.qml').read_text()
+        for wanted in ('roles-total-cache', 'modelData.cache', 'partialTotal', 'Muse tiene su propia fila',
+                       'los ayudantes internos de la CLI no se registran'):
+            self.assertIn(wanted, source)
+        self.assertIn('objectName: "plugin-version-header"', (ROOT / 'SettingsPage.qml').read_text())
+
     def test_main_screen_has_a_total_row_that_opens_the_roles_page(self):
         source = (ROOT / 'HarnessContent.qml').read_text()
         row = re.search(r'objectName: "usage-total".*?\n        \}', source, re.S)[0]
