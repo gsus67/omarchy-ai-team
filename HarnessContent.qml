@@ -132,7 +132,6 @@ ColumnLayout {
     Layout.fillWidth: true
     Layout.fillHeight: true
     Layout.minimumHeight: 0
-    implicitHeight: pageColumn.implicitHeight
     clip: true
     QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
     // With more to see the bar is always shown, in its own column at the right edge, so it never
@@ -150,7 +149,7 @@ ColumnLayout {
 
     ColumnLayout {
       id: pageColumn
-      width: scroll.availableWidth - (scroll.overflowing ? verticalBar.width + Style.space(8) : 0)
+      width: scroll.availableWidth - verticalBar.width - Style.space(8)
       spacing: Style.space(6)
 
       Text {

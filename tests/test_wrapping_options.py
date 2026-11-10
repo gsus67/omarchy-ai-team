@@ -29,7 +29,7 @@ class WrappingOptionsTests(unittest.TestCase):
         source = (ROOT / 'HarnessContent.qml').read_text()
         self.assertIn('readonly property bool overflowing', source)
         self.assertIn('policy: scroll.overflowing ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff', source)
-        self.assertIn('width: scroll.availableWidth - (scroll.overflowing ? verticalBar.width + Style.space(8) : 0)', source)
+        self.assertIn('width: scroll.availableWidth - verticalBar.width - Style.space(8)', source)
 
 
 if __name__ == '__main__':
