@@ -32,6 +32,53 @@ def main():
     print(json.dumps({"id": AGENT_ID, "home": os.environ["CODEX_HOME"], "pi": scan_pi_sessions() , "oc": scan_opencode_sessions()}))
 '''
 
+CLAUDE_45 = '''
+import os, json
+from pathlib import Path
+AGENT_ID = "claude"
+def registered_accounts(agent_id):
+    return [{"id": "main", "home": "/wrong/main", "active": True}]
+def config_dir(): return Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude"))
+def scan_pi_sessions(pattern, accept): return (["pi"], True)
+def scan_opencode(patterns, accept): return (["opencode"], True)
+def main():
+    accounts = registered_accounts(AGENT_ID)
+    pi, _ = scan_pi_sessions("anthropic", None)
+    opencode, _ = scan_opencode(["anthropic"], None)
+    home = accounts[0]["home"] if accounts else str(config_dir())
+    print(json.dumps({"id": AGENT_ID, "home": home, "pi": len(pi), "opencode": len(opencode)}))
+'''
+
+CODEX_45 = '''
+import os, json
+AGENT_ID = "codex"
+ENV = dict(os.environ)
+STATS = {"pi": 0, "opencode": 0}
+def registered_accounts(agent_id):
+    return [{"id": "main", "home": "/wrong/main", "active": True}]
+def scan_pi_sessions_into_stats(): STATS.__setitem__("pi", 1); return True
+def scan_opencode_sessions(): STATS.__setitem__("opencode", 1); return True
+def main():
+    scan_pi_sessions_into_stats(); scan_opencode_sessions()
+    accounts = registered_accounts(AGENT_ID)
+    home = accounts[0]["home"] if accounts else ENV.get("CODEX_HOME")
+    print(json.dumps({"id": AGENT_ID, "home": home, **STATS}))
+'''
+
+CLAUDE_45_WITHOUT_REGISTERED_ACCOUNTS = '''
+import json
+def scan_pi_sessions(pattern, accept): return ([], True)
+def scan_opencode(patterns, accept): return ([], True)
+def main(): print(json.dumps({"id": "claude", "home": "/wrong/main"}))
+'''
+
+CODEX_45_WITHOUT_REGISTERED_ACCOUNTS = '''
+import json
+def scan_pi_sessions_into_stats(): return True
+def scan_opencode_sessions(): return True
+def main(): print(json.dumps({"id": "codex", "home": "/wrong/main"}))
+'''
+
 
 class UsageTests(unittest.TestCase):
     def setUp(self):
@@ -42,7 +89,8 @@ class UsageTests(unittest.TestCase):
         (self.root / 'bin/omarchy-agent-usage-codex').write_text(CODEX)
         patcher = patch.dict(os.environ, {'HOME': str(self.root / 'home'), 'OMARCHY_PATH': str(self.root),
                                           'XDG_STATE_HOME': str(self.root / 'state'),
-                                          'XDG_CONFIG_HOME': str(self.root / 'config')})
+                                          'XDG_CONFIG_HOME': str(self.root / 'config'),
+                                          'XDG_CACHE_HOME': str(self.root / 'base-cache')})
         patcher.start(); self.addCleanup(patcher.stop)
         (self.root / 'home').mkdir()
 
@@ -62,6 +110,51 @@ class UsageTests(unittest.TestCase):
         self.assertEqual((record['id'], record['home']), ('codex-2', str(self.root / 'home/.codex-2')))
         self.assertEqual(record['name'], 'Codex · 2')
 
+    def test_claude_45_uses_the_requested_profile_without_shared_sources_or_registered_accounts(self):
+        (self.root / 'home/.claude-2').mkdir()
+        (self.root / 'bin/omarchy-agent-usage-claude').write_text(CLAUDE_45)
+        record = ai_team_usage.collect('claude-2')
+        self.assertEqual((record['id'], record['home']), ('claude-2', str(self.root / 'home/.claude-2')))
+        self.assertEqual((record['pi'], record['opencode']), (0, 0))
+
+    def test_codex_45_uses_the_requested_profile_without_shared_sources_or_registered_accounts(self):
+        (self.root / 'home/.codex-2').mkdir()
+        (self.root / 'bin/omarchy-agent-usage-codex').write_text(CODEX_45)
+        record = ai_team_usage.collect('codex-2')
+        self.assertEqual((record['id'], record['home']), ('codex-2', str(self.root / 'home/.codex-2')))
+        self.assertEqual((record['pi'], record['opencode']), (0, 0))
+
+    def test_new_collectors_without_registered_accounts_fail_instead_of_publishing_main_account(self):
+        cases = (
+            ('claude-2', 'CLAUDE_CONFIG_DIR', CLAUDE_45_WITHOUT_REGISTERED_ACCOUNTS),
+            ('codex-2', 'CODEX_HOME', CODEX_45_WITHOUT_REGISTERED_ACCOUNTS),
+        )
+        for account, variable, collector in cases:
+            with self.subTest(account=account):
+                (self.root / 'home' / ai_team_usage.ACCOUNTS[account]['home']).mkdir(exist_ok=True)
+                (self.root / 'bin' / ai_team_usage.ACCOUNTS[account]['collector']).write_text(collector)
+                with self.assertRaisesRegex(
+                        RuntimeError, rf'registered_accounts.*{account}.*{variable}'):
+                    ai_team_usage.collect(account)
+
+    def test_old_collectors_without_registered_accounts_keep_using_environment(self):
+        (self.root / 'home/.claude-2').mkdir()
+        (self.root / 'home/.codex-2').mkdir()
+        claude = ai_team_usage.collect('claude-2')
+        codex = ai_team_usage.collect('codex-2')
+        self.assertEqual(claude['dir'], str(self.root / 'home/.claude-2'))
+        self.assertEqual(codex['home'], str(self.root / 'home/.codex-2'))
+
+    def test_collect_uses_xdg_cache_home_as_the_cache_root(self):
+        (self.root / 'home/.claude-2').mkdir()
+        cache_home = self.root / 'custom-cache'
+        with patch.dict(os.environ, {'XDG_CACHE_HOME': str(cache_home)}):
+            record = ai_team_usage.collect('claude-2')
+            self.assertEqual(os.environ['XDG_CACHE_HOME'], str(cache_home))
+        expected = cache_home / 'omarchy-ai-team/usage/claude-2'
+        self.assertEqual(record['cache'], str(expected))
+        self.assertTrue(expected.is_dir())
+
     def test_missing_profile_writes_nothing_and_removes_a_stale_record(self):
         state = ai_team_usage.state_dir()
         state.mkdir(parents=True)
@@ -80,7 +173,7 @@ class UsageTests(unittest.TestCase):
     def test_cache_is_private_and_a_failed_write_leaves_no_temporary_file(self):
         (self.root / 'home/.claude-2').mkdir()
         ai_team_usage.collect('claude-2')
-        cache = self.root / 'home/.cache/omarchy-ai-team/usage'
+        cache = self.root / 'base-cache/omarchy-ai-team/usage'
         self.assertEqual((cache.stat().st_mode & 0o777, (cache / 'claude-2').stat().st_mode & 0o777), (0o700, 0o700))
         state = self.root / 'out'
         with patch.object(ai_team_usage.os, 'replace', side_effect=OSError):
