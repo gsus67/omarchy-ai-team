@@ -263,6 +263,24 @@ class GuardSettingTests(unittest.TestCase):
         self.assertEqual(state['usageGuard'], {'enabled': True, 'percent': 80})
 
 
+class GithubFlowSettingTests(unittest.TestCase):
+    def test_only_literal_true_enables_github_flow(self):
+        self.assertFalse(team.github_flow({}))
+        for value in (False, 'yes', 1, None, [], {}):
+            with self.subTest(value=value):
+                self.assertFalse(team.github_flow({'githubFlow': value}))
+        self.assertTrue(team.github_flow({'githubFlow': True}))
+
+    def test_setter_rejects_non_boolean_values(self):
+        for value in (0, 1, 'true', None, [], {}):
+            with self.subTest(value=value), self.assertRaises(team.TeamError):
+                team.set_github_flow({}, value)
+
+    def test_status_exposes_github_flow_disabled_by_default(self):
+        self.assertIs(harness.team_state({'agents': {}})['githubFlow'], False)
+        self.assertIs(harness.team_state({'githubFlow': True, 'agents': {}})['githubFlow'], True)
+
+
 class GuardHookTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.root = Path(temp.name)

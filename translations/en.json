@@ -853,5 +853,10 @@
   "Elegir la ventana de medición del consumo": "Choose the usage measurement window",
   "No se pudo actualizar la medición; la ventana queda guardada. Reintenta.": "The measurement could not be refreshed; the window is saved. Try again.",
   "Ventana de medición actualizada.": "Measurement window updated.",
-  "Ventana de medición inválida; elige 7 o 30 días.": "Invalid measurement window; choose 7 or 30 days."
+  "Ventana de medición inválida; elige 7 o 30 días.": "Invalid measurement window; choose 7 or 30 days.",
+  "Flujo GitHub por tarea": "GitHub flow per task",
+  "Cada encargo de Programar y Revisar usa issue, rama, commits pequeños y PR sincronizado.": "Each Code and Review task uses an issue, branch, small commits and a synced PR.",
+  "Flujo GitHub guardado.": "GitHub flow saved.",
+  "Activar o desactivar el flujo GitHub por tarea": "Turn the per-task GitHub flow on or off",
+  "La opción de Flujo GitHub debe ser booleana.": "The GitHub Flow option must be boolean."
 }

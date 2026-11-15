@@ -241,6 +241,34 @@ ColumnLayout {
       onToggled: root.commandRequested(["usage-guard", String(!checked), String(guardPercent.value)])
     }
   }
+  RowLayout {
+    Layout.fillWidth: true
+    spacing: root.metrics.xxs
+    Text {
+      Layout.fillWidth: true
+      text: root.tr("Flujo GitHub por tarea")
+      textFormat: Text.PlainText
+      color: Commons.Color.foreground
+      font.family: root.fonts.family
+      font.pixelSize: root.fonts.body
+      elide: Text.ElideRight
+    }
+    Ui.ToggleSwitch {
+      objectName: "team-github-switch"
+      checked: root.info.githubFlow === true
+      enabled: !root.busy
+      onToggled: root.commandRequested(["team-github", String(!checked)])
+    }
+  }
+  Text {
+    Layout.fillWidth: true
+    text: root.tr("Cada encargo de Programar y Revisar usa issue, rama, commits pequeños y PR sincronizado.")
+    textFormat: Text.PlainText
+    color: Commons.Color.muted
+    font.family: root.fonts.family
+    font.pixelSize: root.fonts.caption
+    wrapMode: Text.WordWrap
+  }
 
   Ui.PanelSeparator { Layout.fillWidth: true }
   Repeater {
