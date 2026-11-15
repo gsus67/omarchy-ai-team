@@ -451,6 +451,38 @@ class DiagnoseTests(unittest.TestCase):
                                         "usable": {"causes": []}}, "codex-2")
         self.assertTrue(any("CODEX_HOME=~/.codex-2 codex mcp list" in step for step in steps))
 
+    def test_claude_2_reconnect_uses_selected_profile(self):
+        report = {"configured": {"causes": []}, "connected": {"causes": []},
+                  "usable": {"causes": []}}
+        steps = memory.reconnect_steps(report, "claude-2")
+        self.assertTrue(any("CLAUDE_CONFIG_DIR=~/.claude-2 claude mcp list" in step for step in steps))
+
+    def test_primary_profiles_reconnect_without_environment_prefix(self):
+        report = {"configured": {"causes": []}, "connected": {"causes": []},
+                  "usable": {"causes": []}}
+        for profile in ("claude", "codex"):
+            with self.subTest(profile=profile):
+                steps = memory.reconnect_steps(report, profile)
+                command = next(step for step in steps if "mcp list" in step)
+                self.assertIn(f"{profile} mcp list", command)
+                self.assertNotIn("CLAUDE_CONFIG_DIR=", command)
+                self.assertNotIn("CODEX_HOME=", command)
+
+    def test_codex_2_diagnose_reconnect_uses_selected_profile(self):
+        with patch.object(memory, "local_config", return_value={}), \
+             patch.object(memory, "inspect_runtime", return_value=self.RUNTIME):
+            report = memory.diagnose("codex", "codex-2")
+        self.assertTrue(any("CODEX_HOME=~/.codex-2 codex mcp list" in step
+                            for step in report["reconnect"]))
+
+    def test_secondary_agents_reconnect_without_mcp_list_step(self):
+        report = {"configured": {"causes": []}, "connected": {"causes": []},
+                  "usable": {"causes": []}}
+        for profile in ("pi", "muse"):
+            with self.subTest(profile=profile):
+                steps = memory.reconnect_steps(report, profile)
+                self.assertFalse(any("mcp list" in step for step in steps))
+
     def test_profile_alias_is_reported_and_reads_selected_home(self):
         from harness import agent_profile
         with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"HOME": home}), \
