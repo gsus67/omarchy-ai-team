@@ -405,8 +405,10 @@ def reconnect_steps(report, profile):
     if causes & {"timeout", "cannot-start", "exit-status", "protocol-error", "bad-reply", "slower-than-startup-timeout",
                  "server-tools-missing", "doctor-failed"}:
         steps.append(tr('El servidor no responde bien en local; revisa el runtime y repite el diagnóstico.'))
-    if profile in ("claude", "codex"):
-        steps.append(tr('Comprueba la lista nativa con `{cli} mcp list`.').format(cli=profile))
+    prefix = {"claude-2": "CLAUDE_CONFIG_DIR=~/.claude-2 ", "codex-2": "CODEX_HOME=~/.codex-2 "}.get(profile, "")
+    if profile in ("claude", "codex") or prefix:
+        steps.append(tr('Comprueba la lista nativa con `{prefix}{cli} mcp list`.').format(
+            prefix=prefix, cli=profile.split("-")[0]))
     steps.append(tr('Abre una sesión nueva: las herramientas de una sesión ya iniciada no cambian.'))
     return steps
 
