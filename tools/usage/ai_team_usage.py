@@ -28,9 +28,15 @@ import prices
 
 ACCOUNTS = {
     'claude-2': {'collector': 'omarchy-agent-usage-claude', 'name': 'Claude Code · 2', 'variable': 'CLAUDE_CONFIG_DIR',
-                 'home': '.claude-2', 'silenced': {'scan_pi_usage': lambda *_: None, 'scan_opencode_usage': lambda *_: None}},
+                 'home': '.claude-2', 'silenced': (
+                     (('scan_pi_sessions', lambda *_: ([], True)), ('scan_pi_usage', lambda *_: None)),
+                     (('scan_opencode', lambda *_: ([], True)), ('scan_opencode_usage', lambda *_: None)),
+                 ), 'registered_accounts_required_with': {'scan_pi_sessions'}},
     'codex-2': {'collector': 'omarchy-agent-usage-codex', 'name': 'Codex · 2', 'variable': 'CODEX_HOME',
-                'home': '.codex-2', 'silenced': {'scan_pi_sessions': lambda *_: None, 'scan_opencode_sessions': lambda *_: True}},
+                'home': '.codex-2', 'silenced': (
+                    (('scan_pi_sessions_into_stats', lambda *_: True), ('scan_pi_sessions', lambda *_: None)),
+                    (('scan_opencode_sessions', lambda *_: True),),
+                ), 'registered_accounts_required_with': {'scan_pi_sessions_into_stats'}},
 }
 
 # Every account whose transcripts get a token breakdown: id -> (scanner, profile folder under HOME).
@@ -65,7 +71,8 @@ def collect(account, flags=()):
     home = Path.home() / spec['home']
     if not home.is_dir():
         return None
-    cache = Path.home() / '.cache/omarchy-ai-team/usage' / account
+    cache_home = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
+    cache = cache_home / 'omarchy-ai-team/usage' / account
     cache.mkdir(parents=True, exist_ok=True)
     for private in (cache, cache.parent):  # the collectors write world-readable files: the directory keeps them private
         private.chmod(0o700)
@@ -78,10 +85,21 @@ def collect(account, flags=()):
         loader = importlib.machinery.SourceFileLoader('usage_' + account.replace('-', '_'), str(collector_path(account)))
         module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
         loader.exec_module(module)
-        for name, replacement in spec['silenced'].items():
-            if not hasattr(module, name):
-                raise RuntimeError('collector changed: ' + name + ' is gone')
-            setattr(module, name, replacement)
+        selected_silencers = set()
+        for alternatives in spec['silenced']:
+            for name, replacement in alternatives:
+                if getattr(module, name, None) is not None:
+                    setattr(module, name, replacement)
+                    selected_silencers.add(name)
+                    break
+            else:
+                raise RuntimeError('collector changed: ' + '/'.join(name for name, _ in alternatives) + ' is gone')
+        if getattr(module, 'registered_accounts', None) is not None:
+            module.registered_accounts = lambda *_: []
+        elif selected_silencers & spec['registered_accounts_required_with']:
+            raise RuntimeError(
+                f"collector changed: registered_accounts is required to select {account} via {spec['variable']}; "
+                'refusing to publish another account')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             module.main()
