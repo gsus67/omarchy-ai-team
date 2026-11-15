@@ -8,7 +8,9 @@ import qs.Commons
 Ui.Panel {
   id: root
   readonly property var translations: root.snapshot.translations || ({})
+  // qmllint disable missing-property
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
+  // qmllint enable missing-property
   moduleName: "gsus67.ai-team"
   manageIpc: false
   property var shell: null
@@ -25,7 +27,7 @@ Ui.Panel {
   property var operation: ({})
   property var currentArguments: []
   property bool shellRestartScheduled: false
-  property alias page: content.page
+  property alias page: harnessContent.page
   readonly property bool busy: backend.running
   implicitWidth: icon.implicitWidth
   implicitHeight: icon.implicitHeight
@@ -154,13 +156,13 @@ Ui.Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: content
+    focusTarget: harnessContent
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(content.page === "settings" ? Style.space(560) : content.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(harnessContent.page === "settings" ? Style.space(560) : harnessContent.implicitHeight, Style.space(560))
 
     HarnessContent {
       translations: root.translations
-      id: content
+      id: harnessContent
       objectName: "harnessContent"
       anchors.fill: parent
       snapshot: root.snapshot
@@ -201,16 +203,16 @@ Ui.Panel {
       cancelText: root.tr("Cancelar")
       confirmText: root.tr("Desinstalar")
       selectedIndex: 0
-      onCanceled: { opened = false; content.forceActiveFocus() }
-      onConfirmed: { opened = false; root.run(toolUninstall.pendingArguments); content.forceActiveFocus() }
+      onCanceled: { opened = false; harnessContent.forceActiveFocus() }
+      onConfirmed: { opened = false; root.run(toolUninstall.pendingArguments); harnessContent.forceActiveFocus() }
       Keys.onPressed: event => { if (toolUninstall.handleKey(event)) event.accepted = true }
     }
     // The mouse "back" button works like ‹ Volver; other buttons pass through.
     MouseArea {
-      anchors.fill: content
+      anchors.fill: harnessContent
       z: 100
       acceptedButtons: Qt.BackButton
-      onPressed: content.goBack()
+      onPressed: harnessContent.goBack()
     }
     Ui.ConfirmDialog {
       id: authorization
@@ -220,8 +222,8 @@ Ui.Panel {
       cancelText: root.tr("Cancelar")
       confirmText: root.tr("Activar")
       selectedIndex: 0
-      onCanceled: { opened = false; content.forceActiveFocus() }
-      onConfirmed: { opened = false; root.run(authorization.pendingArguments); content.forceActiveFocus() }
+      onCanceled: { opened = false; harnessContent.forceActiveFocus() }
+      onConfirmed: { opened = false; root.run(authorization.pendingArguments); harnessContent.forceActiveFocus() }
       Keys.onPressed: event => { if (authorization.handleKey(event)) event.accepted = true }
     }
     Ui.ConfirmDialog {
@@ -232,8 +234,8 @@ Ui.Panel {
       cancelText: root.tr("Cancelar")
       confirmText: root.tr("Restaurar")
       selectedIndex: 0
-      onCanceled: { opened = false; content.forceActiveFocus() }
-      onConfirmed: { opened = false; root.run(confirmation.pendingArguments); content.forceActiveFocus() }
+      onCanceled: { opened = false; harnessContent.forceActiveFocus() }
+      onConfirmed: { opened = false; root.run(confirmation.pendingArguments); harnessContent.forceActiveFocus() }
       Keys.onPressed: event => { if (confirmation.handleKey(event)) event.accepted = true }
     }
   }

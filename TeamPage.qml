@@ -14,7 +14,9 @@ ColumnLayout {
   function providerName(agent) { return root.providers[agent] || agent }
   readonly property real effortColumn: Style.space(98)
   property var translations: ({})
+  // qmllint disable missing-property
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
+  // qmllint enable missing-property
   property var info: ({})
   property var agents: []
   property string defaultAgent: ""
