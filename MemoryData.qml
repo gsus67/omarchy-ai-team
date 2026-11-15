@@ -9,7 +9,9 @@ import qs.Commons as Commons
 ColumnLayout {
   id: root
   property var translations: ({})
+  // qmllint disable missing-property
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
+  // qmllint enable missing-property
   property var info: ({})
   property var operation: ({})
   property bool busy: false

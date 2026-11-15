@@ -7,7 +7,9 @@ import qs.Commons
 ColumnLayout {
   id: root
   property var translations: ({})
+  // qmllint disable missing-property
   function tr(source, values) { return I18n.tr(root.translations, source, values) }
+  // qmllint enable missing-property
   readonly property var metrics: Style.spacing
   property var info: ({})
   property bool busy: false
