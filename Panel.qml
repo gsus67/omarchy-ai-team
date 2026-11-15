@@ -156,7 +156,7 @@ Ui.Panel {
     open: root.opened
     focusTarget: content
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(content.page === "settings" ? Style.space(560) : content.implicitHeight, Style.space(560))
 
     HarnessContent {
       translations: root.translations
