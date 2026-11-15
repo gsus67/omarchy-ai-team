@@ -12,6 +12,7 @@ CLAUDE_MODELS = ('fable', 'opus', 'sonnet', 'haiku')
 CLAUDE_VERSIONS = {'fable': '5.1', 'opus': '5.5', 'sonnet': '5.5', 'haiku': '5.5'}
 CODEX_DEFAULTS = ('gpt-6.1-sol', 'gpt-6-luna', 'gpt-6-astra')
 AGENT_NAMES = {'claude': 'Claude', 'codex': 'Codex', 'pi': 'Pi', 'muse': 'Muse'}
+# `claude --help` advertises these values for --effort and no per-model matrix.
 CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 PI_EFFORTS = ('low', 'medium', 'high')
 # Listed by `muse exec --help`; `max` and `ultra` are left out because their cost is not documented.

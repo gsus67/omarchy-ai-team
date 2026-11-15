@@ -129,8 +129,8 @@ class TeamTests(unittest.TestCase):
                          dict(fable='Fable 5.1', opus='Opus 5.5', sonnet='Sonnet 5.5', haiku='Haiku 5.5'))
         self.assertEqual(by_model['sonnet']['label'], 'Claude · Sonnet 5.5')
 
-    def test_sonnet_and_haiku_offer_all_five_efforts(self):
-        # Documented: Sonnet 5.5 and Haiku 5.5 support low..max (platform.claude.com effort docs).
+    def test_sonnet_and_haiku_follow_the_cli_effort_levels(self):
+        # The local CLI accepts these five values and advertises no per-model restriction.
         by_model = {r['model']: r for r in team.effective({}, {'claude'}, CAT, [])['options']}
         for model in ('sonnet', 'haiku'):
             self.assertEqual(by_model[model]['efforts'], ['low', 'medium', 'high', 'xhigh', 'max'])
