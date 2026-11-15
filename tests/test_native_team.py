@@ -121,6 +121,34 @@ class NativeTeamTests(unittest.TestCase):
     def test_a_delegated_task_does_not_delegate_again(self):
         self.assertIn('no encargues nada a otros modelos', self.content())
 
+    def test_github_flow_defaults_to_byte_identical_legacy_instructions(self):
+        paths = native_team.layout('claude')
+        legacy_state = self.state()
+        legacy_skill = self.content(state=legacy_state)
+        legacy_startup = native_team.instruction('', paths, True, team=legacy_state)
+        legacy_task_rule = ('Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, '
+                            '«no hagas commits» y «no encargues nada a otros modelos». ')
+        self.assertIn(legacy_task_rule, legacy_skill)
+        for value in (False, 'yes', 1, None):
+            state = {**legacy_state, 'githubFlow': value}
+            with self.subTest(value=value):
+                self.assertEqual(self.content(state=state), legacy_skill)
+                self.assertEqual(native_team.instruction('', paths, True, team=state), legacy_startup)
+
+    def test_github_flow_replaces_the_no_commit_rule_with_safe_task_workflow(self):
+        state = {**self.state(), 'githubFlow': True}
+        skill = self.content(state=state)
+        for wanted in ('issue', 'gh', 'rama', 'commits pequeños', 'PR', 'sincronizado', 'docs/',
+                       'secretos', 'datos privados', 'crear repositorios', 'cambiar la visibilidad',
+                       'Planificar, Revisar y Tareas sencillas: no hagas commits ni publiques',
+                       'sin merge ni force-push ni push a la rama principal'):
+            self.assertIn(wanted, skill)
+        for forbidden in ('bypassPermissions', 'danger-full-access', '--dangerously', '--yolo'):
+            self.assertNotIn(forbidden, skill)
+        startup = native_team.instruction('', native_team.layout('claude'), True, team=state)
+        self.assertIn('Flujo GitHub por tarea', startup)
+        self.assertIn('skill', startup)
+
     def test_only_codex_2_never_uses_other_account(self):
         text = self.content({'codex-2'})
         self.assertIn('CODEX_HOME=' + str(self.root / '.codex-2'), text)
@@ -255,6 +283,21 @@ class NativeTeamTests(unittest.TestCase):
         with patch.object(harness, 'manage_component') as manage:
             self.assertEqual(self.run_main(['team-recommend'])[0], 0)
             manage.assert_not_called()
+
+    def test_github_flow_setting_resyncs_only_when_team_is_enabled(self):
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                self.config['team'] = {'enabled': enabled, 'roles': {}}
+                harness.save_config(self.config)
+                with patch.object(harness, 'manage_component') as manage:
+                    code, reply = self.run_main(['team-github', 'true'])
+                self.assertEqual(code, 0, reply)
+                self.assertEqual(reply['message'], 'Flujo GitHub guardado.')
+                self.assertIs(harness.load_config()['githubFlow'], True)
+                if enabled:
+                    manage.assert_called_once_with(unittest.mock.ANY, 'team', 'sync')
+                else:
+                    manage.assert_not_called()
 
     def test_refreshing_the_nous_catalog_resyncs_the_team_only_when_enabled(self):
         self.config['agents'] = {'claude': True, 'pi': True}
@@ -401,6 +444,15 @@ class NativeTeamTests(unittest.TestCase):
         with patch('native_skills.loaded', return_value=True):
             receipt = native_team.apply('claude', '/claude', 'enable', settings_file=self.settings, team=state)
             state['roles']['simple']['model'] = 'sonnet'
+            self.assertFalse(native_team.inspect('claude', receipt, settings_file=self.settings, team=state)['verified'])
+            receipt = native_team.apply('claude', '/claude', 'enable', receipt, settings_file=self.settings, team=state)
+            self.assertTrue(native_team.inspect('claude', receipt, settings_file=self.settings, team=state)['verified'])
+
+    def test_github_flow_change_invalidates_receipt_and_sync_refreshes_it(self):
+        state = self.state({'claude'})
+        with patch('native_skills.loaded', return_value=True):
+            receipt = native_team.apply('claude', '/claude', 'enable', settings_file=self.settings, team=state)
+            state = {**state, 'githubFlow': True}
             self.assertFalse(native_team.inspect('claude', receipt, settings_file=self.settings, team=state)['verified'])
             receipt = native_team.apply('claude', '/claude', 'enable', receipt, settings_file=self.settings, team=state)
             self.assertTrue(native_team.inspect('claude', receipt, settings_file=self.settings, team=state)['verified'])

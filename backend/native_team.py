@@ -42,9 +42,12 @@ def instruction(original,paths,enabled,*,team=None):
         import team as roles
         only_pi=roles.only_pi(state.get('selected',[paths['profile']]))
         command=role_commands('review',review,profiles,only_pi=only_pi)[0] if review else ''
+        github_rule=('Con Flujo GitHub por tarea activo, aplica la regla de la skill para issue, rama, commits y PR. '
+                     if state.get('githubFlow') is True else '')
         message=('Con política de contexto activa en papel Jefe usa solo índice ECC y delegación nativa; las lecturas/ejecuciones van a obreros. '
                  'Equipo activo: tú diriges y los modelos del equipo trabajan, también dentro de los pasos de Superpowers. '
-                 +('Solo Pi: los modelos de Nous trabajan sin sandbox ni aprobación por herramienta; compruébalo todo en el diff. ' if only_pi else '')+
+                 +('Solo Pi: los modelos de Nous trabajan sin sandbox ni aprobación por herramienta; compruébalo todo en el diff. ' if only_pi else '')
+                 +github_rule+
                  'El Jefe no edita código ni lanza ayudantes internos de su CLI (Agent/Task) para programar. '
                  'Todo código se encarga únicamente mediante context_run.py al papel y modelo asignados; si no puede ejecutarlo, lo dice claramente. '
                  'Antes de decir que un cambio de código está terminado, encarga siempre Revisar al modelo de ese papel y corrige lo que encuentre'
@@ -245,6 +248,18 @@ def text(paths, settings_file, team=None):
     pi_off = [roles.LABELS[key] for key in ('plan', 'code') if key not in pi_has]
     pi_delegation = ('Pi tiene receta ejecutable para '+' y '.join(roles.LABELS[key] for key in pi_has)+'; ' if pi_has else '')+(
         'no delegues '+' ni '.join(pi_off)+' a Pi. ' if pi_off else '')
+    task_rule = (
+        'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación y «no encargues nada a otros modelos». '
+        'Para Programar, usa el Flujo GitHub por tarea: trabaja en la rama del issue; si falta, créalo o enlázalo con `gh`; '
+        'haz commits pequeños; abre o actualiza el PR con descripción, `Closes #n` y pruebas, y mantén issue y PR sincronizados. '
+        'Programar: sin merge ni force-push ni push a la rama principal. '
+        'Planificar, Revisar y Tareas sencillas: no hagas commits ni publiques. '
+        'Para Revisar en solo lectura, comprueba ese enlace y el estado del PR e infórmalo. '
+        'Si no hay remoto GitHub o `gh` no tiene sesión, informa y sigue sin publicar. '
+        'Está prohibido subir `docs/`, secretos o datos privados, crear repositorios o cambiar la visibilidad. '
+        if state.get('githubFlow') is True else
+        'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, «no hagas commits» y «no encargues nada a otros modelos». '
+    )
     lines = ['---', 'name: '+ID,
              'description: "Úsala siempre que vayas a cambiar código: encarga programar y revisar a los modelos del equipo, y planificar o tareas sencillas cuando compense."',
              '---', '', '# Equipo por papeles', '']
@@ -263,7 +278,7 @@ def text(paths, settings_file, team=None):
         'Un encargo que no responde no se espera ni se repite sin fin: usa `timeout 60` si estás en un sandbox que puede impedirlo y reintenta una sola vez; '
         'si vuelve a fallar, detente, informa qué modelo falló y por qué, propón la siguiente alternativa y espera la autorización explícita del usuario. Sin autorización no la lances. '
         'Si el sandbox o los permisos impiden lanzar un encargo, pide el permiso nativo; si no es posible, informa de que ese papel no se hizo con su modelo. Un ayudante interno de tu CLI no cuenta como revisión independiente. '
-        'Cada encargo será autocontenido: objetivo, archivos, criterio de aceptación, «no hagas commits» y «no encargues nada a otros modelos». '
+        +task_rule+
         'Si tú recibiste un encargo así, hazlo y devuelve el resultado: revisar y repartir corresponde a la sesión que dirige. '
         'Revisa los resultados y ejecuta pruebas antes de darlos por buenos. La revisión corresponde al modelo de Revisar. '
         'Usa un worktree Git por escritor paralelo. Los encargos no dejan archivos sueltos: temporales con `mktemp -d`, borrados al terminar, nunca registros en `/tmp` compartido. Con memoria compartida activa, guarda allí el plan y las decisiones para el traspaso; '

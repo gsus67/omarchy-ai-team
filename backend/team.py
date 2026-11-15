@@ -187,6 +187,16 @@ def set_usage_guard(config, enabled, percent):
     config['usageGuard'] = {'enabled': enabled, 'percent': percent}
 
 
+def github_flow(config):
+    return config.get('githubFlow') is True
+
+
+def set_github_flow(config, enabled):
+    if type(enabled) is not bool:
+        raise TeamError(tr('La opción de Flujo GitHub debe ser booleana.'))
+    config['githubFlow'] = enabled
+
+
 def effective(config, selected, catalog, free_pi):
     recommendations, warnings = recommend(selected, catalog, free_pi)
     choices = options(selected, catalog, free_pi, config.get('piPaidApproved', False))
@@ -230,7 +240,8 @@ def effective(config, selected, catalog, free_pi):
         warnings.append(tr('Solo Pi: los modelos de Nous no tienen sandbox ni aprobación por herramienta; pueden cambiar archivos o ejecutar comandos sin preguntar.'))
     if any(row['agent'] == 'codex' and row['effort'] == 'ultra' for row in roles.values()):
         warnings.append(tr('Ultra hace que Codex reparta el trabajo por su cuenta: rompe el reparto del equipo y gasta tokens por partida doble.'))
-    return {'enabled': config.get('team', {}).get('enabled', False), 'roles': roles, 'options': choices, 'warnings': warnings, 'independence': independence}
+    return {'enabled': config.get('team', {}).get('enabled', False), 'githubFlow': github_flow(config),
+            'roles': roles, 'options': choices, 'warnings': warnings, 'independence': independence}
 
 
 def set_role(config, role, agent, model, effort, *, selected, catalog, free_pi, paid_ok):

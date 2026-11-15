@@ -854,6 +854,8 @@ SMOKE = r'''
           teamContentHeight = teamContent.implicitHeight
           var guardField = find(harness,"usage-guard-percent",[])
           if (!guardField || guardField.value !== 90 || !find(harness,"usage-guard-switch",[]).checked) { fail("Usage guard must default to 90 and on"); return }
+          var githubSwitch = find(harness,"team-github-switch",[])
+          if (!githubSwitch || githubSwitch.checked) { fail("GitHub flow must default to off"); return }
           teamContentY = teamScroll.contentItem.contentY
           reviewModel.open();teamStep++;return
         }

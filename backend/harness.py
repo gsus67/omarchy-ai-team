@@ -1006,6 +1006,8 @@ def _main(argv=None):
     usage_guard = commands.add_parser('usage-guard', help=tr('Guardar y parar al llegar a un porcentaje de consumo'))
     usage_guard.add_argument('enabled', choices=('true', 'false'))
     usage_guard.add_argument('percent', type=int)
+    team_github = commands.add_parser('team-github', help=tr('Activar o desactivar el flujo GitHub por tarea'))
+    team_github.add_argument('enabled', choices=('true', 'false'))
     usage_window_command = commands.add_parser('usage-window', help=tr('Elegir la ventana de medición del consumo'))
     usage_window_command.add_argument('days', type=int, choices=usage_start.WINDOW_DAYS)
     team_set = commands.add_parser('team-set', help=tr('Elegir el modelo de un papel'))
@@ -1244,6 +1246,12 @@ def _main(argv=None):
             team.set_usage_guard(config, args.enabled == 'true', args.percent)
             save_config(config)
             message = tr('Límite de consumo guardado.')
+        elif args.command == 'team-github':
+            team.set_github_flow(config, args.enabled == 'true')
+            save_config(config)
+            if config.get('team', {}).get('enabled'):
+                manage_component(config, 'team', 'sync')
+            message = tr('Flujo GitHub guardado.')
         elif args.command == 'usage-window':
             config['usageWindowDays'] = args.days
             save_config(config)
